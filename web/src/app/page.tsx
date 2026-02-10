@@ -15,7 +15,7 @@ export default async function Home() {
   let reports = [];
   try {
     const { data, error } = await supabase
-      .table('hourly_reports')
+      .from('hourly_reports')
       .select('*')
       .order('id', { ascending: false });
       
