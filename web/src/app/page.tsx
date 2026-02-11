@@ -62,7 +62,7 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-black text-white p-4 md:p-8 font-sans selection:bg-cyan-500 selection:text-black">
       <header className="flex justify-between items-center mb-12 max-w-7xl mx-auto border-b border-gray-800 pb-6">
-        <img src="/logo.png" alt="K-POP 24" className="h-20 md:h-28 w-auto object-contain drop-shadow-[0_0_20px_rgba(34,211,238,0.8)]" />
+        <img src="/logo.png" alt="K-ENTER 24" className="h-20 md:h-28 w-auto object-contain drop-shadow-[0_0_20px_rgba(34,211,238,0.8)]" />
         <nav>
           {user ? (
             <div className="flex items-center gap-4">
