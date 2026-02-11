@@ -1,5 +1,4 @@
 {
   "version": 2,
   "framework": "nextjs"
-  // "crons" 부분을 완전히 삭제하여 Vercel 배포 에러를 해결합니다.
 }
