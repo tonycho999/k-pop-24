@@ -51,7 +51,7 @@ export default function Home() {
       <header className="flex justify-between items-center mb-8 max-w-7xl mx-auto">
         <div className="flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="K-POP 24" className="h-14 md:h-16 w-auto object-contain drop-shadow-[0_0_15px_rgba(34,211,238,0.6)]" />
+          <img src="/logo.png" alt="K-POP 24" className="h-24 md:h-32 w-auto object-contain drop-shadow-[0_0_15px_rgba(34,211,238,0.6)]" />
         </div>
 
         {user ? (
