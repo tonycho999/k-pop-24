@@ -1,67 +1,91 @@
-import { createClient } from '@supabase/supabase-js';
+'use client';
 
-// 1. 여기서 바로 Supabase 연결 (가장 확실한 방법)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+import { useState, useEffect } from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
-// 2. 캐시 방지 (항상 최신 뉴스)
-export const revalidate = 0;
+// 분리한 컴포넌트 불러오기
+import NewsFeed from '@/components/NewsFeed';
+import HotKeywords from '@/components/HotKeywords';
+import VibeCheck from '@/components/VibeCheck';
 
-export default async function Home() {
-  console.log("Supabase 연결 시도 중..."); 
+export default function Home() {
+  const [articles, setArticles] = useState<any[]>([]); 
+  const [user, setUser] = useState<any>(null);
+  const [topVibe, setTopVibe] = useState<any>(null); // 최신 기사의 감정 데이터
   
-  // 3. 데이터 가져오기
-  let reports = [];
-  try {
-    const { data, error } = await supabase
-      .from('hourly_reports')
-      .select('*')
-      .order('id', { ascending: false });
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    const init = async () => {
+      // 1. 유저 세션 확인
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user ?? null);
+
+      // 2. 뉴스 데이터 가져오기
+      const { data } = await supabase
+        .from('live_news')
+        .select('*')
+        .eq('is_published', true)
+        .order('id', { ascending: false });
       
-    if (error) throw error;
-    reports = data || [];
-  } catch (e) {
-    console.error("데이터 가져오기 실패:", e);
-  }
+      if (data && data.length > 0) {
+        setArticles(data);
+        // 가장 최신 기사의 분위기를 VibeCheck에 전달 (예시)
+        setTopVibe(data[0].reactions); 
+      }
+    };
+    init();
+  }, []);
+
+  const handleLogin = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
+    });
+  };
 
   return (
-    <main className="min-h-screen bg-black text-white p-8">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-4xl font-bold text-center mb-10 text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">
-          K-Pulse 24 🚀
-        </h1>
-
-        <div className="grid gap-6 md:grid-cols-2">
-          {reports.map((item: any) => (
-            <div key={item.id} className="border border-gray-800 bg-gray-900 p-6 rounded-2xl shadow-xl hover:border-pink-500 transition-colors">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-2xl font-bold text-white">{item.artist_name}</h2>
-                <span className="text-sm text-gray-500">
-                  {new Date(item.created_at).toLocaleString()}
-                </span>
-              </div>
-              
-              <div className="text-gray-300 mb-6 leading-relaxed" dangerouslySetInnerHTML={{ __html: item.summary_text }} />
-              
-              <div className="flex flex-wrap gap-2">
-                {item.keywords?.map((k: string, i: number) => (
-                  <span key={i} className="px-3 py-1 text-xs font-medium bg-gray-800 rounded-full text-pink-300 border border-gray-700">
-                    #{k}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-
-          {reports.length === 0 && (
-            <div className="col-span-2 text-center py-20 text-gray-500">
-              <p>뉴스를 불러오는 중입니다...</p>
-              <p className="text-xs mt-2 text-gray-600">(혹은 데이터가 아직 없습니다)</p>
-            </div>
-          )}
+    <main className="min-h-screen bg-black text-white p-4 md:p-8 font-sans">
+      
+      {/* 헤더 */}
+      <header className="flex justify-between items-center mb-8 max-w-7xl mx-auto">
+        <div className="flex items-center gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="K-POP 24" className="h-24 md:h-32 w-auto object-contain drop-shadow-[0_0_15px_rgba(34,211,238,0.6)]" />
         </div>
-      </div>
+
+        {user ? (
+          <div className="flex items-center gap-3">
+             <span className="text-cyan-400 text-sm font-bold hidden md:inline">
+               Agent {user.email?.split('@')[0]}
+             </span>
+             <button onClick={() => supabase.auth.signOut()} className="text-xs text-gray-500 border border-gray-700 px-3 py-1 rounded hover:bg-gray-800">
+               Log Out
+             </button>
+          </div>
+        ) : (
+          <button 
+            onClick={handleLogin}
+            className="bg-cyan-500 text-black px-5 py-2 rounded-full text-sm font-bold hover:bg-cyan-400 transition-all shadow-[0_0_15px_rgba(34,211,238,0.4)] animate-pulse"
+          >
+            LOG IN (FREE)
+          </button>
+        )}
+      </header>
+
+      {/* 1. 뉴스 피드 컴포넌트 */}
+      <NewsFeed 
+        articles={articles} 
+        user={user} 
+        onLogin={handleLogin} 
+      />
+
+      {/* 2 & 3. 하단 분석 섹션 (키워드 + AI 분석) */}
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-7xl mx-auto pb-10">
+        <HotKeywords />
+        <VibeCheck data={topVibe} />
+      </section>
+
     </main>
   );
 }
