@@ -6,7 +6,7 @@ import { motion } from 'framer-motion';
 import { Newspaper, TrendingUp, Zap, Activity, Star } from 'lucide-react';
 
 export default function Home() {
-  const [news, setNews] = useState([]);
+  const [news, setNews] = useState<any[]>([]);
   const [category, setCategory] = useState('All');
   const [loading, setLoading] = useState(true);
 
