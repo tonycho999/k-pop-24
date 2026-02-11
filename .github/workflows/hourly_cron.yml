@@ -1,0 +1,16 @@
+name: Hourly K-POP News Trigger
+
+on:
+  schedule:
+    - cron: '0 * * * *' # 매시간 00분에 실행 (Vercel API가 시간대별 작업 처리)
+    - cron: '20 * * * *' # 매시간 20분에 실행 (AI 요약 작업 처리)
+    - cron: '1 * * * *' # 매시간 01분에 실행 (뉴스 스크랩 작업 처리)
+
+jobs:
+  ping_api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger API
+        run: |
+          curl -X GET "https://사용자_사이트_주소/api/collect" \
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
