@@ -2,9 +2,10 @@ name: Hourly K-POP News Trigger
 
 on:
   schedule:
-    - cron: '0 * * * *' # 매시간 00분에 실행 (Vercel API가 시간대별 작업 처리)
-    - cron: '20 * * * *' # 매시간 20분에 실행 (AI 요약 작업 처리)
-    - cron: '1 * * * *' # 매시간 01분에 실행 (뉴스 스크랩 작업 처리)
+    - cron: '1 * * * *'   # 매시간 01분: 뉴스 스크랩 단계 실행 (11:01, 12:01 등)
+    - cron: '21 * * * *'  # 매시간 21분: AI 요약 및 분석 단계 실행 (11:21, 12:21 등)
+    - cron: '0 * * * *'   # 매시간 00분: 분석된 뉴스 공식 배포 (12:00, 13:00 등)
+  workflow_dispatch:      # [추가] 이 줄이 있어야 GitHub에서 수동 실행 버튼이 나타납니다.
 
 jobs:
   ping_api:
@@ -12,5 +13,6 @@ jobs:
     steps:
       - name: Trigger API
         run: |
-          curl -X GET "https://사용자_사이트_주소/api/collect" \
+          # 사용자님의 실제 배포 주소인 k-pop-24.vercel.app로 수정했습니다.
+          curl -X GET "https://k-pop-24.vercel.app/api/collect" \
           -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
