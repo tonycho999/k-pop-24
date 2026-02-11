@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { Newspaper, TrendingUp, Zap, Activity, Star } from 'lucide-react';
 
 export default function Home() {
+  // 여기서 에러 났던 부분을 any[]로 확실하게 고쳤습니다
   const [news, setNews] = useState<any[]>([]);
   const [category, setCategory] = useState('All');
   const [loading, setLoading] = useState(true);
@@ -39,9 +40,9 @@ export default function Home() {
 
       <div className="relative z-10 max-w-6xl mx-auto px-4 py-8">
         
-        {/* 헤더 */}
+        {/* 헤더: 제목이 잘 보이도록 그라데이션 대신 흰색+네온 효과로 변경 */}
         <header className="flex flex-col md:flex-row justify-between items-center mb-10 gap-4">
-          <h1 className="text-5xl md:text-6xl font-extrabold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-500 to-pink-500 drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]">
+          <h1 className="text-5xl md:text-6xl font-extrabold tracking-tighter text-white drop-shadow-[0_0_15px_rgba(6,182,212,0.8)]">
             K-ENTER 24
           </h1>
           <div className="flex items-center gap-2 px-4 py-2 bg-white/5 rounded-full border border-white/10 backdrop-blur-md shadow-[0_0_15px_rgba(0,255,255,0.2)]">
@@ -66,10 +67,8 @@ export default function Home() {
         {/* 메인 레이아웃 */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* 왼쪽: 뉴스 피드 (8칸 차지) */}
+          {/* 왼쪽: 뉴스 피드 */}
           <div className="lg:col-span-8 space-y-6">
-            
-            {/* 탭 버튼 */}
             <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide mb-4">
               {['All', 'K-POP', 'K-Drama', 'K-Movie', 'Variety'].map((tab) => (
                 <button
@@ -86,13 +85,12 @@ export default function Home() {
               ))}
             </div>
 
-            {/* 뉴스 리스트 */}
             {loading ? (
               <div className="text-center py-20 text-gray-500 animate-pulse">Loading Data Stream...</div>
             ) : (
-              filteredNews.map((item: any) => (
+              filteredNews.map((item: any, idx: number) => (
                 <motion.div 
-                  key={item.id}
+                  key={item.id || idx}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="group flex flex-col md:flex-row gap-4 bg-[#13132b]/80 border border-white/5 p-4 rounded-2xl hover:border-cyan-500/50 hover:bg-[#1a1a35] transition-all duration-300"
@@ -134,10 +132,8 @@ export default function Home() {
             )}
           </div>
 
-          {/* 오른쪽: 사이드바 위젯 (4칸 차지) */}
+          {/* 오른쪽: 사이드바 */}
           <div className="lg:col-span-4 space-y-6">
-            
-            {/* Vibe Check 위젯 */}
             <div className="rounded-2xl bg-[#0f0f25] p-6 border border-white/10 shadow-lg">
               <div className="flex items-center gap-2 mb-6">
                 <Activity className="text-pink-500 w-5 h-5 animate-bounce" />
@@ -162,11 +158,10 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 인기 키워드 */}
             <div className="rounded-2xl bg-[#0f0f25] p-6 border border-white/10">
               <div className="flex items-center gap-2 mb-4">
                 <TrendingUp className="text-purple-400 w-5 h-5" />
-                <h3 className="font-bold text-lg text-white">Trending Now</h3>
+                <h3 className="font-bold text-lg text-white">Trending Keywords</h3>
               </div>
               <div className="flex flex-wrap gap-2">
                 {['#NewJeans', '#SquidGame2', '#BTS', '#Blackpink', '#K-Food', '#HanSohee'].map((tag) => (
@@ -176,7 +171,6 @@ export default function Home() {
                 ))}
               </div>
             </div>
-
           </div>
         </div>
       </div>
