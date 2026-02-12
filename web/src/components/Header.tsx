@@ -37,7 +37,7 @@ export default function Header() {
     <header className="flex justify-between items-center mb-8 py-4">
       {/* 로고 영역: K-ENTER 24 로고 및 명칭 */}
       <div className="flex items-center gap-3 group cursor-pointer">
-        <div className="w-20 h-16 bg-white rounded-xl shadow-sm border border-slate-100 flex items-center justify-center group-hover:shadow-md transition-all overflow-hidden">
+        <div className="w-[180px] h-[120px] bg-white rounded-xl shadow-sm border border-slate-100 flex items-center justify-center group-hover:shadow-md transition-all overflow-hidden">
           <img 
             src="/logo.png" 
             alt="K-ENTER 24 Logo" 
