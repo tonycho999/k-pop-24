@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from dateutil.parser import isoparse
-from config import supabase, CATEGORY_MAP
+from config import supabase, CATEGORY_MAP  # [수정] 점(.) 제거됨
 
 def get_existing_links(category):
     """해당 카테고리의 기존 뉴스 링크 조회"""
@@ -71,7 +71,8 @@ def archive_top_articles():
     """상위 랭크(Top 10) 기사 아카이빙"""
     print("🗄️ 상위 랭크(Top 10) 기사 아카이빙 시작...")
     for category in CATEGORY_MAP.keys():
-        res = supabase.table("live_news").select("*").eq("category", category).order("rank", ascending=True).limit(10).execute()
+        # [수정] ascending=True 대신 desc=False 사용
+        res = supabase.table("live_news").select("*").eq("category", category).order("rank", desc=False).limit(10).execute()
         top_articles = res.data
         if top_articles:
             try:
