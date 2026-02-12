@@ -70,7 +70,7 @@ export default function Home() {
           {/* 왼쪽: 뉴스 피드 */}
           <div className="lg:col-span-8 space-y-6">
             <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide mb-4">
-              {['All', 'K-POP', 'K-Drama', 'K-Movie', 'Variety'].map((tab) => (
+              {['All', 'K-POP', 'K-Drama', 'K-Movie', 'k-entertain'].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setCategory(tab)}
