@@ -14,8 +14,7 @@ from bs4 import BeautifulSoup
 load_dotenv()
 sys.stdout.reconfigure(encoding='utf-8')
 
-# [수정 1] 관리자 키(Service Role Key) 우선 사용 로직
-# .env에 SUPABASE_SERVICE_ROLE_KEY가 있으면 그걸 쓰고(권한 무제한), 없으면 ANON_KEY를 씀
+# [기존] RLS 문제 없이 관리자 권한으로 실행
 supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 
@@ -34,7 +33,7 @@ CATEGORY_MAP = {
     "k-culture": ["푸드", "뷰티", "웹툰", "팝업스토어", "패션", "음식", "해외반응"]
 }
 
-# [조건: AI 모델 동적 조회 및 최신순 정렬]
+# [기존] AI 모델 동적 조회
 def get_best_model():
     try:
         models_raw = groq_client.models.list()
@@ -107,7 +106,7 @@ def get_article_image(link):
         return None
     except: return None
 
-# [조건: 뉴스 요약 20~40%]
+# [기존] 뉴스 요약 20~40%
 def ai_category_editor(category, news_batch):
     if not news_batch: return []
     limited_batch = news_batch[:50]
@@ -157,7 +156,7 @@ def ai_category_editor(category, news_batch):
             continue
     return []
 
-# [조건: 키워드는 절대 수정하지 말 것]
+# [기존] 키워드 분석
 def update_hot_keywords():
     print("📊 AI 키워드 트렌드 분석 시작...")
     res = supabase.table("live_news").select("title").order("created_at", desc=True).limit(100).execute()
@@ -200,16 +199,14 @@ def update_hot_keywords():
             
             print(f"   🔥 AI가 추출한 진짜 트렌드: {[k.get('keyword') for k in keywords[:5]]}...")
             
-            # [수정 2] 관리자 키로 실행되므로 이제 RLS 에러 안 남
             supabase.table("trending_keywords").delete().neq("id", 0).execute()
             
             insert_data = []
-            # [수정 3] rank 누락 에러 방지 (enumerate 사용)
             for i, item in enumerate(keywords):
                 insert_data.append({
                     "keyword": item.get('keyword'),
                     "count": item.get('count', 0),
-                    "rank": item.get('rank', i + 1), # rank 없으면 순서대로 1, 2, 3...
+                    "rank": item.get('rank', i + 1), 
                     "updated_at": datetime.now().isoformat()
                 })
             
@@ -222,8 +219,26 @@ def update_hot_keywords():
             print(f"      ⚠️ {model} 분석 실패: {e}")
             continue
 
+# [신규 추가] 상위 랭크 기사 아카이빙 함수
+def archive_top_articles():
+    print("🗄️ 상위 랭크(Top 10) 기사 아카이빙 시작...")
+    
+    for category in CATEGORY_MAP.keys():
+        # 각 카테고리별로 rank가 1~10등인 기사만 가져옴 (score 높은 순도 가능)
+        res = supabase.table("live_news").select("*").eq("category", category).order("rank", ascending=True).limit(10).execute()
+        top_articles = res.data
+        
+        if top_articles:
+            # search_archive 테이블에 저장 (중복된 link가 있으면 업데이트)
+            # 주의: search_archive 테이블이 존재해야 함
+            try:
+                supabase.table("search_archive").upsert(top_articles, on_conflict="link").execute()
+                print(f"   💾 {category.upper()}: Top {len(top_articles)}개 -> 아카이브 저장 완료.")
+            except Exception as e:
+                print(f"   ⚠️ 아카이브 저장 실패 ({category}): {e}")
+
 def run():
-    print("🚀 7단계 마스터 엔진 가동 (30개 사수 로직 + 동적 AI)...")
+    print("🚀 7단계 마스터 엔진 가동 (30개 사수 + 아카이빙 + 동적 AI)...")
     
     for category, keywords in CATEGORY_MAP.items():
         print(f"📂 {category.upper()} 부문 처리 중...")
@@ -286,7 +301,7 @@ def run():
         if total_count > 30:
             delete_ids = []
             
-            # 전략 A: 24시간 지난 기사 삭제 (30개 될 때까지만)
+            # 전략 A: 24시간 지난 기사 삭제
             now = datetime.now()
             threshold = now - timedelta(hours=24)
             
@@ -306,7 +321,7 @@ def run():
                         remaining_count -= 1
                     else: break
 
-            # 전략 B: 그래도 30개 넘으면 점수 낮은 순 삭제
+            # 전략 B: 점수 낮은 순 삭제
             if remaining_count > 30:
                 survivors = [a for a in all_articles if a['id'] not in delete_ids]
                 survivors.sort(key=lambda x: x['score'])
@@ -320,10 +335,11 @@ def run():
             if delete_ids:
                 supabase.table("live_news").delete().in_("id", delete_ids).execute()
                 print(f"   🧹 공간 확보: {len(delete_ids)}개 삭제 완료 (현재 {remaining_count}개 유지).")
-        else:
-            print("   🛡️ 기사 개수가 30개 이하이므로 삭제하지 않습니다.")
 
+    # [마지막 단계] 아카이빙 및 키워드 분석
+    archive_top_articles() # [추가된 함수 호출]
     update_hot_keywords()
+    
     print(f"🎉 모든 작업 완료.")
 
 if __name__ == "__main__":
