@@ -11,7 +11,8 @@ const CATEGORIES = [
   { label: 'K-POP', value: 'k-pop' },
   { label: 'K-Drama', value: 'k-drama' },
   { label: 'K-Movie', value: 'k-movie' },
-  { label: 'K-Entertain', value: 'k-entertain' }
+  { label: 'k-Entertain', value: 'k-entertain' },
+  { label: 'K-Culture', value: 'k-culture' } // 새롭게 추가!
 ];
 
 export default function Home() {
