@@ -34,7 +34,7 @@ export default function Header() {
   };
 
   return (
-    <header className="flex justify-between items-center mb-8 py-4">
+    <header className="flex justify-between items-center mb-6 py-3">
       {/* 로고 영역: 배경색과 테두리를 제거하여 투명하게 수정 */}
       <div className="flex items-center gap-3 group cursor-pointer">
         <div className="w-[160px] h-[100px] bg-transparent flex items-center justify-center transition-all overflow-hidden">
