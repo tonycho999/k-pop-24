@@ -166,39 +166,46 @@ export default function Home() {
       <ArticleModal article={selectedArticle} onClose={() => setSelectedArticle(null)} onVote={handleVote} />
       <MobileFloatingBtn />
 
-      {/* [Welcome Popup] 신규 방문자용 자극적인 팝업 */}
-      {showWelcome && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+ {/* [Welcome Popup] 신규 방문자용 팝업 (문구 수정됨) */}
+      {showWelcome && !user && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
            <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[32px] p-1 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-              <div className="bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-8 rounded-[28px] text-center relative overflow-hidden">
+              <div className="bg-gradient-to-br from-cyan-500 via-blue-600 to-indigo-600 p-8 rounded-[28px] text-center relative overflow-hidden">
                  {/* 배경 장식 */}
                  <div className="absolute top-0 left-0 w-full h-full opacity-20 bg-[url('https://grainy-gradients.vercel.app/noise.svg')]"></div>
                  
                  <div className="relative z-10">
-                    <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-white/20 backdrop-blur-md mb-4 border border-white/30">
-                       <Zap className="text-white fill-yellow-300" size={24} />
+                    <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-white/20 backdrop-blur-md mb-4 border border-white/30 shadow-lg">
+                       <Zap className="text-yellow-300 fill-yellow-300" size={24} />
                     </div>
-                    <h2 className="text-3xl font-black text-white mb-2 tracking-tight leading-tight">
-                       Warning:<br/>Highly Addictive.
+                    
+                    {/* [수정] 헤드라인: 실시간성 강조 */}
+                    <h2 className="text-2xl font-black text-white mb-3 tracking-tight leading-tight">
+                       ⚡️ Real-time K-News Radar
                     </h2>
-                    <p className="text-white/90 font-medium text-sm mb-6 leading-relaxed">
-                       You have discovered the <span className="font-bold text-yellow-300 underline decoration-wavy">Secret Source</span> of K-Entertainment news. Updates every 60 seconds.
-                    </p>
+                    
+                    {/* [수정] 본문: 3줄 가량의 핵심 메시지 */}
+                    <div className="text-white/95 font-medium text-sm mb-8 leading-relaxed space-y-2 opacity-90">
+                       <p>Stop waiting for late translations.</p>
+                       <p>Access breaking <span className="text-yellow-300 font-bold">K-Pop & Drama</span> articles the second they are published in Korea.</p>
+                       <p>Experience the world's fastest K-Trend source.</p>
+                    </div>
                     
                     <button 
                        onClick={closeWelcome}
-                       className="w-full py-4 bg-white text-slate-900 font-black text-lg rounded-2xl hover:bg-slate-50 transition-colors shadow-xl"
+                       className="w-full py-4 bg-white text-slate-900 font-black text-lg rounded-2xl hover:bg-slate-50 hover:scale-[1.02] transition-all shadow-xl"
                     >
-                       Reveal the Truth
+                       Start Monitoring Now
                     </button>
                  </div>
               </div>
               
+              {/* 다시 보지 않기 체크박스 */}
               <div className="p-4 bg-white dark:bg-slate-900 text-center">
-                 <label className="flex items-center justify-center gap-2 cursor-pointer group">
+                 <label className="flex items-center justify-center gap-2 cursor-pointer group select-none">
                     <input 
                        type="checkbox" 
-                       className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 transition-all"
+                       className="w-4 h-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500 transition-all"
                        checked={dontShowAgain}
                        onChange={(e) => setDontShowAgain(e.target.checked)}
                     />
