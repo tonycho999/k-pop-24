@@ -59,7 +59,7 @@ def ai_category_editor(category, news_batch):
     Constraints: 
     1. English Title: Translate naturally.
     2. English Summary: 
-       - Write a DETAILED narrative summary (20-40% length).
+       - Write a DETAILED narrative summary (40-50% length).
        - NO bullet points. 5-8 sentences cohesive paragraph.
     3. AI Score (0.0-10.0): 
        - {score_instruction}
