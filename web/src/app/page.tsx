@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { Lock, X, Zap } from 'lucide-react'; // 아이콘 추가
 
 import Header from '@/components/Header';
 import CategoryNav from '@/components/CategoryNav';
@@ -17,8 +18,30 @@ export default function Home() {
   const [selectedArticle, setSelectedArticle] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isTranslating, setIsTranslating] = useState(false);
+  const [user, setUser] = useState<any>(null); // 유저 상태
+  
+  // 웰컴 팝업 상태
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
 
-  useEffect(() => { fetchNews(); }, []);
+  useEffect(() => {
+    // 1. 유저 체크
+    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+    
+    // 2. 웰컴 팝업 체크 (localStorage)
+    const hasSeenWelcome = localStorage.getItem('hasSeenWelcome_v1');
+    if (!hasSeenWelcome) {
+      // 1초 뒤에 팝업 띄움 (자연스럽게)
+      setTimeout(() => setShowWelcome(true), 1000);
+    }
+
+    fetchNews();
+    
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const fetchNews = async () => {
     setLoading(true);
@@ -26,22 +49,26 @@ export default function Home() {
       .from('live_news')
       .select('*')
       .order('score', { ascending: false });
-      
     if (data && !error) { setNews(data); }
     setLoading(false);
   };
 
-  // [추가] AI 실시간 번역 이벤트 리스너
+  // 웰컴 팝업 닫기
+  const closeWelcome = () => {
+    if (dontShowAgain) {
+      localStorage.setItem('hasSeenWelcome_v1', 'true');
+    }
+    setShowWelcome(false);
+  };
+
+  // AI 번역 리스너
   useEffect(() => {
     const handleTranslate = async (e: any) => {
       const targetLang = e.detail;
       if (isTranslating || news.length === 0) return;
-
       setIsTranslating(true);
-      alert(`AI is translating your feed into [${targetLang}]...`);
-
+      
       try {
-        // 현재 뉴스 리스트의 요약본을 번역 API로 전송
         const translatedNews = await Promise.all(news.map(async (item) => {
           const res = await fetch('/api/translate', {
             method: 'POST',
@@ -50,20 +77,16 @@ export default function Home() {
           const data = await res.json();
           return { ...item, summary: data.translatedText || item.summary };
         }));
-
         setNews(translatedNews);
-      } catch (err) {
-        console.error("Translation failed", err);
-      } finally {
-        setIsTranslating(false);
-      }
+      } catch (err) { console.error(err); } 
+      finally { setIsTranslating(false); }
     };
-
     window.addEventListener('ai-translate', handleTranslate);
     return () => window.removeEventListener('ai-translate', handleTranslate);
   }, [news, isTranslating]);
 
   const handleVote = async (id: string, type: 'likes' | 'dislikes') => {
+    if (!user) return; // 비로그인 투표 방지
     await supabase.rpc('increment_vote', { row_id: id, col_name: type });
     setNews(prev => prev.map(item => item.id === id ? { ...item, [type]: item[type] + 1 } : item));
     if (selectedArticle?.id === id) {
@@ -71,15 +94,24 @@ export default function Home() {
     }
   };
 
+  // [핵심] 로그인 여부에 따른 데이터 필터링
   const getFilteredNews = () => {
-    if (category === 'All') {
-      return [...news].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 30);
-    } else {
-      return news.filter(n => n.category === category).sort((a, b) => (a.rank || 99) - (b.rank || 99)).slice(0, 30);
-    }
+    let baseNews = category === 'All' 
+      ? [...news].sort((a, b) => (b.score || 0) - (a.score || 0))
+      : news.filter(n => n.category === category).sort((a, b) => (a.rank || 99) - (b.rank || 99));
+
+    // 로그인 안 했으면 1개만 보여줌, 했으면 30개
+    return user ? baseNews.slice(0, 30) : baseNews.slice(0, 1);
   };
 
   const filteredNews = getFilteredNews();
+
+  const handleLogin = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${location.origin}/auth/callback` },
+    });
+  };
 
   return (
     <main className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans dark:bg-slate-950 dark:text-slate-200 transition-colors">
@@ -87,17 +119,97 @@ export default function Home() {
         <Header />
         <CategoryNav active={category} setCategory={setCategory} />
         <InsightBanner insight={filteredNews[0]?.insight} />
+
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-8">
-          <div className="col-span-1 md:col-span-3">
+          <div className="col-span-1 md:col-span-3 relative">
             <NewsFeed news={filteredNews} loading={loading || isTranslating} onOpen={setSelectedArticle} />
+            
+            {/* [Paywall] 비로그인 유저용 잠금 화면 */}
+            {!user && !loading && (
+              <div className="mt-6 relative">
+                 {/* 가짜 블러 카드들 */}
+                 <div className="space-y-6 opacity-40 blur-sm select-none pointer-events-none grayscale">
+                    <div className="h-40 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200" />
+                    <div className="h-40 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200" />
+                 </div>
+                 
+                 {/* 중앙 로그인 유도 */}
+                 <div className="absolute inset-0 flex flex-col items-center justify-start pt-4">
+                    <div className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl p-8 rounded-[32px] shadow-2xl border border-slate-100 dark:border-slate-800 text-center max-w-sm mx-auto">
+                        <div className="w-14 h-14 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-cyan-200">
+                           <Lock className="text-white" size={24} />
+                        </div>
+                        <h3 className="text-xl font-black text-slate-900 dark:text-white mb-2">
+                           Want to see more?
+                        </h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+                           Sign in to unlock <span className="font-bold text-cyan-600">Real-time K-Trends</span> & <span className="font-bold text-cyan-600">AI Analysis</span>.
+                        </p>
+                        <button 
+                          onClick={handleLogin}
+                          className="w-full py-3.5 bg-slate-900 dark:bg-cyan-600 text-white font-bold rounded-xl hover:scale-105 transition-transform shadow-xl"
+                        >
+                          Sign in with Google
+                        </button>
+                    </div>
+                 </div>
+              </div>
+            )}
           </div>
+          
           <div className="hidden md:block col-span-1">
             <Sidebar news={news} />
           </div>
         </div>
       </div>
+
       <ArticleModal article={selectedArticle} onClose={() => setSelectedArticle(null)} onVote={handleVote} />
       <MobileFloatingBtn />
+
+      {/* [Welcome Popup] 신규 방문자용 자극적인 팝업 */}
+      {showWelcome && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+           <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[32px] p-1 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
+              <div className="bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-8 rounded-[28px] text-center relative overflow-hidden">
+                 {/* 배경 장식 */}
+                 <div className="absolute top-0 left-0 w-full h-full opacity-20 bg-[url('https://grainy-gradients.vercel.app/noise.svg')]"></div>
+                 
+                 <div className="relative z-10">
+                    <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-white/20 backdrop-blur-md mb-4 border border-white/30">
+                       <Zap className="text-white fill-yellow-300" size={24} />
+                    </div>
+                    <h2 className="text-3xl font-black text-white mb-2 tracking-tight leading-tight">
+                       Warning:<br/>Highly Addictive.
+                    </h2>
+                    <p className="text-white/90 font-medium text-sm mb-6 leading-relaxed">
+                       You have discovered the <span className="font-bold text-yellow-300 underline decoration-wavy">Secret Source</span> of K-Entertainment news. Updates every 60 seconds.
+                    </p>
+                    
+                    <button 
+                       onClick={closeWelcome}
+                       className="w-full py-4 bg-white text-slate-900 font-black text-lg rounded-2xl hover:bg-slate-50 transition-colors shadow-xl"
+                    >
+                       Reveal the Truth
+                    </button>
+                 </div>
+              </div>
+              
+              <div className="p-4 bg-white dark:bg-slate-900 text-center">
+                 <label className="flex items-center justify-center gap-2 cursor-pointer group">
+                    <input 
+                       type="checkbox" 
+                       className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 transition-all"
+                       checked={dontShowAgain}
+                       onChange={(e) => setDontShowAgain(e.target.checked)}
+                    />
+                    <span className="text-xs font-bold text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-colors">
+                       Don't show this again
+                    </span>
+                 </label>
+              </div>
+           </div>
+        </div>
+      )}
     </main>
   );
 }
