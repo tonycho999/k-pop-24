@@ -10,8 +10,6 @@ import InsightBanner from '@/components/InsightBanner';
 import NewsFeed from '@/components/NewsFeed';
 import Sidebar from '@/components/Sidebar';
 import ArticleModal from '@/components/ArticleModal';
-
-// [추가] 모바일용 플로팅 버튼
 import MobileFloatingBtn from '@/components/MobileFloatingBtn';
 
 export default function Home() {
@@ -25,12 +23,13 @@ export default function Home() {
 
   const fetchNews = async () => {
     setLoading(true);
-    // 사이드바의 통계와 전체 랭킹 분석을 위해 모든 기사를 가져옵니다.
+    // [수정] 초기 로딩 시 모든 데이터를 가져오되, 기본적으로 '점수(score)' 순으로 가져옵니다.
+    // 이렇게 하면 'All' 탭에서 가장 핫한 뉴스가 먼저 보입니다.
     const { data, error } = await supabase
       .from('live_news')
       .select('*')
-      .order('rank', { ascending: true });
-    
+      .order('score', { ascending: false }); // 전체 점수 내림차순
+      
     if (data && !error) {
       setNews(data);
     }
@@ -52,11 +51,24 @@ export default function Home() {
     }
   };
 
-  // 3. 필터링 로직 (상위 30개)
-  const filteredNews = (category === 'All' 
-    ? news 
-    : news.filter(n => n.category === category)
-  ).slice(0, 30);
+  // 3. [핵심 수정] 필터링 및 정렬 로직 분리
+  const getFilteredNews = () => {
+    if (category === 'All') {
+      // [All Trends]: 카테고리 상관없이 전체 기사를 '점수(Score)' 높은 순으로 정렬
+      // 원본 배열을 복사([...news])하여 정렬해야 원본이 훼손되지 않음
+      return [...news]
+        .sort((a, b) => (b.score || 0) - (a.score || 0))
+        .slice(0, 30);
+    } else {
+      // [Specific Category]: 해당 카테고리만 남기고 '랭크(Rank)' 오름차순(1위->30위) 정렬
+      return news
+        .filter(n => n.category === category)
+        .sort((a, b) => (a.rank || 99) - (b.rank || 99))
+        .slice(0, 30);
+    }
+  };
+
+  const filteredNews = getFilteredNews();
 
   return (
     <main className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans overflow-x-hidden">
@@ -66,13 +78,13 @@ export default function Home() {
         <Header />
         <CategoryNav active={category} setCategory={setCategory} />
         
-        {/* AI 배너 */}
-        <InsightBanner insight={news[0]?.insight} />
+        {/* AI 배너: 현재 보고 있는 리스트의 1위 기사 Insight를 보여줌 */}
+        <InsightBanner insight={filteredNews[0]?.insight} />
 
         {/* 메인 레이아웃 (Grid) */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-8">
           
-          {/* [1] 뉴스 피드 영역 (PC: 왼쪽 3칸 / 모바일: 전체) */}
+          {/* [1] 뉴스 피드 영역 */}
           <div className="col-span-1 md:col-span-3">
             <NewsFeed 
               news={filteredNews} 
@@ -81,8 +93,7 @@ export default function Home() {
             />
           </div>
 
-          {/* [2] 사이드바 영역 (PC: 오른쪽 1칸 / 모바일: 숨김) */}
-          {/* 'hidden md:block' 클래스가 모바일에서 이 부분을 숨겨줍니다 */}
+          {/* [2] 사이드바 영역 */}
           <div className="hidden md:block col-span-1">
             <Sidebar news={news} />
           </div>
@@ -97,7 +108,7 @@ export default function Home() {
         onVote={handleVote} 
       />
 
-      {/* [4] 모바일용 플로팅 버튼 (화면 우측 하단 고정) */}
+      {/* [4] 모바일용 플로팅 버튼 */}
       <MobileFloatingBtn />
 
     </main>
