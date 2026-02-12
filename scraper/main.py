@@ -16,10 +16,11 @@ groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 MODELS_TO_TRY = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile"]
 
+# [Step 1의 연료] 키워드 맵 유지
 CATEGORY_MAP = {
     "k-pop": ["컴백", "빌보드", "아이돌", "뮤직", "비디오", "챌린지", "포토카드", "월드투어", "가수"],
     "k-drama": ["드라마", "시청률", "넷플릭스", "OTT", "배우", "캐스팅", "대본리딩", "종영"],
-    "k-movie": ["영화", "개봉", "박스오피스", "시사회", "영화제", "관객", "무대인사", "개봉"],
+    "k-movie": ["영화", "개봉", "박스오피스", "시사회", "영화제", "관객", "무대인사"],
     "k-entertain": ["예능", "유튜브", "개그맨", "코미디언", "방송", "개그우먼"],
     "k-culture": ["푸드", "뷰티", "웹툰", "팝업스토어", "패션", "음식", "해외반응"]
 }
@@ -46,27 +47,19 @@ def get_article_image(link):
     except: return None
 
 def ai_category_editor(category, news_batch):
+    """Step 3: 분류 및 평점 부여"""
+    if not news_batch: return []
     limited_batch = news_batch[:150]
     raw_text = "\n".join([f"[{i}] {n['title']}" for i, n in enumerate(limited_batch)])
     
     prompt = f"""
-    Task: Select the TOP 30 most buzzworthy news items for the '{category}' category from the list below.
-    
-    Constraints:
-    1. You MUST select EXACTLY 30 items.
-    2. Rank them from 1 to 30.
-    3. Translate titles to English and write a 3-line English summary for each.
-    4. Provide an AI Score (0.0 to 10.0) based on trend potential.
-
-    List:
-    {raw_text}
-
-    Output JSON Format:
-    {{
-        "articles": [
-            {{ "original_index": 0, "rank": 1, "category": "{category}", "eng_title": "...", "summary": "...", "score": 9.5 }}
-        ]
-    }}
+    Task: Select the top buzzworthy news for '{category}'. 
+    Constraints: 
+    - Select up to 30 items. 
+    - Rank 1-30. 
+    - Translate title to English & 3-line English summary. 
+    - Provide AI Score (0.0-10.0).
+    Output JSON: {{ "articles": [ {{ "original_index": 0, "rank": 1, "category": "{category}", "eng_title": "...", "summary": "...", "score": 9.5 }} ] }}
     """
     
     for model in MODELS_TO_TRY:
@@ -74,104 +67,71 @@ def ai_category_editor(category, news_batch):
             res = groq_client.chat.completions.create(
                 messages=[{"role": "system", "content": "You are a professional K-Enter Editor."},
                           {"role": "user", "content": prompt}], 
-                model=model, 
-                response_format={"type": "json_object"}
+                model=model, response_format={"type": "json_object"}
             )
             return json.loads(res.choices[0].message.content).get('articles', [])
         except: continue
     return []
 
 def run():
-    print("🚀 뉴스 엔진 가동 (카테고리별 30개 유지 모드)...")
-
-    # 1. 기존 기사 백업 (좋아요 상위 10개)
-    try:
-        top_voted = supabase.table("live_news").select("*").order("likes", desc=True).limit(10).execute()
-        for item in top_voted.data:
-            archive_data = {
-                "original_link": item['link'], "category": item['category'], "title": item['title'],
-                "summary": item['summary'], "image_url": item['image_url'], "score": item['score'], "archive_reason": "Top 10 Likes"
-            }
-            supabase.table("search_archive").upsert(archive_data, on_conflict="original_link").execute()
-    except: pass
-
+    print("🚀 7단계 마스터 엔진 가동 (카테고리별 30개 유지)...")
     total_added = 0
     
-    # [핵심] 카테고리별로 돌면서 수집, 삭제, 삽입 수행
     for category, keywords in CATEGORY_MAP.items():
-        print(f"📂 {category.upper()} 부문 작업 시작...")
-        cat_news = []
+        print(f"📂 {category.upper()} 부문 처리 중...")
+
+        # 1. 수집 (Maximum Fetch)
+        raw_news = []
         for kw in keywords:
-            cat_news.extend(get_naver_api_news(kw))
+            raw_news.extend(get_naver_api_news(kw))
         
-        # 중복 제거
-        cat_news = list({n['link']: n for n in cat_news}.values())
-        
-        # AI 선별 (항상 30개 요청)
-        selected = ai_category_editor(category, cat_news)
+        # 2. 중복 제거 (Dedupe) - 링크 기준
+        deduped_news = list({n['link']: n for n in raw_news}.values())
+        print(f"   🔎 수집: {len(raw_news)}개 -> 중복제거 후: {len(deduped_news)}개")
+
+        # 3. 분류 및 평점 (AI Scoring)
+        selected = ai_category_editor(category, deduped_news)
         num_new = len(selected)
         print(f"   ㄴ AI 선별 완료: {num_new}개")
 
         if num_new > 0:
-            # 1. 현재 해당 카테고리의 기사들 가져오기 (오래된 순, 점수 낮은 순 정렬)
-            existing = supabase.table("live_news") \
-                .select("id") \
-                .eq("category", category) \
-                .order("created_at", desc=False) \
-                .order("score", desc=False) \
-                .execute()
-            
-            # 2. 삭제할 기사 선정 (새로 추가될 개수만큼 기존 기사 삭제하여 30개 유지)
-            # 만약 현재 30개고 새 기사가 30개면 30개 삭제. 현재 10개고 새 기사가 30개면 10개만 삭제.
-            current_count = len(existing.data)
-            num_to_delete = min(current_count, num_new) 
-            
-            # 카테고리별 30개 강제 유지를 위해 최종 수량이 30개가 넘을 경우 조절
-            if (current_count - num_to_delete + num_new) > 30:
-                num_to_delete = (current_count + num_new) - 30
+            # 4. 슬롯 체크 (Slot Check)
+            res = supabase.table("live_news").select("id", "created_at", "score").eq("category", category).execute()
+            existing = res.data
+            current_count = len(existing)
+
+            # 삭제 필요한 수량 계산 (총합이 30개를 넘는 만큼)
+            num_to_delete = max(0, (current_count + num_new) - 30)
 
             if num_to_delete > 0:
-                delete_ids = [item['id'] for item in existing.data[:num_to_delete]]
+                # 5. 노후화 삭제 (Time-based Clean) & 6. 저득점 삭제 (Quality-based Clean)
+                # 정렬 기준: 1순위 시간(오래된 순), 2순위 점수(낮은 순)
+                existing.sort(key=lambda x: (x['created_at'], x['score']))
+                
+                delete_ids = [item['id'] for item in existing[:num_to_delete]]
                 supabase.table("live_news").delete().in_("id", delete_ids).execute()
-                print(f"   🧹 기존 기사 {len(delete_ids)}개 삭제 완료 (오래된 순/저점수 순)")
+                print(f"   🧹 슬롯 확보: {len(delete_ids)}개 삭제 완료 (시간/점수 기준)")
 
-            # 3. 신규 기사 삽입
+            # 7. 최종 저장 (Final Upsert)
             new_data_list = []
             for art in selected:
                 idx = art['original_index']
-                if idx >= len(cat_news): continue
-                
-                orig = cat_news[idx]
-                img = get_article_image(orig['link'])
-                if not img: img = f"https://placehold.co/600x400/111/cyan?text={category}"
+                if idx >= len(deduped_news): continue
+                orig = deduped_news[idx]
+                img = get_article_image(orig['link']) or f"https://placehold.co/600x400/111/cyan?text={category}"
 
-                data = {
-                    "rank": art['rank'],
-                    "category": category,
-                    "title": art['eng_title'],
-                    "summary": art['summary'],
-                    "link": orig['link'],
-                    "image_url": img,
-                    "score": art['score'],
-                    "likes": 0, "dislikes": 0,
-                    "created_at": datetime.now().isoformat()
-                }
-                new_data_list.append(data)
-                
-                # 아카이브 (카테고리 TOP 3)
-                if art['rank'] <= 3:
-                    archive_data = {
-                        "original_link": orig['link'], "category": category, "title": art['eng_title'],
-                        "summary": art['summary'], "image_url": img, "score": art['score'], "archive_reason": f"{category} Top 3"
-                    }
-                    supabase.table("search_archive").upsert(archive_data, on_conflict="original_link").execute()
+                new_data_list.append({
+                    "rank": art['rank'], "category": category, "title": art['eng_title'],
+                    "summary": art['summary'], "link": orig['link'], "image_url": img,
+                    "score": art['score'], "likes": 0, "dislikes": 0, "created_at": datetime.now().isoformat()
+                })
 
             if new_data_list:
                 supabase.table("live_news").insert(new_data_list).execute()
                 total_added += len(new_data_list)
-                print(f"   ✅ 신규 기사 {len(new_data_list)}개 삽입 완료")
+                print(f"   ✅ {category} 업데이트 성공 (슬롯 30개 유지)")
 
-    print(f"🎉 최종 완료: 총 {total_added}개의 뉴스가 업데이트되었습니다. 카테고리별 30개 상한 유지 중.")
+    print(f"🎉 작업 완료: 총 {total_added}개 기사 갱신.")
 
 if __name__ == "__main__":
     run()
