@@ -2,18 +2,20 @@ name: K-Enter 24 Auto Scraper
 
 on:
   schedule:
-    - cron: '0 * * * *' # 매 정각마다 자동으로 실행 (1시간 간격)
-  workflow_dispatch: # 우리가 원할 때 수동으로 버튼 눌러서 실행 가능하게 함
+    # 0분(정각)을 피해 23분과 53분에 실행되도록 설정 (약 30분 간격)
+    # GitHub 서버 부하를 피해서 훨씬 안정적으로 작동합니다.
+    - cron: '23,53 * * * *'
+  workflow_dispatch: # 수동 실행 버튼 유지
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # 최신 버전으로 업데이트
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # 최신 버전으로 업데이트
         with:
           python-version: '3.9'
 
@@ -28,4 +30,5 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        # 메인 코드 실행
         run: python scraper/main.py
