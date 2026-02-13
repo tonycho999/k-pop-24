@@ -1,116 +1,116 @@
 import sys
 import os
-
-# 모듈 import 문제 방지
-sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
-
 import time
 from datetime import datetime
 from dotenv import load_dotenv
 
+# 모듈 import 문제 방지
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+
 # 필수 모듈 불러오기
-from scraper import crawler, ai_engine, repository, update_rankings
-from scraper.config import CATEGORY_MAP # 백업용 고정 키워드 임포트
+from scraper import crawler, ai_engine, repository
+from scraper.config import CATEGORY_SEEDS, TOP_RANK_LIMIT
 
 load_dotenv()
 
 def run_master_scraper():
-    print("🚀 구글 트렌드 기반 9단계 마스터 엔진 가동...")
+    print(f"🚀 K-Enter Trend Master 가동 시작: {datetime.now()}")
     
-    # [1단계] 구글 실시간 트렌드 키워드 수집
-    raw_trending_keywords = crawler.get_google_trending_keywords()
-    
-    categorized_keywords = {}
-
-    if raw_trending_keywords:
-        print(f"🔥 구글 트렌드 키워드 {len(raw_trending_keywords)}개 수집 성공. AI 분류 시작...")
-        # [2~3단계] AI 분류 및 카테고리별 상위 키워드 선정
-        categorized_keywords = ai_engine.ai_filter_and_rank_keywords(raw_trending_keywords)
+    # 5개 카테고리 루프
+    for category, seeds in CATEGORY_SEEDS.items():
+        print(f"\n📂 [{category.upper()}] 트렌드 분석 시작")
         
-        if not categorized_keywords:
-            print("⚠️ AI 분류 결과가 없습니다. 고정 키워드로 전환합니다.")
-            categorized_keywords = CATEGORY_MAP
-    else:
-        # [Fallback] 구글 트렌드 실패 시 고정 키워드 사용
-        print("⚠️ 구글 키워드 수집 실패. 설정 파일의 [고정 키워드]를 사용하여 작업을 계속합니다.")
-        categorized_keywords = CATEGORY_MAP
-
-    # 카테고리별 루프 시작
-    for category, keywords in categorized_keywords.items():
+        # [1단계] 씨앗 수집 (Seed Search)
+        # 네이버 뉴스 API를 통해 광범위한 제목 수집 (차단 방지 & 최신성 확보)
+        seed_titles = []
         try:
-            print(f"\n📂 {category.upper()} 부문 처리 중 (키워드: {keywords})")
-
-            # [4단계] 네이버 뉴스 검색
-            raw_news = []
-            for kw in keywords: 
-                raw_news.extend(crawler.get_naver_api_news(kw))
+            for seed in seeds:
+                # 각 시드당 20~30개 정도만 가져와서 믹스
+                news = crawler.get_naver_api_news(seed, display=20)
+                seed_titles.extend([n['title'] for n in news])
             
-            # [5단계] DB 중복 체크
-            existing_links = repository.get_existing_links(category)
-            # 70개까지만 후보 선정
-            new_candidate_news = [n for n in raw_news if n['link'] not in existing_links][:70]
+            # 중복 제거
+            seed_titles = list(set(seed_titles))
+            print(f"   🌱 원석 수집 완료: {len(seed_titles)}개의 제목 확보")
+        except Exception as e:
+            print(f"   ⚠️ 씨앗 수집 중 오류: {e}")
+            continue
+        
+        # [2단계] 엔티티 추출 및 랭킹 (AI Mining)
+        top_keywords = ai_engine.extract_top_entities(category, seed_titles)
+        
+        if not top_keywords:
+            print("   ⚠️ 키워드 추출 실패. 다음 카테고리로 이동.")
+            continue
+            
+        print(f"   💎 추출된 랭킹(Top {len(top_keywords)}): {', '.join(top_keywords[:5])}...")
 
-            if not new_candidate_news:
-                print(f"    ✨ 새로운 뉴스가 없습니다.")
+        # [3단계] 정밀 검색 및 합성 (Deep Dive & Synthesis)
+        category_news_list = []
+        
+        # 상위 N개(설정값 30개)만 처리
+        target_keywords = top_keywords[:TOP_RANK_LIMIT]
+        
+        for rank, kw in enumerate(target_keywords):
+            print(f"   🔍 Rank {rank+1}: '{kw}' 분석 중...")
+            
+            try:
+                # 해당 키워드로 최신 뉴스 검색
+                raw_articles = crawler.get_naver_api_news(kw, display=10)
+                
+                if not raw_articles:
+                    continue
+
+                # 본문 크롤링 (상위 3~5개 기사 합치기)
+                full_contents = []
+                main_image = None
+                valid_link = raw_articles[0]['link']
+                published_at = raw_articles[0].get('published_at', datetime.now()).isoformat()
+
+                for art in raw_articles[:5]:
+                    text, img = crawler.get_article_data(art['link'])
+                    if text: full_contents.append(text)
+                    # 첫 번째로 발견된 유효한 이미지를 메인 이미지로 사용
+                    if not main_image and img: main_image = img
+
+                # AI 요약 (브리핑 생성)
+                if full_contents:
+                    briefing = ai_engine.synthesize_briefing(kw, full_contents)
+                    
+                    # 이미지 없을 경우 플레이스홀더
+                    final_img = main_image or f"https://placehold.co/600x400/111/cyan?text={kw}"
+
+                    news_item = {
+                        "category": category,
+                        "rank": rank + 1,       # 랭킹 정보 추가
+                        "keyword": kw,          # 키워드 정보 추가
+                        "title": f"[{rank+1}] {kw}: Top Trending News", # 제목 포맷팅
+                        "summary": briefing,
+                        "link": valid_link,     # 대표 링크 하나 제공
+                        "image_url": final_img,
+                        "score": 10.0 - (rank * 0.1), # 랭킹 기반 점수 (1위 10점, 2위 9.9점...)
+                        "likes": 0, "dislikes": 0,
+                        "created_at": datetime.now().isoformat(),
+                        "published_at": published_at
+                    }
+                    category_news_list.append(news_item)
+                
+                # API 보호를 위한 짧은 대기
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"      ⚠️ '{kw}' 처리 실패: {e}")
                 continue
 
-            # 본문 1,500자 및 이미지 확보
-            print(f"    🕷️ 본문 크롤링 중 ({len(new_candidate_news)}개)...")
-            for news_item in new_candidate_news:
-                full_text, image_url = crawler.get_article_data(news_item['link'])
-                news_item['full_content'] = full_text  
-                news_item['crawled_image'] = image_url 
-
-            # [6단계] 3중 AI 엔진을 이용한 평점 및 3단계 요약
-            analyzed_list = ai_engine.ai_category_editor(category, new_candidate_news)
+        # [4단계] DB 저장 (교체 방식)
+        if category_news_list:
+            # 1. 상위 10개 아카이브 저장
+            repository.save_to_archive(category_news_list[:10])
             
-            if analyzed_list:
-                # 점수 높은 순 정렬 후 상위 30개 선정
-                analyzed_list.sort(key=lambda x: x.get('score', 0), reverse=True)
-                top_30_news = analyzed_list[:30]
-                
-                # [7단계] DB 저장
-                new_data_list = []
-                for art in top_30_news:
-                    idx = art.get('original_index')
-                    if idx is not None and idx < len(new_candidate_news):
-                        orig = new_candidate_news[idx]
-                        
-                        # 이미지 URL 결정 (크롤링된 이미지 우선, 없으면 placeholder)
-                        final_img = orig.get('crawled_image')
-                        if not final_img:
-                             final_img = f"https://placehold.co/600x400/111/cyan?text={category}"
+            # 2. Live News 해당 카테고리 전체 교체
+            repository.refresh_live_news(category, category_news_list)
 
-                        new_data_list.append({
-                            "category": category, 
-                            "title": art.get('eng_title', orig['title']),
-                            "summary": art.get('summary', 'Summary not available.'), 
-                            "link": orig['link'], 
-                            "image_url": final_img,
-                            "score": art.get('score', 5.0), 
-                            "likes": 0, "dislikes": 0, 
-                            "created_at": datetime.now().isoformat(),
-                            "published_at": orig.get('published_at', datetime.now()).isoformat()
-                        })
-                
-                if new_data_list:
-                    repository.save_news(new_data_list)
-
-            # [8~9단계] 슬롯 관리
-            repository.manage_slots(category)
-
-        except Exception as e:
-            print(f"⚠️ {category} 처리 중 오류: {e}")
-            continue
-
-    print("\n🎉 모든 카테고리 수집 및 처리 완료.")
-
-def main():
-    print("🚀 K-Enter AI News Bot Master Mode Started...")
-    try: update_rankings.update_rankings() 
-    except: pass
-    
-    run_master_scraper()
+    print("\n🎉 모든 카테고리 150개 뉴스 업데이트가 완료되었습니다.")
 
 if __name__ == "__main__":
-    main()
+    run_master_scraper()
