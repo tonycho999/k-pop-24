@@ -54,44 +54,58 @@ export default function Header() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // [검색 로직]
+  // [검색창 포커스]
   useEffect(() => {
     if (isSearchOpen && searchInputRef.current) {
       searchInputRef.current.focus();
     }
   }, [isSearchOpen]);
 
-  const handleSearch = async (e: React.FormEvent) => {
+  // [핵심] 실시간 검색 로직 (디바운싱 적용)
+  // 사용자가 타자를 칠 때는 기다리다가, 300ms(0.3초) 동안 입력이 없으면 검색 실행
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(async () => {
+      if (!searchQuery.trim()) {
+        setSearchResults([]); // 검색어 없으면 결과 초기화
+        return;
+      }
+
+      setIsSearching(true);
+      try {
+        // 1. Live News 검색
+        const { data: liveData } = await supabase
+          .from('live_news')
+          .select('*')
+          .ilike('title', `%${searchQuery}%`)
+          .limit(5);
+
+        // 2. Archive 검색
+        const { data: archiveData } = await supabase
+          .from('search_archive')
+          .select('*')
+          .ilike('title', `%${searchQuery}%`)
+          .limit(5);
+
+        // 결과 합치기
+        const combined = [
+          ...(liveData || []).map(item => ({ ...item, type: 'LIVE' })),
+          ...(archiveData || []).map(item => ({ ...item, type: 'ARCHIVE' }))
+        ];
+        setSearchResults(combined);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300); // 0.3초 지연
+
+    // 타자를 계속 치면 이전 타이머를 취소해서 DB 호출을 막음
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery]);
+
+  // 엔터 키 눌렀을 때 새로고침 방지용
+  const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchQuery.trim()) return;
-
-    setIsSearching(true);
-    try {
-      // 1. Live News 검색
-      const { data: liveData } = await supabase
-        .from('live_news')
-        .select('*')
-        .ilike('title', `%${searchQuery}%`)
-        .limit(5);
-
-      // 2. Archive 검색
-      const { data: archiveData } = await supabase
-        .from('search_archive')
-        .select('*')
-        .ilike('title', `%${searchQuery}%`)
-        .limit(5);
-
-      // 결과 합치기 (타입 구분)
-      const combined = [
-        ...(liveData || []).map(item => ({ ...item, type: 'LIVE' })),
-        ...(archiveData || []).map(item => ({ ...item, type: 'ARCHIVE' }))
-      ];
-      setSearchResults(combined);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsSearching(false);
-    }
   };
 
   const toggleDarkMode = () => {
@@ -198,7 +212,8 @@ export default function Header() {
         <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-start justify-center pt-20 px-4">
           <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
             
-            <form onSubmit={handleSearch} className="flex items-center p-4 border-b border-slate-100 dark:border-slate-800">
+            {/* 검색 입력창 (onSubmit 수정됨) */}
+            <form onSubmit={handleSearchSubmit} className="flex items-center p-4 border-b border-slate-100 dark:border-slate-800">
               <Search className="text-slate-400 mr-3" size={24} />
               <input 
                 ref={searchInputRef}
@@ -213,6 +228,7 @@ export default function Header() {
               </button>
             </form>
 
+            {/* 검색 결과 영역 */}
             <div className="overflow-y-auto p-4">
               {isSearching ? (
                 <div className="text-center py-10 text-slate-400">Searching...</div>
@@ -221,9 +237,9 @@ export default function Header() {
                   {searchResults.map((item) => (
                     <div 
                       key={item.id} 
-                      // [수정 핵심] 클릭 시 모달 오픈 이벤트 발생
                       onClick={() => {
                         setIsSearchOpen(false); // 검색창 닫기
+                        // 메인 페이지에 모달 열라고 신호 보내기
                         window.dispatchEvent(new CustomEvent('open-news-modal', { detail: item }));
                       }}
                       className="block p-4 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group cursor-pointer"
@@ -245,9 +261,13 @@ export default function Header() {
                     </div>
                   ))}
                 </div>
-              ) : searchQuery && (
+              ) : searchQuery ? (
                 <div className="text-center py-10 text-slate-400">
                   No results found for "{searchQuery}"
+                </div>
+              ) : (
+                <div className="text-center py-10 text-slate-400">
+                  Type to search...
                 </div>
               )}
             </div>
