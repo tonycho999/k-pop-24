@@ -5,7 +5,7 @@ import requests
 from groq import Groq
 
 # =========================================================
-# 1. 모델 선택 로직
+# 1. 모델 선택 로직 (기존 유지)
 # =========================================================
 
 def get_groq_text_models():
@@ -38,16 +38,13 @@ def get_openrouter_text_models():
         return valid_models
     except: return []
 
-def get_hf_text_models():
-    return ["mistralai/Mistral-7B-Instruct-v0.3"]
-
 # =========================================================
-# 2. AI 답변 정제기 (<think> 제거)
+# 2. AI 답변 정제기 (<think> 삭제 및 JSON 세탁)
 # =========================================================
 
 def clean_ai_response(text):
     if not text: return ""
-    # <think> 태그 제거
+    # <think> 태그 제거 (가장 중요)
     cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
     
     # ```json 코드블럭 제거
@@ -61,6 +58,8 @@ def clean_ai_response(text):
 
 def ask_ai_master(system_prompt, user_input):
     raw_response = ""
+    
+    # Groq 시도
     groq_key = os.getenv("GROQ_API_KEY")
     if groq_key:
         models = get_groq_text_models()
@@ -76,6 +75,7 @@ def ask_ai_master(system_prompt, user_input):
                 if raw_response: break
             except: continue
 
+    # OpenRouter 시도
     if not raw_response:
         or_key = os.getenv("OPENROUTER_API_KEY")
         if or_key:
@@ -115,37 +115,42 @@ def parse_json_result(text):
     return []
 
 # =========================================================
-# 4. [핵심 수정] 키워드 추출 + 분류 (사람 vs 작품 구분)
+# 4. [2단계] 키워드 추출 및 정체 분류
 # =========================================================
 
-def extract_top_entities(category, news_titles):
+def extract_top_entities(category, news_text_data):
     """
-    뉴스 제목에서 키워드를 뽑고, 이것이 '사람(그룹)'인지 '작품(제목)'인지 분류함.
+    뉴스 제목+요약을 분석하여 키워드를 추출하고,
+    'person'(사람/그룹) vs 'content'(작품/곡)으로 분류함.
     """
     
     system_prompt = f"""
     You are a K-Content Trend Analyst for '{category}'. 
     
     [TASK]
-    1. Analyze the news titles and extract the most mentioned keywords (Singers, Actors, Titles, Topics).
-    2. CLASSIFY each keyword as either 'person' (includes Groups, Bands, Actors, MCs) or 'content' (Songs, Dramas, Movies, Shows, Places, Concepts).
+    1. Analyze the provided news titles and summaries.
+    2. Extract the most frequently mentioned keywords (Singers, Groups, Actors, Songs, Dramas, Movies, Shows, Places).
+    3. CLASSIFY each keyword into 'person' or 'content'.
     
-    [RULES]
-    - 'person': BTS, NewJeans, IU, Kim Soo-hyun, Yoo Jae-suk, SEVENTEEN.
-    - 'content': Hype Boy, Squid Game, The Glory, Running Man, Han River, Fashion Week.
-    - Output format: JSON LIST of objects. 
-      Example: [{{"keyword": "BTS", "type": "person"}}, {{"keyword": "Dynamite", "type": "content"}}]
+    [CLASSIFICATION RULES]
+    - 'person': Groups (BTS, IVE), Singers (IU), Actors (Kim Soo-hyun), Entertainers (Yoo Jae-suk).
+    - 'content': Song Titles (Hype Boy), Drama Titles (The Glory), Movie Titles (Exhuma), TV Shows (Running Man), Places, Events.
+    
+    [OUTPUT FORMAT]
+    - JSON LIST of objects.
+    - Example: [{{"keyword": "BTS", "type": "person"}}, {{"keyword": "Seven", "type": "content"}}]
     - Max 40 items.
     - Translate Korean names to English.
     """
     
-    user_input = "\n".join(news_titles)[:15000]
+    # 텍스트가 너무 길면 자름
+    user_input = news_text_data[:15000]
     
     raw_result = ask_ai_master(system_prompt, user_input)
     parsed = parse_json_result(raw_result)
     
-    # 리스트인지 확인하고 중복 제거 (keyword 기준)
     if isinstance(parsed, list):
+        # 중복 제거
         seen = set()
         unique_list = []
         for item in parsed:
@@ -157,7 +162,7 @@ def extract_top_entities(category, news_titles):
     return []
 
 # =========================================================
-# 5. 요약 로직 (<think> 태그 절대 금지)
+# 5. [4단계] AI 브리핑 생성 (조건 미달 시 폐기)
 # =========================================================
 
 def synthesize_briefing(keyword, news_contents):
@@ -165,14 +170,23 @@ def synthesize_briefing(keyword, news_contents):
     You are a Professional News Editor.
     Topic: {keyword}
     
-    Task: Create a concise, engaging news briefing (3-6 sentences) based on the provided text.
+    [TASK]
+    Write a comprehensive news briefing in ENGLISH based on the provided text.
     
-    [STRICT RULES]
-    1. ABSOLUTELY NO <think> tags or internal monologue. Output ONLY the final briefing text.
-    2. DO NOT say "No specific news". If specific info is missing, assume the keyword is trending due to general popularity and write a generic positive update.
-    3. Tone: Professional, Journalistic.
-    4. Output: Plain Text.
+    [CRITICAL RULES]
+    1. Length: Minimum 5 lines, Maximum 20 lines.
+    2. Format: Plain text paragraphs.
+    3. NO <think> tags.
+    4. DATA CHECK: If the provided text has no meaningful information about '{keyword}' or says "no specific news",
+       OUTPUT EXACTLY THIS SINGLE WORD: "INVALID_DATA"
+       (Do not write "No specific news", just write "INVALID_DATA").
     """
     
-    user_input = "\n\n".join(news_contents)[:4000] 
-    return ask_ai_master(system_prompt, user_input)
+    user_input = "\n\n".join(news_contents)[:6000] 
+    result = ask_ai_master(system_prompt, user_input)
+    
+    # AI가 데이터 부족 판정을 내렸거나, 결과가 너무 짧으면 무효 처리
+    if "INVALID_DATA" in result or len(result) < 50:
+        return None
+        
+    return result
