@@ -42,13 +42,12 @@ def run_scraper():
                 continue
 
             # [규칙 3] 최신 기사 70개 선정 -> AI 평가
-            # 70개가 안 되면 있는 만큼만 보냄
             ai_input_news = new_candidate_news[:70]
 
-            # 🟢 [핵심 추가] AI 요약 품질을 위해 본문 크롤링 (1,500자 확보)
+            # 🟢 [핵심] AI 요약 품질을 위해 본문 크롤링 (1,500자 확보)
             print(f"    🕷️ AI 분석을 위한 본문 크롤링 중 ({len(ai_input_news)}개)...")
             for news_item in ai_input_news:
-                # crawler.py에 새로 만든 get_article_data 함수 호출
+                # crawler.py의 get_article_data 호출
                 full_text, image_url = crawler.get_article_data(news_item['link'])
                 
                 # 본문(full_text)은 AI 요약용, 이미지(image_url)는 저장용
@@ -56,7 +55,7 @@ def run_scraper():
                 news_item['crawled_image'] = image_url 
 
             # AI 선별 (점수 부여 및 3단계 요약)
-            # 이제 ai_input_news 안에 'full_content'가 들어있으므로 AI가 이걸 씁니다.
+            # 이제 ai_input_news 안에 'full_content'가 있으므로 AI는 이것을 바탕으로 요약함
             analyzed_list = ai_engine.ai_category_editor(category, ai_input_news)
             print(f"    ㄴ AI 분석 완료: {len(analyzed_list)}개")
 
@@ -76,7 +75,6 @@ def run_scraper():
                     orig = ai_input_news[idx]
                     
                     # 이미 위에서 긁어온 이미지가 있으면 쓰고, 없으면 placeholder 사용
-                    # (orig['crawled_image']는 위에서 크롤링한 결과)
                     img = orig.get('crawled_image') or f"https://placehold.co/600x400/111/cyan?text={category}"
 
                     # DB 저장용 객체 생성
@@ -94,7 +92,7 @@ def run_scraper():
                     }
                     new_data_list.append(news_item)
                 
-                # [규칙 4] DB 저장 (30개) + [아카이빙 로직은 repository 내부에서 처리]
+                # [규칙 4] DB 저장 (30개) + [아카이빙 로직 포함]
                 repository.save_news(new_data_list)
 
             # [규칙 5 & 6] 슬롯 관리 (전체 30개 유지, 시간/점수 삭제)
@@ -104,11 +102,10 @@ def run_scraper():
             print(f"⚠️ Error processing category {category}: {e}")
             continue
 
-    # 키워드 분석 (옵션)
+    # 키워드 분석 (옵션 - 함수가 존재할 때만 실행)
     try:
         print("\n📊 AI 키워드 트렌드 분석 시작...")
         titles = repository.get_recent_titles()
-        # ai_engine에 해당 함수가 있는지 확인 후 실행
         if titles and hasattr(ai_engine, 'ai_analyze_keywords'):
             keywords = ai_engine.ai_analyze_keywords(titles)
             if keywords:
