@@ -4,3 +4,4 @@ groq
 supabase
 python-dotenv
 feedparser
+python-dateutil
