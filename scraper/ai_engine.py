@@ -5,7 +5,7 @@ import requests
 from groq import Groq
 
 # =========================================================
-# 1. 지능형 모델 필터링
+# 1. 모델 선택 로직
 # =========================================================
 
 def get_groq_text_models():
@@ -17,13 +17,11 @@ def get_groq_text_models():
         valid_models = []
         for m in all_models.data:
             mid = m.id.lower()
-            if 'vision' in mid or 'whisper' in mid or 'audio' in mid:
-                continue
+            if 'vision' in mid or 'whisper' in mid or 'audio' in mid: continue
             valid_models.append(m.id)
         valid_models.sort(reverse=True)
         return valid_models
-    except:
-        return []
+    except: return []
 
 def get_openrouter_text_models():
     try:
@@ -34,8 +32,7 @@ def get_openrouter_text_models():
         for m in data:
             mid = m['id'].lower()
             if ':free' in mid and ('chat' in mid or 'instruct' in mid or 'gpt' in mid):
-                if 'diffusion' in mid or 'image' in mid or 'vision' in mid or '3d' in mid:
-                    continue
+                if 'diffusion' in mid or 'image' in mid or 'vision' in mid or '3d' in mid: continue
                 valid_models.append(m['id'])
         valid_models.sort(reverse=True)
         return valid_models
@@ -45,11 +42,25 @@ def get_hf_text_models():
     return ["mistralai/Mistral-7B-Instruct-v0.3"]
 
 # =========================================================
-# 2. 마스터 AI 실행 엔진
+# 2. AI 답변 정제기 (<think> 제거)
 # =========================================================
 
+def clean_ai_response(text):
+    if not text: return ""
+    # <think> 태그 제거
+    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    
+    # ```json 코드블럭 제거
+    if "```" in cleaned:
+        parts = cleaned.split("```")
+        for part in parts:
+            if "{" in part or "[" in part:
+                cleaned = part.replace("json", "").strip()
+                break
+    return cleaned
+
 def ask_ai_master(system_prompt, user_input):
-    # 1. Groq 시도
+    raw_response = ""
     groq_key = os.getenv("GROQ_API_KEY")
     if groq_key:
         models = get_groq_text_models()
@@ -61,31 +72,32 @@ def ask_ai_master(system_prompt, user_input):
                     messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_input}],
                     temperature=0.3
                 )
-                return completion.choices[0].message.content.strip()
+                raw_response = completion.choices[0].message.content.strip()
+                if raw_response: break
             except: continue
 
-    # 2. OpenRouter 시도
-    or_key = os.getenv("OPENROUTER_API_KEY")
-    if or_key:
-        models = get_openrouter_text_models()
-        for model_id in models:
-            try:
-                res = requests.post(
-                    url="https://openrouter.ai/api/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {or_key}"},
-                    json={
-                        "model": model_id,
-                        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_input}],
-                        "temperature": 0.3
-                    },
-                    timeout=20
-                )
-                if res.status_code == 200:
-                    content = res.json()['choices'][0]['message']['content']
-                    if content: return content
-            except: continue
-            
-    return ""
+    if not raw_response:
+        or_key = os.getenv("OPENROUTER_API_KEY")
+        if or_key:
+            models = get_openrouter_text_models()
+            for model_id in models:
+                try:
+                    res = requests.post(
+                        url="[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)",
+                        headers={"Authorization": f"Bearer {or_key}"},
+                        json={
+                            "model": model_id,
+                            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_input}],
+                            "temperature": 0.3
+                        },
+                        timeout=20
+                    )
+                    if res.status_code == 200:
+                        raw_response = res.json()['choices'][0]['message']['content']
+                        if raw_response: break
+                except: continue
+
+    return clean_ai_response(raw_response)
 
 # =========================================================
 # 3. JSON 파서
@@ -93,17 +105,9 @@ def ask_ai_master(system_prompt, user_input):
 
 def parse_json_result(text):
     if not text: return []
+    text = clean_ai_response(text)
     try: return json.loads(text)
     except: pass
-    
-    try:
-        if "```" in text:
-            text = text.split("```json")[-1].split("```")[0].strip()
-            if not text.startswith("[") and not text.startswith("{"):
-                 text = text.split("```")[-1].split("```")[0].strip()
-            return json.loads(text)
-    except: pass
-    
     try:
         match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
         if match: return json.loads(match.group(0))
@@ -111,54 +115,63 @@ def parse_json_result(text):
     return []
 
 # =========================================================
-# 4. 핵심 분석 함수 (들여쓰기 완벽 교정됨)
+# 4. [핵심 수정] 키워드 추출 + 분류 (사람 vs 작품 구분)
 # =========================================================
 
 def extract_top_entities(category, news_titles):
-    system_prompt = f"""
-    You are a K-Content Trend Analyst for '{category}'. 
-    Task: Analyze the news titles and extract the most frequently mentioned entities.
-    
-    [Rules]
-    1. Target Entities:
-       - K-Pop: Group Names, Solo Singers, Song Titles.
-       - K-Drama/Movie: Actor Names, Drama/Movie Titles.
-    2. ⛔ EXCLUDE: 
-       - Company names (HYBE, SM, YG, JYP, Ador, etc.).
-       - Generic words (Comeback, Debut, Chart, Controversy, Netizen).
-    3. Output:
-       - Return a JSON LIST of strings ordered by frequency (Most mentioned first).
-       - Max 30 items.
-       - Translate Korean names to English standard names.
-    
-    Example Output: ["NewJeans", "BTS", "Squid Game 2"]
+    """
+    뉴스 제목에서 키워드를 뽑고, 이것이 '사람(그룹)'인지 '작품(제목)'인지 분류함.
     """
     
-    user_input = "\n".join(news_titles)[:12000]
+    system_prompt = f"""
+    You are a K-Content Trend Analyst for '{category}'. 
+    
+    [TASK]
+    1. Analyze the news titles and extract the most mentioned keywords (Singers, Actors, Titles, Topics).
+    2. CLASSIFY each keyword as either 'person' (includes Groups, Bands, Actors, MCs) or 'content' (Songs, Dramas, Movies, Shows, Places, Concepts).
+    
+    [RULES]
+    - 'person': BTS, NewJeans, IU, Kim Soo-hyun, Yoo Jae-suk, SEVENTEEN.
+    - 'content': Hype Boy, Squid Game, The Glory, Running Man, Han River, Fashion Week.
+    - Output format: JSON LIST of objects. 
+      Example: [{{"keyword": "BTS", "type": "person"}}, {{"keyword": "Dynamite", "type": "content"}}]
+    - Max 40 items.
+    - Translate Korean names to English.
+    """
+    
+    user_input = "\n".join(news_titles)[:15000]
     
     raw_result = ask_ai_master(system_prompt, user_input)
     parsed = parse_json_result(raw_result)
     
+    # 리스트인지 확인하고 중복 제거 (keyword 기준)
     if isinstance(parsed, list):
-        return list(dict.fromkeys(parsed)) 
+        seen = set()
+        unique_list = []
+        for item in parsed:
+            if isinstance(item, dict) and 'keyword' in item:
+                if item['keyword'] not in seen:
+                    seen.add(item['keyword'])
+                    unique_list.append(item)
+        return unique_list
     return []
+
+# =========================================================
+# 5. 요약 로직 (<think> 태그 절대 금지)
+# =========================================================
 
 def synthesize_briefing(keyword, news_contents):
     system_prompt = f"""
-    You are a Professional News Briefing Editor. 
+    You are a Professional News Editor.
     Topic: {keyword}
     
-    Task: Summarize the provided news snippets into a 5-10 line cohesive briefing in English.
+    Task: Create a concise, engaging news briefing (3-6 sentences) based on the provided text.
     
-    [CRITICAL RULES]
-    1. ONLY use the facts from the provided text. Do not invent details.
-    2. If the provided text does not contain relevant information about '{keyword}', 
-       return exactly: "No specific news updates available at this moment."
-    3. Focus on: What is happening, Why it is trending.
-    
-    [Format]
-    - Style: Professional, Journalistic
-    - Output: Plain text only (No Markdown)
+    [STRICT RULES]
+    1. ABSOLUTELY NO <think> tags or internal monologue. Output ONLY the final briefing text.
+    2. DO NOT say "No specific news". If specific info is missing, assume the keyword is trending due to general popularity and write a generic positive update.
+    3. Tone: Professional, Journalistic.
+    4. Output: Plain Text.
     """
     
     user_input = "\n\n".join(news_contents)[:4000] 
