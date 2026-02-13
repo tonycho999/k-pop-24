@@ -20,6 +20,7 @@ export default function Sidebar({ news, category }: SidebarProps) {
   // 카테고리 변경 시 랭킹 데이터 새로고침
   useEffect(() => {
     const fetchRankings = async () => {
+      // 1. UI에서 사용하는 카테고리 (대문자 포함, 예: 'K-Pop')
       const targetCategory = category === 'All' ? 'K-Pop' : category;
       
       // 유효한 카테고리가 아니면 랭킹 로딩 스킵
@@ -33,8 +34,9 @@ export default function Sidebar({ news, category }: SidebarProps) {
       try {
         const { data, error } = await supabase
           .from('trending_rankings')
+          // 2. [핵심 수정] DB에는 소문자('k-pop')로 저장되어 있으므로 소문자로 변환해서 조회
           .select('*')
-          .eq('category', targetCategory)
+          .eq('category', targetCategory.toLowerCase()) 
           .order('rank', { ascending: true })
           .limit(10);
 
