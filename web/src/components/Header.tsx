@@ -63,7 +63,7 @@ export default function Header() {
     <header className="flex justify-between items-center mb-6 py-2 border-b border-slate-100 dark:border-slate-800 transition-colors">
       {/* 좌측: 로고 & 실시간 상태 */}
       <div className="flex items-center gap-2 sm:gap-4">
-        <div className="w-[100px] sm:w-[128px] h-[50px] sm:h-[60px] flex items-center justify-center overflow-hidden">
+        <div className="w-[150px] sm:w-[160px] h-[90px] sm:h-[100px] flex items-center justify-center overflow-hidden">
           <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
         </div>
         
