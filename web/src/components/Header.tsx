@@ -12,6 +12,9 @@ export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
   const [langCode, setLangCode] = useState('EN'); 
+  
+  // [수정] 전체 모니터링 개수 상태
+  const [totalCount, setTotalCount] = useState(0);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user));
@@ -26,6 +29,32 @@ export default function Header() {
 
     const browserLang = navigator.language.split('-')[0].toUpperCase();
     setLangCode(browserLang); 
+
+    // [핵심 수정] Live(150개) + Archive(누적) 합산하기
+    const fetchTotalCount = async () => {
+      try {
+        // 1. 현재 전시 중인 뉴스 개수
+        const live = await supabase
+          .from('live_news')
+          .select('*', { count: 'exact', head: true });
+
+        // 2. 아카이브된(누적된) 뉴스 개수 -> 여기가 계속 늘어남!
+        const archive = await supabase
+          .from('search_archive')
+          .select('*', { count: 'exact', head: true });
+        
+        // 두 개 합치기 (기본값 0 처리)
+        const total = (live.count || 0) + (archive.count || 0);
+        
+        // [옵션] 만약 숫자가 너무 적어 보이면 '기본값 1000'을 더해서 보여주는 꼼수도 가능
+        // setTotalCount(total + 1000); 
+        setTotalCount(total); 
+
+      } catch (error) {
+        console.error('Error fetching count:', error);
+      }
+    };
+    fetchTotalCount();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
@@ -62,11 +91,8 @@ export default function Header() {
   };
 
   return (
-    // [수정] py-2 -> py-5 (헤더 상하 폭 20% 이상 확대)
-    // mb-1로 하단 여백 최소화
     <header className="flex justify-between items-center py-5 mb-1 border-b border-slate-100 dark:border-slate-800 transition-colors">
       <div className="flex items-center gap-2 sm:gap-4">
-        {/* [수정] 로고 크기 30% 확대 (w-120->160, h-60->80) */}
         <div className="w-[160px] sm:w-[200px] h-[80px] flex items-center justify-center overflow-hidden">
           <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
         </div>
@@ -80,7 +106,8 @@ export default function Header() {
                 <span className="text-[10px] sm:text-[11px] font-black text-cyan-500 uppercase tracking-tighter">Live</span>
              </div>
              <span className="text-[11px] sm:text-[12px] font-bold text-slate-400 dark:text-slate-500 leading-none mt-1 whitespace-nowrap uppercase">
-               1,240 Monitoring
+               {/* 누적된 숫자 보여주기 */}
+               {totalCount > 0 ? totalCount.toLocaleString() : 'Scanning...'} Monitoring
              </span>
         </div>
       </div>
