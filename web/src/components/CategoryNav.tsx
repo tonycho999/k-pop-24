@@ -6,24 +6,31 @@ interface CategoryNavProps {
 }
 
 export default function CategoryNav({ active, setCategory }: CategoryNavProps) {
-  const categories = ['All', 'K-POP', 'K-Drama', 'K-Movie', 'K-Entertain', 'K-Culture'];
+  // [복구 완료] 화면에 보이는 이름(label)과 실제 DB 검색용 값(id)을 분리
+  const categories = [
+    { id: 'All', label: 'All Trends' },      // 화면: All Trends, 실제값: All
+    { id: 'K-Pop', label: 'K-POP' },         // 화면: K-POP, 실제값: K-Pop (DB와 일치)
+    { id: 'K-Drama', label: 'K-Drama' },
+    { id: 'K-Movie', label: 'K-Movie' },
+    { id: 'K-Entertain', label: 'K-Entertain' },
+    { id: 'K-Culture', label: 'K-Culture' },
+  ];
 
   return (
-    // [수정] pt-1 pb-0 mb-0: 하단 여백을 완전히 없애서 아래 배너와 붙게 설정
+    // [유지] pt-1 pb-0 mb-0: 여백 최소화 설정
     <nav className="flex gap-2 sm:gap-3 overflow-x-auto pt-1 pb-0 mb-0 scrollbar-hide">
       {categories.map((cat) => (
         <button
-          key={cat}
-          onClick={() => setCategory(cat)}
+          key={cat.id}
+          onClick={() => setCategory(cat.id)} // 클릭 시 실제값(id) 전달
           className={`
-            /* [수정] py-2 -> py-1.8 (버튼 높이를 줄여서 더 컴팩트하게) */
-            px-6 sm:px-7 py-1.8 sm:py-2 rounded-full text-xs sm:text-sm font-black transition-all whitespace-nowrap
-            ${active === cat 
+            px-4 sm:px-5 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-black transition-all whitespace-nowrap
+            ${active === cat.id 
               ? 'bg-cyan-500 text-white shadow-md shadow-cyan-200 dark:shadow-none scale-105' 
               : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-100 dark:border-slate-800'}
           `}
         >
-          {cat}
+          {cat.label} {/* 화면에는 label(대문자 등) 보여줌 */}
         </button>
       ))}
     </nav>
