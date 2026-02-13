@@ -107,7 +107,7 @@ def get_google_trending_keywords():
     - feedparser로 바로 호출하지 않고, requests로 User-Agent 헤더를 달아서 호출
     """
     try:
-        url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=KR"
+        url = "https://trends.google.co.kr/trends/trendingsearches/daily/rss?geo=KR"
         
         # 봇 차단 방지를 위한 브라우저 헤더 위장
         headers = {
