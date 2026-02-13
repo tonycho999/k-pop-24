@@ -1,156 +1,109 @@
+import os
 import json
-import re
-from config import groq_client
+from groq import Groq
 
-def get_best_model():
-    """사용 가능한 최신/고성능 AI 모델 자동 선택 (버전 숫자 기반)"""
+def get_groq_client():
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        print("⚠️ GROQ_API_KEY가 없습니다.")
+        return None
+    return Groq(api_key=api_key)
+
+def get_latest_models(client):
+    """
+    [완전 동적 방식]
+    하드코딩된 리스트 없이, API에서 받아온 모델들을
+    버전이 높은 순서(3.3 > 3.1)대로 자동 정렬하여 반환합니다.
+    """
     try:
-        models_raw = groq_client.models.list()
-        available_models = [m.id for m in models_raw.data]
+        # 1. Groq가 제공하는 모든 모델 가져오기
+        all_models = client.models.list()
+        model_ids = [m.id for m in all_models.data]
         
-        def model_scorer(model_id):
-            score = 0
-            mid = model_id.lower()
-            
-            # 1. 버전 숫자 추출 (예: llama-3.3 -> 3.3)
-            version_match = re.search(r'(\d+\.?\d*)', mid)
-            if version_match:
-                try:
-                    version = float(version_match.group(1))
-                    score += version * 1000  # 버전이 높을수록 최우선
-                except: pass
+        # 2. 텍스트 생성용이 아닌 모델(Whisper 등) 제외
+        text_models = [m for m in model_ids if "whisper" not in m and "vision" not in m]
 
-            # 2. 모델 크기 가산점
-            if "70b" in mid: score += 500
-            elif "8b" in mid: score += 100
-            
-            # 3. 모델 계열 가산점
-            if "llama" in mid: score += 50
-            elif "mixtral" in mid: score += 40
-            
-            return score
+        # 3. [핵심 로직] 역순 정렬 (Descending)
+        # 문자열 정렬 특성상 "llama-3.3-..."이 "llama-3.1-..."보다 큽니다.
+        # 따라서 역순으로 정렬하면 가장 높은 버전 숫자를 가진 모델이 0번 인덱스로 옵니다.
+        # 예: ['llama-3.3-70b', 'llama-3.1-70b', 'gemma-2-9b']
+        text_models.sort(reverse=True)
+        
+        # 로그로 현재 선택된 최신 모델 3개 보여주기 (확인용)
+        # print(f"      📡 감지된 최신 모델 TOP 3: {text_models[:3]}")
+        
+        return text_models
 
-        available_models.sort(key=model_scorer, reverse=True)
-        print(f"🤖 AI 모델 우선순위: {available_models[:3]}")
-        return available_models
     except Exception as e:
-        print(f"⚠️ 모델 조회 실패, 기본값 사용: {e}")
+        print(f"      ⚠️ 모델 목록 조회 실패: {e}")
+        # 만약 API 호출 자체가 실패할 경우를 대비한 최소한의 비상용 값
         return ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"]
 
-MODELS_TO_TRY = get_best_model()
-
-def ai_category_editor(category, news_batch):
-    """뉴스 기사 선별, 요약 및 점수 부여"""
-    if not news_batch: return []
+def ai_category_editor(category, news_list):
+    client = get_groq_client()
+    if not client: return []
     
-    # 최대한 많은 후보군을 AI에게 전달
-    limited_batch = news_batch[:60] 
+    # [수정] 하드코딩 없이 현재 시점의 최신 모델들을 가져옴
+    dynamic_models = get_latest_models(client)
     
-    raw_text = ""
-    for i, n in enumerate(limited_batch):
-        clean_desc = n['description'].replace('<b>', '').replace('</b>', '').replace('&quot;', '"')
-        raw_text += f"[{i}] Title: {n['title']} / Link: {n['link']} / Context: {clean_desc}\n"
+    # [프롬프트] 요약 길이 40~50% 유지
+    system_prompt = f"""
+    You are an expert K-Content News Editor for '{category}'.
     
-    # [수정] 카테고리별 점수 정책 차등 적용 (이원화 전략)
-    if category == 'k-culture':
-        # [전략 1] 마이너 카테고리: 기사량 확보를 위해 '후한 점수' (Generous)
-        score_instruction = """
-        This is 'K-Culture' (Food, Fashion, Travel). Since news volume is typically low:
-        - Be GENEROUS with scoring.
-        - If the article is relevant to Korea, give at least 6.0.
-        - If it's interesting or informative, give 7.5~8.5.
-        - Only give < 5.0 if it is completely irrelevant or spam.
-        """
-    else:
-        # [전략 2] 메인 카테고리: 퀄리티 확보를 위해 '엄격한 기준' (Strict/Objective)
-        score_instruction = """
-        This is MAIN Entertainment news (K-Pop, Drama, Actors). Volume is high:
-        - Be STRICT/OBJECTIVE with scoring.
-        - Standard/Routine news (e.g., simple schedule updates) -> 5.0~6.5
-        - Good news (e.g., new release, casting) -> 7.0~8.5
-        - HUGE Breaking news (e.g., global awards, dating reveal) -> 9.0~10.0
-        """
-
-    prompt = f"""
-    Task: Select the best 30 news items for '{category}'.
+    [TASK]
+    1. Select the most meaningful articles from the list.
+    2. **Summary Requirement:** - The summary length must be **40% to 50% of the original text**.
+       - It must be detailed and capture the full context.
+       - Do NOT write single-sentence summaries.
+    3. **Scoring:** Assign a score (0.0 - 10.0).
+       - Score >= 5.0: Meaningful news.
+       - Score < 5.0: Minor updates or spam.
     
-    [Selection Rules]
-    1. Score >= 4.0: MUST include articles with score 4.0 or higher.
-    2. Diversity: If multiple articles cover the same topic, select ones with different angles or sources.
-    3. Deduplication: Do not select nearly identical articles.
-
-    [Output Constraints]
-    1. English Title: Translate naturally.
-    2. English Summary: 
-       - Summarize to 40-50% of original length.
-       - Create a rich, narrative paragraph (5-8 sentences). NO bullet points.
-    3. AI Score (0.0-10.0): 
-       - {score_instruction}
-    4. Return JSON format strictly.
-
-    News List:
-    {raw_text}
-
-    Output JSON Format:
-    {{
-        "articles": [
-            {{ "original_index": 0, "eng_title": "...", "summary": "...", "score": 8.5 }}
-        ]
-    }}
+    [OUTPUT FORMAT]
+    Return a JSON array ONLY:
+    [
+        {{
+            "original_index": (int) input index,
+            "eng_title": "English Title",
+            "summary": "Detailed summary (40-50% length)",
+            "score": (float) 0.0-10.0,
+            "rank": (int) priority
+        }}
+    ]
     """
-    
-    for model in MODELS_TO_TRY:
-        try:
-            res = groq_client.chat.completions.create(
-                messages=[{"role": "system", "content": f"You are a generic K-Enter Journalist for {category}."},
-                          {"role": "user", "content": prompt}], 
-                model=model, 
-                response_format={"type": "json_object"}
-            )
-            data = json.loads(res.choices[0].message.content)
-            articles = data.get('articles', [])
-            if articles: return articles
-        except Exception as e:
-            print(f"      ⚠️ {model} 오류. 다음 모델 시도.")
-            continue
-    return []
 
-def ai_analyze_keywords(titles):
-    """기사 제목 기반 트렌드 키워드 추출"""
-    titles_text = "\n".join([f"- {t}" for t in titles])
-    
-    # [수정] 구체적 예시 삭제 후 일반적 템플릿 적용
-    prompt = f"""
-    Analyze the following K-Entertainment news titles and identify the TOP 10 most trending keywords.
-    [Rules]
-    1. Extract specific Entities: Person Name, Group Name, Drama/Movie Title.
-    2. Merge related concepts: "BTS Jin" instead of "Jin".
-    3. EXCLUDE generic words: Variety, Actor, K-pop, Review, Netizens, Update, Official.
-    4. Return JSON format with 'keyword' and estimated 'count' (1-100).
-    
-    [Titles]
-    {titles_text}
-    
-    [Output Format JSON]
-    {{
-        "keywords": [
-            {{ "keyword": "Most Mentioned Keyword", "count": 95, "rank": 1 }},
-            {{ "keyword": "Second Keyword", "count": 80, "rank": 2 }}
-        ]
-    }}
-    """
-    
-    for model in MODELS_TO_TRY:
+    # 입력 데이터 (토큰 절약)
+    input_data = [
+        {"index": i, "title": n['title'], "body": n.get('originallink', n['link'])[:500]} 
+        for i, n in enumerate(news_list)
+    ]
+
+    # [수정] 자동으로 정렬된 최신 모델부터 하나씩 시도
+    for model_id in dynamic_models:
         try:
-            res = groq_client.chat.completions.create(
-                messages=[{"role": "system", "content": "You are a K-Trend Analyst."},
-                          {"role": "user", "content": prompt}], 
-                model=model, response_format={"type": "json_object"}
+            # print(f"      🤖 시도 중: {model_id}...")
+            
+            completion = client.chat.completions.create(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(input_data, ensure_ascii=False)}
+                ],
+                temperature=0.3
             )
-            result = json.loads(res.choices[0].message.content)
-            keywords = result.get('keywords', [])
-            if keywords: return keywords
+            
+            result = completion.choices[0].message.content.strip()
+            
+            if "```json" in result:
+                result = result.split("```json")[1].split("```")[0]
+            elif "```" in result:
+                result = result.split("```")[1].split("```")[0]
+            
+            return json.loads(result)
+
         except Exception as e:
-            print(f"      ⚠️ {model} 분석 실패: {e}")
+            # print(f"      ⚠️ {model_id} 실패. 다음 모델 시도.")
             continue
+            
+    print("      ❌ 사용 가능한 모든 Groq 모델 시도 실패.")
     return []
