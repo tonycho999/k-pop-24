@@ -1,60 +1,50 @@
 'use client';
 
-import { Trophy, TrendingUp, MapPin, Music, Film, Tv } from 'lucide-react';
+import { RankingItemData } from '@/types';
+import { Minus, ArrowUp, ArrowDown } from 'lucide-react';
 
-interface RankingItemProps {
+interface Props {
   rank: number;
-  item: any;
+  item: RankingItemData;
 }
 
-export default function RankingItem({ rank, item }: RankingItemProps) {
-  // 순위에 따른 아이콘 및 색상 설정
-  const getRankIcon = (r: number) => {
-    if (r === 1) return <Trophy size={14} className="text-yellow-500 fill-yellow-500" />;
-    if (r === 2) return <span className="text-slate-400 font-black">2</span>;
-    if (r === 3) return <span className="text-orange-400 font-black">3</span>;
-    return <span className="text-slate-300 font-bold">{r}</span>;
+export default function RankingItem({ rank, item }: Props) {
+  
+  // 순위 변동 아이콘 로직
+  const getDeltaIcon = (delta: string) => {
+    if (delta === 'NEW') return <span className="text-[8px] font-black text-red-500 bg-red-50 px-1 rounded">NEW</span>;
+    if (delta.includes('▲')) return <span className="text-[9px] text-red-500 flex items-center"><ArrowUp size={8}/>{delta.replace('▲', '')}</span>;
+    if (delta.includes('▼')) return <span className="text-[9px] text-blue-500 flex items-center"><ArrowDown size={8}/>{delta.replace('▼', '')}</span>;
+    return <Minus size={10} className="text-slate-300" />;
   };
 
   return (
-    <a 
-      href={item.link_url || '#'} 
-      target="_blank" 
-      rel="noopener noreferrer"
-      className="flex items-center gap-4 py-3 border-b border-slate-50 last:border-0 hover:bg-slate-50/50 rounded-xl px-2 transition-colors group"
-    >
-      {/* 순위 표시 */}
-      <div className={`
-        flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg
-        ${rank === 1 ? 'bg-yellow-50 shadow-sm' : 'bg-transparent'}
-      `}>
-        {getRankIcon(rank)}
+    <div className="flex items-center gap-3 py-2 px-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer group">
+      {/* 순위 */}
+      <div className="w-6 text-center font-black text-slate-300 group-hover:text-cyan-500 italic">
+        {rank}
       </div>
 
-      {/* 썸네일 (있으면 표시) */}
-      {item.image_url && (
-        <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 border border-slate-100">
-          <img src={item.image_url} alt={item.title} className="w-full h-full object-cover" />
-        </div>
-      )}
+      {/* 썸네일 (작은 원형) */}
+      <div className="w-8 h-8 rounded-full bg-slate-100 overflow-hidden flex-shrink-0 border border-slate-100 dark:border-slate-700">
+        <img 
+          src={item.image_url || `https://placehold.co/50x50?text=${rank}`} 
+          className="w-full h-full object-cover" 
+          alt="" 
+        />
+      </div>
 
-      {/* 내용 */}
+      {/* 텍스트 정보 */}
       <div className="flex-1 min-w-0">
-        <h4 className="text-sm font-bold text-slate-700 truncate group-hover:text-cyan-600 transition-colors">
-          {item.title}
-        </h4>
-        {item.sub_title && (
-          <p className="text-xs text-slate-400 truncate flex items-center gap-1">
-             {item.category === 'K-Culture' && <MapPin size={10} />}
-             {item.sub_title}
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-bold text-slate-700 dark:text-slate-300 line-clamp-1">
+            {item.keyword}
           </p>
-        )}
+          <div className="pl-2">
+            {getDeltaIcon(item.delta)}
+          </div>
+        </div>
       </div>
-
-      {/* 화살표 아이콘 (호버 시 등장) */}
-      <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-        <TrendingUp size={14} className="text-cyan-400" />
-      </div>
-    </a>
+    </div>
   );
 }
