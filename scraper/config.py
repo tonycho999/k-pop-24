@@ -8,16 +8,29 @@ from groq import Groq
 sys.stdout.reconfigure(encoding='utf-8')
 load_dotenv()
 
-# Supabase 연결 (관리자 키 우선 사용)
-SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+# [수정 1] 환경변수 이름 통일 (GitHub Actions YAML과 맞춤)
+# YAML에서 설정한 이름(SUPABASE_URL)을 우선적으로 찾도록 변경
+SUPABASE_URL = os.getenv("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
+# [수정 2] 강제 종료(exit) 제거 -> 경고만 출력하고 넘어감
+supabase: Client = None
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("🚨 오류: .env 파일에 Supabase URL 또는 Key가 없습니다.")
-    sys.exit(1)
+    print("⚠️ Warning (config.py): Supabase 환경변수가 설정되지 않았습니다.")
+else:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print(f"⚠️ Warning: Supabase 클라이언트 초기화 실패: {e}")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+# Groq 클라이언트 초기화 (안전하게)
+groq_client = None
+if GROQ_API_KEY:
+    try:
+        groq_client = Groq(api_key=GROQ_API_KEY)
+    except:
+        pass
 
 # 카테고리 설정
 CATEGORY_MAP = {
