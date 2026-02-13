@@ -7,6 +7,7 @@ import re
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
+import feedparser # pip install feedparser 필요
 
 def get_naver_api_news(keyword):
     """네이버 API 뉴스 검색 (타임아웃 10초)"""
@@ -104,3 +105,14 @@ def get_article_data(link):
     except Exception as e:
         print(f"    ⚠️ 크롤링 실패 ({link[:30]}...): {e}")
         return "", None
+
+def get_google_trending_keywords():
+    """(미래 사용용) 구글 트렌드 RSS 수집"""
+    try:
+        url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=KR"
+        feed = feedparser.parse(url)
+        keywords = [entry.title for entry in feed.entries]
+        return keywords
+    except Exception as e:
+        # print(f"❌ 구글 트렌드 수집 실패: {e}")
+        return []
