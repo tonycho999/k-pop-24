@@ -11,7 +11,7 @@ import NewsFeed from '@/components/NewsFeed';
 import Sidebar from '@/components/Sidebar';
 import ArticleModal from '@/components/ArticleModal';
 import MobileFloatingBtn from '@/components/MobileFloatingBtn';
-import AdBanner from '@/components/AdBanner'; // [NEW] 광고 컴포넌트 추가
+import AdBanner from '@/components/AdBanner';
 
 export default function Home() {
   const [news, setNews] = useState<any[]>([]);
@@ -93,15 +93,28 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans dark:bg-slate-950 dark:text-slate-200 transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8">
-        {/* [간격 수정] flex-col과 gap-2를 사용하여 요소 사이를 촘촘하게 배치 */}
-        <div className="flex flex-col gap-2">
-          <Header />
-          <CategoryNav active={category} setCategory={setCategory} />
-          <InsightBanner insight={filteredNews[0]?.insight} />
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-0"> {/* 상단 패딩 제거 */}
+        
+        {/* 헤더 */}
+        <Header />
+        
+        {/* [간격 수정] 요소들 사이의 틈을 없앰 */}
+        <div className="flex flex-col gap-0"> {/* gap-2 -> gap-0 */}
           
-          {/* [NEW] 광고 배너 (Insight 바로 아래) */}
-          <AdBanner />
+          {/* 메뉴 (네비게이션) */}
+          <div className="mb-1">
+             <CategoryNav active={category} setCategory={setCategory} />
+          </div>
+          
+          {/* AI Insight (메뉴 바로 아래 붙임) */}
+          <div className="mt-0"> 
+             <InsightBanner insight={filteredNews[0]?.insight} />
+          </div>
+          
+          {/* 배너 광고 (AI Insight 바로 아래) */}
+          <div className="mt-2">
+             <AdBanner />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-6">
@@ -140,7 +153,7 @@ export default function Home() {
       <ArticleModal article={selectedArticle} onClose={() => setSelectedArticle(null)} onVote={handleVote} />
       <MobileFloatingBtn />
       {showWelcome && !user && (
-         /* ... 기존 웰컴 팝업 코드 유지 ... */
+         /* 웰컴 팝업 내용은 동일 */
          <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
            <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[32px] p-1 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
               <div className="bg-gradient-to-br from-cyan-500 via-blue-600 to-indigo-600 p-8 rounded-[28px] text-center relative overflow-hidden">
