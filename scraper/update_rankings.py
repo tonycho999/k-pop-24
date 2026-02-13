@@ -2,20 +2,16 @@ import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# 환경변수 로드 (.env 파일이 같은 폴더에 있어야 함)
+# 환경변수 로드
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("Error: Supabase credentials not found in .env")
-    exit()
+# [수정] exit() 대신 함수 내부에서 처리하도록 구조 변경
+# (함수가 실행될 때 체크하고 안전하게 리턴함)
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# AI가 분석한(혹은 수집한) 최신 트렌드 데이터 (샘플)
-# 나중에는 이 부분을 크롤링 로직이나 AI 생성 로직으로 대체하면 됩니다.
+# AI가 분석한 트렌드 데이터 (이 부분은 유지보수를 위해 길게 두었습니다)
 RANKING_DATA = [
     # K-Pop
     {"category": "K-Pop", "rank": 1, "title": "NewJeans 'How Sweet'", "sub_title": "Melon Top 100 #1", "link_url": "https://www.youtube.com/watch?v=Q3K0TOvTOno", "image_url": "https://i.ytimg.com/vi/Q3K0TOvTOno/maxresdefault.jpg"},
@@ -45,8 +41,8 @@ RANKING_DATA = [
     {"category": "K-Entertain", "rank": 4, "title": "You Quiz on the Block", "sub_title": "tvN Talk Show", "link_url": "#", "image_url": ""},
     {"category": "K-Entertain", "rank": 5, "title": "Eun-chae's Star Diary", "sub_title": "YouTube Hot", "link_url": "#", "image_url": ""},
 
-    # K-Culture (요청하신 서울 핫플/뷰티)
-    {"category": "K-Culture", "rank": 1, "title": "Seongsu-dong Cafe Street", "sub_title": "Seoul's Brooklyn", "link_url": "#", "image_url": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcR_xxx"}, # 예시 이미지
+    # K-Culture
+    {"category": "K-Culture", "rank": 1, "title": "Seongsu-dong Cafe Street", "sub_title": "Seoul's Brooklyn", "link_url": "#", "image_url": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcR_xxx"},
     {"category": "K-Culture", "rank": 2, "title": "Olive Young Myeongdong", "sub_title": "K-Beauty Mecca", "link_url": "#", "image_url": ""},
     {"category": "K-Culture", "rank": 3, "title": "The Hyundai Seoul", "sub_title": "Yeouido Hotspot", "link_url": "#", "image_url": ""},
     {"category": "K-Culture", "rank": 4, "title": "London Bagel Museum", "sub_title": "Must-visit Bakery", "link_url": "#", "image_url": ""},
@@ -54,21 +50,31 @@ RANKING_DATA = [
 ]
 
 def update_rankings():
-    print("Updating Rankings...")
-    
-    # 1. 기존 데이터 삭제 (중복 방지를 위해 싹 지우고 새로 넣는 방식)
-    # 실제 운영 시에는 날짜별로 관리하거나 upsert를 사용할 수도 있습니다.
-    try:
-        supabase.table("trending_rankings").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
-    except Exception as e:
-        print(f"Clean up warning (might be empty): {e}")
+    # [안전 장치] 환경변수가 없으면 에러 내지 말고 그냥 함수 종료 (뉴스 수집은 계속되게)
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("⚠️ Warning: .env 파일을 찾을 수 없어 순위 업데이트를 건너뜁니다.")
+        return
 
-    # 2. 새 데이터 삽입
-    for item in RANKING_DATA:
-        data, count = supabase.table("trending_rankings").insert(item).execute()
-        print(f"Inserted: {item['category']} - {item['title']}")
-    
-    print("Update Complete!")
+    try:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        
+        print("📊 Updating Trend Rankings...")
+        
+        # 1. 기존 데이터 안전하게 삭제 (전체 삭제 후 재입력 방식)
+        try:
+            supabase.table("trending_rankings").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+        except Exception as e:
+            print(f"Clean up warning: {e}")
+
+        # 2. 새 데이터 삽입
+        for item in RANKING_DATA:
+            supabase.table("trending_rankings").insert(item).execute()
+            print(f"   + Inserted: {item['category']} - {item['title']}")
+        
+        print("✅ Ranking Update Complete!")
+
+    except Exception as e:
+        print(f"❌ Ranking Update Error: {e}")
 
 if __name__ == "__main__":
     update_rankings()
