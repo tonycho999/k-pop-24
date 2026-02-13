@@ -20,12 +20,12 @@ interface HomeClientProps {
 
 export default function HomeClient({ initialNews }: HomeClientProps) {
   
-  // ✅ [수정됨] 링크가 없어도(NULL) 통과시키도록 필터 제거
+  // ✅ [보안 필터] 이미지 주소만 업그레이드 (링크 검사 제거)
   const filterSecureNews = (items: LiveNewsItem[]) => {
     if (!items) return [];
     return items.map(item => ({
         ...item,
-        // 이미지 주소만 보안 처리 (http -> https)
+        // 이미지 주소가 http면 https로 변환
         image_url: item.image_url ? item.image_url.replace('http://', 'https://') : null
       }));
   };
@@ -55,7 +55,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 3. 카테고리 변경 시 DB에서 데이터 새로 가져오기
+  // 3. [핵심 수정] 카테고리 변경 시 소문자로 변환하여 DB 조회
   const handleCategoryChange = async (newCategory: string) => {
     setCategory(newCategory);
     setLoading(true);
@@ -67,14 +67,14 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
         .order('rank', { ascending: true }) 
         .limit(30);
 
+      // 'All'이 아닐 경우, 소문자로 변환해서 DB와 비교 (DB에는 k-pop으로 저장됨)
       if (newCategory !== 'All') {
-        query = query.eq('category', newCategory);
+        query = query.eq('category', newCategory.toLowerCase());
       }
 
       const { data, error } = await query;
 
       if (!error && data) {
-        // 새로 가져온 데이터도 필터 적용 (이제 링크 없어도 통과됨)
         setNews(filterSecureNews(data as LiveNewsItem[]));
       }
     } catch (error) {
@@ -104,8 +104,12 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     await supabase.rpc('increment_vote', { row_id: id });
   };
 
-  // 5. 비로그인 유저용 데이터 제한
-  const displayNews = user ? news : news.slice(0, 1);
+  // 5. [핵심 수정] 클라이언트 사이드 필터링도 소문자로 비교
+  // (All일 때는 전체 표시, 아니면 카테고리 소문자로 비교)
+  const displayNewsRaw = user ? news : news.slice(0, 1);
+  const filteredDisplayNews = category === 'All' 
+    ? displayNewsRaw 
+    : displayNewsRaw.filter(item => item.category === category.toLowerCase());
 
   // 6. 이벤트 리스너
   useEffect(() => {
@@ -149,8 +153,9 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-6">
           <div className="col-span-1 md:col-span-3 relative">
+            {/* 필터링된 뉴스를 전달 */}
             <NewsFeed 
-              news={displayNews} 
+              news={filteredDisplayNews} 
               loading={loading || isTranslating} 
               onOpen={setSelectedArticle} 
             />
