@@ -20,11 +20,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 supabase groq python-dotenv
+          python -m pip install --upgrade pip
+          # 👇 [수정 완료] 여기에 feedparser를 추가했습니다!
+          pip install requests beautifulsoup4 supabase groq python-dotenv feedparser
 
       - name: Run Scraper
         env:
-          # 👇 [수정] 파이썬이 찾는 이름(왼쪽)으로 맞춰주어야 합니다!
+          # 파이썬이 찾는 이름(왼쪽)으로 맞춰주어야 합니다!
           # (GitHub Secrets 이름(오른쪽)은 그대로 두셔도 됩니다)
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
