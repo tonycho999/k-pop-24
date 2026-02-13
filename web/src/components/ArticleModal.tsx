@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { X, ExternalLink, ThumbsUp, ThumbsDown, Calendar, Clock, Share2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { X, ExternalLink, ThumbsUp, ThumbsDown, Share2, Calendar } from 'lucide-react';
 
 interface ArticleModalProps {
   article: any;
@@ -10,134 +10,132 @@ interface ArticleModalProps {
 }
 
 export default function ArticleModal({ article, onClose, onVote }: ArticleModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
-
-  // 모달 외부 클릭 시 닫기
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
-        onClose();
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [onClose]);
-
-  // ESC 키 누르면 닫기
-  useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
-  }, [onClose]);
-
   if (!article) return null;
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
-      {/* 배경 블러 처리 (Backdrop) */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" />
+  // [추가] 모달 내부 공유 버튼 로직
+  const handleShare = async () => {
+    const title = article.title;
+    const url = article.link; // 또는 article.original_link
+    
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: title,
+          text: `Check out this news: ${title}`,
+          url: url,
+        });
+      } else {
+        await navigator.clipboard.writeText(url);
+        alert('Link copied to clipboard!');
+      }
+    } catch (err) {
+      console.error('Error sharing:', err);
+    }
+  };
 
-      {/* 모달 컨텐츠 */}
-      <div 
-        ref={modalRef}
-        className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200"
+  return (
+    <AnimatePresence>
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+        onClick={onClose}
       >
-        
-        {/* 1. 상단 이미지 영역 */}
-        <div className="relative w-full h-56 sm:h-72 bg-slate-200 dark:bg-slate-800 shrink-0">
-          {article.image_url ? (
+        <motion.div 
+          initial={{ scale: 0.9, opacity: 0, y: 20 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.9, opacity: 0, y: 20 }}
+          onClick={(e) => e.stopPropagation()} // 모달 내부 클릭 시 닫힘 방지
+          className="bg-white dark:bg-slate-900 w-full max-w-2xl max-h-[90vh] rounded-[32px] overflow-hidden shadow-2xl flex flex-col"
+        >
+          {/* Header Image */}
+          <div className="relative h-64 sm:h-80 bg-slate-200">
             <img 
-              src={article.image_url} 
+              src={article.image_url || `https://placehold.co/800x600/111/cyan?text=${article.category}`} 
               alt={article.title} 
               className="w-full h-full object-cover"
             />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-slate-400">
-              <span className="text-4xl font-black opacity-20">K-ENTER 24</span>
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent" />
+            
+            <button 
+              onClick={onClose}
+              className="absolute top-4 right-4 p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md rounded-full text-white transition-all"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="absolute bottom-0 left-0 p-6 sm:p-8 w-full">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="px-2.5 py-1 bg-cyan-500 text-white text-[10px] font-black uppercase rounded-lg shadow-lg">
+                  {article.category}
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-300 text-xs font-bold">
+                  <Calendar size={12} />
+                  {new Date(article.created_at).toLocaleDateString()}
+                </span>
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-white leading-tight line-clamp-3">
+                {article.title}
+              </h2>
             </div>
-          )}
-          
-          {/* 이미지 위 그라데이션 (텍스트 가독성용) */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-80" />
-
-          {/* 닫기 버튼 (이미지 위에 둥둥 떠있음) */}
-          <button 
-            onClick={onClose}
-            className="absolute top-4 right-4 p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md rounded-full text-white transition-all z-10"
-          >
-            <X size={20} />
-          </button>
-
-          {/* 카테고리 뱃지 */}
-          <div className="absolute top-4 left-4 px-3 py-1 bg-cyan-500/90 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-wider rounded-full shadow-lg">
-            {article.category}
-          </div>
-        </div>
-
-        {/* 2. 텍스트 컨텐츠 영역 (스크롤 가능) */}
-        <div className="flex-1 overflow-y-auto p-6 sm:p-8 custom-scrollbar">
-          {/* 메타 정보 (날짜 등) */}
-          <div className="flex items-center gap-4 text-xs font-bold text-slate-400 mb-4">
-             <div className="flex items-center gap-1.5">
-               <Calendar size={14} />
-               {new Date(article.created_at).toLocaleDateString()}
-             </div>
-             <div className="flex items-center gap-1.5">
-               <Clock size={14} />
-               {new Date(article.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-             </div>
           </div>
 
-          {/* 제목 */}
-          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white leading-tight mb-6">
-            {article.title}
-          </h2>
+          {/* Body */}
+          <div className="p-6 sm:p-8 overflow-y-auto flex-1 bg-white dark:bg-slate-900">
+            <div className="flex items-center justify-between mb-6 pb-6 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className="text-yellow-500 font-black text-lg">★ {article.score}</span>
+                <span className="text-slate-300 text-xs">AI Score</span>
+              </div>
+              
+              <div className="flex gap-3">
+                {/* [수정] 공유 버튼에 handleShare 연결 */}
+                <button 
+                  onClick={handleShare}
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl font-bold text-sm text-slate-600 dark:text-slate-300 hover:bg-cyan-50 dark:hover:bg-cyan-900/30 hover:text-cyan-600 transition-colors"
+                >
+                  <Share2 size={16} /> Share
+                </button>
+                <a 
+                  href={article.link} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-900 dark:bg-cyan-600 text-white rounded-xl font-bold text-sm hover:opacity-90 transition-opacity"
+                >
+                  Read Original <ExternalLink size={16} />
+                </a>
+              </div>
+            </div>
 
-          {/* 본문 (요약) */}
-          <div className="prose dark:prose-invert max-w-none">
-            <p className="text-base sm:text-lg leading-relaxed text-slate-600 dark:text-slate-300">
+            <p className="text-slate-600 dark:text-slate-300 text-lg leading-relaxed mb-8">
               {article.summary}
             </p>
-          </div>
 
-          {/* 원문 보러가기 버튼 */}
-          <div className="mt-8 pt-8 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <a 
-              href={article.link} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 dark:bg-cyan-600 text-white font-bold rounded-xl hover:scale-105 transition-transform shadow-lg"
-            >
-              Read Original Article <ExternalLink size={16} />
-            </a>
-
-            {/* 투표 및 공유 버튼 */}
-            <div className="flex items-center gap-3 w-full sm:w-auto justify-center">
+            <div className="flex justify-center gap-6">
               <button 
                 onClick={() => onVote(article.id, 'likes')}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-slate-600 dark:text-slate-300 rounded-xl transition-colors group"
+                className="flex flex-col items-center gap-1 group"
               >
-                <ThumbsUp size={18} className="group-hover:text-blue-500 transition-colors" />
-                <span className="text-sm font-bold">{article.likes || 0}</span>
+                <div className="w-14 h-14 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center text-slate-400 group-hover:bg-cyan-50 dark:group-hover:bg-cyan-900/20 group-hover:text-cyan-500 transition-all group-active:scale-95">
+                  <ThumbsUp size={24} />
+                </div>
+                <span className="text-xs font-bold text-slate-400">{article.likes}</span>
               </button>
 
               <button 
                 onClick={() => onVote(article.id, 'dislikes')}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-900/30 text-slate-600 dark:text-slate-300 rounded-xl transition-colors group"
+                className="flex flex-col items-center gap-1 group"
               >
-                <ThumbsDown size={18} className="group-hover:text-red-500 transition-colors" />
-                <span className="text-sm font-bold">{article.dislikes || 0}</span>
-              </button>
-
-              <button className="p-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 rounded-xl transition-colors">
-                 <Share2 size={18} />
+                <div className="w-14 h-14 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center text-slate-400 group-hover:bg-pink-50 dark:group-hover:bg-pink-900/20 group-hover:text-pink-500 transition-all group-active:scale-95">
+                  <ThumbsDown size={24} />
+                </div>
+                <span className="text-xs font-bold text-slate-400">{article.dislikes}</span>
               </button>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   );
 }
