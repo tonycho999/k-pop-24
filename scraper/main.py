@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 
-# 모듈 import 문제 방지
+# 모듈 import 경로 설정
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
 # 필수 모듈 불러오기
@@ -21,16 +21,13 @@ def run_master_scraper():
         print(f"\n📂 [{category.upper()}] 트렌드 분석 시작")
         
         # [1단계] 씨앗 수집 (Seed Search)
-        # 네이버 뉴스 API를 통해 광범위한 제목 수집 (차단 방지 & 최신성 확보)
         seed_titles = []
         try:
             for seed in seeds:
-                # 각 시드당 20~30개 정도만 가져와서 믹스
                 news = crawler.get_naver_api_news(seed, display=20)
                 seed_titles.extend([n['title'] for n in news])
             
-            # 중복 제거
-            seed_titles = list(set(seed_titles))
+            seed_titles = list(set(seed_titles)) # 중복 제거
             print(f"   🌱 원석 수집 완료: {len(seed_titles)}개의 제목 확보")
         except Exception as e:
             print(f"   ⚠️ 씨앗 수집 중 오류: {e}")
@@ -48,7 +45,7 @@ def run_master_scraper():
         # [3단계] 정밀 검색 및 합성 (Deep Dive & Synthesis)
         category_news_list = []
         
-        # 상위 N개(설정값 30개)만 처리
+        # 설정된 상위 N개(30개)만 처리
         target_keywords = top_keywords[:TOP_RANK_LIMIT]
         
         for rank, kw in enumerate(target_keywords):
@@ -61,17 +58,48 @@ def run_master_scraper():
                 if not raw_articles:
                     continue
 
+                # ====================================================
+                # 🚨 [핵심 수정] HTTP 필터링 및 HTTPS 강제 변환 로직
+                # ====================================================
+                valid_articles = []
+                for art in raw_articles:
+                    link = art['link']
+                    
+                    # 1. http 발견 시 https로 교체
+                    if link.startswith("http://"):
+                        link = link.replace("http://", "https://")
+                    
+                    # 2. 최종적으로 https가 아니면 수집 대상에서 제외 (Continue)
+                    if not link.startswith("https://"):
+                        continue
+                        
+                    # 링크 업데이트 후 리스트에 추가
+                    art['link'] = link
+                    valid_articles.append(art)
+                
+                # 유효한 기사가 없으면 다음 키워드로 패스
+                if not valid_articles:
+                    print(f"      ❌ '{kw}': 유효한 HTTPS 기사가 없음.")
+                    continue
+                # ====================================================
+
                 # 본문 크롤링 (상위 3~5개 기사 합치기)
                 full_contents = []
                 main_image = None
-                valid_link = raw_articles[0]['link']
-                published_at = raw_articles[0].get('published_at', datetime.now()).isoformat()
+                
+                # 위에서 걸러낸 valid_articles만 사용
+                target_article = valid_articles[0] 
+                valid_link = target_article['link']
+                published_at = target_article.get('published_at', datetime.now()).isoformat()
 
-                for art in raw_articles[:5]:
+                for art in valid_articles[:5]:
                     text, img = crawler.get_article_data(art['link'])
                     if text: full_contents.append(text)
-                    # 첫 번째로 발견된 유효한 이미지를 메인 이미지로 사용
-                    if not main_image and img: main_image = img
+                    if not main_image and img: 
+                        # 이미지 링크도 http면 https로 변환
+                        if img.startswith("http://"):
+                            img = img.replace("http://", "https://")
+                        main_image = img
 
                 # AI 요약 (브리핑 생성)
                 if full_contents:
@@ -82,21 +110,20 @@ def run_master_scraper():
 
                     news_item = {
                         "category": category,
-                        "rank": rank + 1,       # 랭킹 정보 추가
-                        "keyword": kw,          # 키워드 정보 추가
-                        "title": f"[{rank+1}] {kw}: Top Trending News", # 제목 포맷팅
+                        "rank": rank + 1,
+                        "keyword": kw,
+                        "title": f"[{rank+1}] {kw}: Top Trending News",
                         "summary": briefing,
-                        "link": valid_link,     # 대표 링크 하나 제공
-                        "image_url": final_img,
-                        "score": 10.0 - (rank * 0.1), # 랭킹 기반 점수 (1위 10점, 2위 9.9점...)
+                        "link": valid_link,     # 무조건 https 링크만 들어감
+                        "image_url": final_img, # 이미지도 https 처리됨
+                        "score": 10.0 - (rank * 0.1),
                         "likes": 0, "dislikes": 0,
                         "created_at": datetime.now().isoformat(),
                         "published_at": published_at
                     }
                     category_news_list.append(news_item)
                 
-                # API 보호를 위한 짧은 대기
-                time.sleep(0.5)
+                time.sleep(0.5) # API 보호
                 
             except Exception as e:
                 print(f"      ⚠️ '{kw}' 처리 실패: {e}")
