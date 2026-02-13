@@ -3,10 +3,9 @@ import json
 import re
 import requests
 from groq import Groq
-from scraper.config import CATEGORY_SEEDS
 
 # =========================================================
-# 1. 지능형 모델 필터링 (Vision/Audio 모델 제외)
+# 1. 지능형 모델 필터링
 # =========================================================
 
 def get_groq_text_models():
@@ -18,15 +17,12 @@ def get_groq_text_models():
         valid_models = []
         for m in all_models.data:
             mid = m.id.lower()
-            # 이미지/음성 모델 제외
             if 'vision' in mid or 'whisper' in mid or 'audio' in mid:
                 continue
             valid_models.append(m.id)
-        # 최신 모델 우선 정렬
         valid_models.sort(reverse=True)
         return valid_models
-    except Exception as e:
-        print(f"      ⚠️ Groq 모델 조회 실패: {e}")
+    except:
         return []
 
 def get_openrouter_text_models():
@@ -37,7 +33,6 @@ def get_openrouter_text_models():
         valid_models = []
         for m in data:
             mid = m['id'].lower()
-            # 무료이면서 채팅 가능한 모델만
             if ':free' in mid and ('chat' in mid or 'instruct' in mid or 'gpt' in mid):
                 if 'diffusion' in mid or 'image' in mid or 'vision' in mid or '3d' in mid:
                     continue
@@ -47,17 +42,13 @@ def get_openrouter_text_models():
     except: return []
 
 def get_hf_text_models():
-    # Hugging Face는 실패 시 기본 모델 반환
     return ["mistralai/Mistral-7B-Instruct-v0.3"]
 
 # =========================================================
-# 2. 마스터 AI 실행 엔진 (순차적 시도)
+# 2. 마스터 AI 실행 엔진
 # =========================================================
 
 def ask_ai_master(system_prompt, user_input):
-    """
-    Groq -> OpenRouter -> HF 순서로 시도하여 답변을 받아냄
-    """
     # 1. Groq 시도
     groq_key = os.getenv("GROQ_API_KEY")
     if groq_key:
@@ -94,10 +85,10 @@ def ask_ai_master(system_prompt, user_input):
                     if content: return content
             except: continue
             
-    return "" # 실패 시 빈 문자열
+    return ""
 
 # =========================================================
-# 3. JSON 파서 (AI 답변 정리)
+# 3. JSON 파서
 # =========================================================
 
 def parse_json_result(text):
@@ -105,32 +96,25 @@ def parse_json_result(text):
     try: return json.loads(text)
     except: pass
     
-    # 마크다운 제거 시도
     try:
         if "```" in text:
-            # ```json ... ``` 패턴 처리
             text = text.split("```json")[-1].split("```")[0].strip()
             if not text.startswith("[") and not text.startswith("{"):
                  text = text.split("```")[-1].split("```")[0].strip()
             return json.loads(text)
     except: pass
     
-    # 정규식으로 강제 추출
     try:
         match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
         if match: return json.loads(match.group(0))
     except: pass
-    
     return []
 
 # =========================================================
-# 4. 핵심 분석 함수 (여기가 없어서 에러가 난 것임)
+# 4. 핵심 분석 함수 (들여쓰기 완벽 교정됨)
 # =========================================================
 
 def extract_top_entities(category, news_titles):
-    """
-    [핵심] 뉴스 제목들에서 가장 많이 언급된 키워드(가수, 배우, 작품명) 추출
-    """
     system_prompt = f"""
     You are a K-Content Trend Analyst for '{category}'. 
     Task: Analyze the news titles and extract the most frequently mentioned entities.
@@ -150,22 +134,16 @@ def extract_top_entities(category, news_titles):
     Example Output: ["NewJeans", "BTS", "Squid Game 2"]
     """
     
-    # 제목 데이터 결합
     user_input = "\n".join(news_titles)[:12000]
     
-    # AI 호출
     raw_result = ask_ai_master(system_prompt, user_input)
     parsed = parse_json_result(raw_result)
     
-    # 리스트 형태만 반환
     if isinstance(parsed, list):
         return list(dict.fromkeys(parsed)) 
     return []
 
 def synthesize_briefing(keyword, news_contents):
-    """
-    [핵심] 여러 기사 내용을 바탕으로 종합 요약 생성
-    """
     system_prompt = f"""
     You are a Professional News Briefing Editor. 
     Topic: {keyword}
