@@ -1,108 +1,187 @@
-import sys
 import os
-import time
-from datetime import datetime
-from dotenv import load_dotenv
+import json
+import re
+import requests
+from groq import Groq
+from scraper.config import CATEGORY_SEEDS
 
-sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+# =========================================================
+# 1. 지능형 모델 필터링 (Vision/Audio 모델 제외)
+# =========================================================
 
-from scraper import crawler, ai_engine, repository
-from scraper.config import CATEGORY_SEEDS, TOP_RANK_LIMIT
-
-load_dotenv()
-
-def run_master_scraper():
-    print(f"🚀 K-Enter Trend Master 가동 시작: {datetime.now()}")
-    
-    for category, seeds in CATEGORY_SEEDS.items():
-        print(f"\n📂 [{category.upper()}] 트렌드 분석 시작")
-        
-        # [1단계] 씨앗 수집
-        seed_titles = []
-        try:
-            for seed in seeds:
-                news = crawler.get_naver_api_news(seed, display=20)
-                seed_titles.extend([n['title'] for n in news])
-            seed_titles = list(set(seed_titles))
-            print(f"   🌱 원석 수집 완료: {len(seed_titles)}개")
-        except Exception as e:
-            print(f"   ⚠️ 씨앗 수집 중 오류: {e}")
-            continue
-        
-        # [2단계] 키워드 추출
-        top_keywords = ai_engine.extract_top_entities(category, seed_titles)
-        if not top_keywords: continue
-            
-        print(f"   💎 추출된 랭킹: {', '.join(top_keywords[:5])}...")
-
-        # [3단계] 키워드별 심층 분석
-        category_news_list = []
-        target_keywords = top_keywords[:TOP_RANK_LIMIT]
-        
-        for rank, kw in enumerate(target_keywords):
-            print(f"   🔍 Rank {rank+1}: '{kw}' 요약 중...")
-            
-            try:
-                raw_articles = crawler.get_naver_api_news(kw, display=10)
-                if not raw_articles: continue
-
-                full_contents = []
-                main_image = None
-                
-                # 상위 5개 기사 확인
-                for art in raw_articles[:5]:
-                    # 🚨 [핵심] get_article_data에 키워드를 넘겨서 검증시킴
-                    text, img = crawler.get_article_data(art['link'], target_keyword=kw)
-                    
-                    if text: 
-                        full_contents.append(text)
-                    
-                    if not main_image and img:
-                        if img.startswith("http://"):
-                            img = img.replace("http://", "https://")
-                        main_image = img
-
-                # 유효한 본문이 하나도 없으면 건너뜀 (쓰레기 요약 방지)
-                if not full_contents:
-                    print(f"      ☁️ '{kw}': 관련 본문 없음 (Skip)")
-                    continue
-
-                # AI 요약 수행
-                briefing = ai_engine.synthesize_briefing(kw, full_contents)
-                
-                # AI가 '정보 없음'이라고 답했으면 저장 안 함
-                if "No specific news" in briefing:
-                     print(f"      ☁️ '{kw}': AI가 요약할 정보가 없다고 판단함.")
-                     continue
-
-                final_img = main_image or f"https://placehold.co/600x400/111/cyan?text={kw}"
-
-                news_item = {
-                    "category": category,
-                    "rank": rank + 1,
-                    "keyword": kw,
-                    "title": f"[{kw}] Key Trends & Issues",
-                    "summary": briefing,
-                    "link": None,            # 링크 X
-                    "image_url": final_img,  # 이미지 O (HTTPS)
-                    "score": 10.0 - (rank * 0.1),
-                    "likes": 0, "dislikes": 0,
-                    "created_at": datetime.now().isoformat(),
-                    "published_at": datetime.now().isoformat()
-                }
-                category_news_list.append(news_item)
-                time.sleep(0.5)
-                
-            except Exception as e:
-                print(f"      ⚠️ '{kw}' 처리 실패: {e}")
+def get_groq_text_models():
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key: return []
+    try:
+        client = Groq(api_key=api_key)
+        all_models = client.models.list()
+        valid_models = []
+        for m in all_models.data:
+            mid = m.id.lower()
+            # 이미지/음성 모델 제외
+            if 'vision' in mid or 'whisper' in mid or 'audio' in mid:
                 continue
+            valid_models.append(m.id)
+        # 최신 모델 우선 정렬
+        valid_models.sort(reverse=True)
+        return valid_models
+    except Exception as e:
+        print(f"      ⚠️ Groq 모델 조회 실패: {e}")
+        return []
 
-        # [4단계] 저장
-        if category_news_list:
-            repository.save_to_archive(category_news_list[:10])
-            repository.refresh_live_news(category, category_news_list)
+def get_openrouter_text_models():
+    try:
+        res = requests.get("https://openrouter.ai/api/v1/models", timeout=5)
+        if res.status_code != 200: return []
+        data = res.json().get('data', [])
+        valid_models = []
+        for m in data:
+            mid = m['id'].lower()
+            # 무료이면서 채팅 가능한 모델만
+            if ':free' in mid and ('chat' in mid or 'instruct' in mid or 'gpt' in mid):
+                if 'diffusion' in mid or 'image' in mid or 'vision' in mid or '3d' in mid:
+                    continue
+                valid_models.append(m['id'])
+        valid_models.sort(reverse=True)
+        return valid_models
+    except: return []
 
-    print("\n🎉 업데이트 완료.")
+def get_hf_text_models():
+    # Hugging Face는 실패 시 기본 모델 반환
+    return ["mistralai/Mistral-7B-Instruct-v0.3"]
 
-if __name__ == "__main__":
-    run_master_scraper()
+# =========================================================
+# 2. 마스터 AI 실행 엔진 (순차적 시도)
+# =========================================================
+
+def ask_ai_master(system_prompt, user_input):
+    """
+    Groq -> OpenRouter -> HF 순서로 시도하여 답변을 받아냄
+    """
+    # 1. Groq 시도
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        models = get_groq_text_models()
+        client = Groq(api_key=groq_key)
+        for model_id in models:
+            try:
+                completion = client.chat.completions.create(
+                    model=model_id,
+                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_input}],
+                    temperature=0.3
+                )
+                return completion.choices[0].message.content.strip()
+            except: continue
+
+    # 2. OpenRouter 시도
+    or_key = os.getenv("OPENROUTER_API_KEY")
+    if or_key:
+        models = get_openrouter_text_models()
+        for model_id in models:
+            try:
+                res = requests.post(
+                    url="https://openrouter.ai/api/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {or_key}"},
+                    json={
+                        "model": model_id,
+                        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_input}],
+                        "temperature": 0.3
+                    },
+                    timeout=20
+                )
+                if res.status_code == 200:
+                    content = res.json()['choices'][0]['message']['content']
+                    if content: return content
+            except: continue
+            
+    return "" # 실패 시 빈 문자열
+
+# =========================================================
+# 3. JSON 파서 (AI 답변 정리)
+# =========================================================
+
+def parse_json_result(text):
+    if not text: return []
+    try: return json.loads(text)
+    except: pass
+    
+    # 마크다운 제거 시도
+    try:
+        if "```" in text:
+            # ```json ... ``` 패턴 처리
+            text = text.split("```json")[-1].split("```")[0].strip()
+            if not text.startswith("[") and not text.startswith("{"):
+                 text = text.split("```")[-1].split("```")[0].strip()
+            return json.loads(text)
+    except: pass
+    
+    # 정규식으로 강제 추출
+    try:
+        match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
+        if match: return json.loads(match.group(0))
+    except: pass
+    
+    return []
+
+# =========================================================
+# 4. 핵심 분석 함수 (여기가 없어서 에러가 난 것임)
+# =========================================================
+
+def extract_top_entities(category, news_titles):
+    """
+    [핵심] 뉴스 제목들에서 가장 많이 언급된 키워드(가수, 배우, 작품명) 추출
+    """
+    system_prompt = f"""
+    You are a K-Content Trend Analyst for '{category}'. 
+    Task: Analyze the news titles and extract the most frequently mentioned entities.
+    
+    [Rules]
+    1. Target Entities:
+       - K-Pop: Group Names, Solo Singers, Song Titles.
+       - K-Drama/Movie: Actor Names, Drama/Movie Titles.
+    2. ⛔ EXCLUDE: 
+       - Company names (HYBE, SM, YG, JYP, Ador, etc.).
+       - Generic words (Comeback, Debut, Chart, Controversy, Netizen).
+    3. Output:
+       - Return a JSON LIST of strings ordered by frequency (Most mentioned first).
+       - Max 30 items.
+       - Translate Korean names to English standard names.
+    
+    Example Output: ["NewJeans", "BTS", "Squid Game 2"]
+    """
+    
+    # 제목 데이터 결합
+    user_input = "\n".join(news_titles)[:12000]
+    
+    # AI 호출
+    raw_result = ask_ai_master(system_prompt, user_input)
+    parsed = parse_json_result(raw_result)
+    
+    # 리스트 형태만 반환
+    if isinstance(parsed, list):
+        return list(dict.fromkeys(parsed)) 
+    return []
+
+def synthesize_briefing(keyword, news_contents):
+    """
+    [핵심] 여러 기사 내용을 바탕으로 종합 요약 생성
+    """
+    system_prompt = f"""
+    You are a Professional News Briefing Editor. 
+    Topic: {keyword}
+    
+    Task: Summarize the provided news snippets into a 5-10 line cohesive briefing in English.
+    
+    [CRITICAL RULES]
+    1. ONLY use the facts from the provided text. Do not invent details.
+    2. If the provided text does not contain relevant information about '{keyword}', 
+       return exactly: "No specific news updates available at this moment."
+    3. Focus on: What is happening, Why it is trending.
+    
+    [Format]
+    - Style: Professional, Journalistic
+    - Output: Plain text only (No Markdown)
+    """
+    
+    user_input = "\n\n".join(news_contents)[:4000] 
+    return ask_ai_master(system_prompt, user_input)
