@@ -15,7 +15,7 @@ interface SidebarProps {
 
 export default function Sidebar({ news, category }: SidebarProps) {
   const [rankings, setRankings] = useState<RankingItemData[]>([]);
-  const [loading, setLoading] = useState(true); // 로딩 초기값 true
+  const [loading, setLoading] = useState(true);
 
   // 1. 랭킹 데이터 가져오기
   useEffect(() => {
@@ -24,7 +24,14 @@ export default function Sidebar({ news, category }: SidebarProps) {
       try {
         let data: RankingItemData[] | null = null;
         
-        // 테이블 이름: live_rankings (확인됨)
+        // ✅ [핵심 수정] DB 요청용 카테고리 이름 변환
+        // 화면에서는 'K-Entertain'을 쓰지만, DB에는 'K-Variety'로 저장되어 있음
+        let dbCategory = category;
+        if (category === 'K-Entertain') {
+            dbCategory = 'K-Variety';
+        }
+
+        // 테이블 이름: live_rankings
         if (category === 'All') {
           const { data: trendingData, error } = await supabase
             .from('live_rankings') 
@@ -44,7 +51,7 @@ export default function Sidebar({ news, category }: SidebarProps) {
           const { data: categoryData, error } = await supabase
             .from('live_rankings')
             .select('*')
-            .eq('category', category) // 소문자 변환 주의
+            .eq('category', dbCategory) // ✅ 변환된 이름(K-Variety)으로 조회
             .order('rank', { ascending: true })
             .limit(10);
             
@@ -55,7 +62,7 @@ export default function Sidebar({ news, category }: SidebarProps) {
         setRankings(data || []);
       } catch (error) {
         console.error("Sidebar Ranking Fetch Error:", error);
-        setRankings([]); // 에러나면 빈 배열
+        setRankings([]);
       } finally {
         setLoading(false);
       }
@@ -64,19 +71,20 @@ export default function Sidebar({ news, category }: SidebarProps) {
     fetchRankings();
   }, [category]);
 
-  // 2. 헤더 정보 설정 (안전하게 처리)
+  // 2. 헤더 정보 설정
   const headerInfo = useMemo(() => {
     switch (category) {
       case 'K-Pop': return { title: 'Top 10 Music Chart', icon: <Music size={18} /> };
       case 'K-Drama': return { title: 'Drama Ranking', icon: <Tv size={18} /> }; 
       case 'K-Movie': return { title: 'Box Office Top 10', icon: <Film size={18} /> };
+      // 화면 표시용 이름은 K-Entertain 유지
       case 'K-Entertain': return { title: 'Variety Show Trends', icon: <Flame size={18} /> };
       case 'K-Culture': return { title: "K-Culture Hot Picks", icon: <MapPin size={18} /> };
       default: return { title: 'Total Trend Ranking', icon: <TrendingUp size={18} /> };
     }
   }, [category]);
 
-  // 3. 좋아요 Top 3 (데이터 없으면 빈 배열)
+  // 3. 좋아요 Top 3
   const topLiked = useMemo(() => {
       if (!news || news.length === 0) return [];
       return [...news]
@@ -85,7 +93,7 @@ export default function Sidebar({ news, category }: SidebarProps) {
   }, [news]);
 
   return (
-    <aside className="lg:col-span-1 space-y-6 w-full"> {/* w-full 추가 */}
+    <aside className="lg:col-span-1 space-y-6 w-full">
       
       {/* 1. 실시간 랭킹 섹션 */}
       <section className="bg-white dark:bg-slate-900 rounded-[32px] p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
@@ -104,14 +112,12 @@ export default function Sidebar({ news, category }: SidebarProps) {
           ) : rankings.length > 0 ? (
               rankings.map((item, index) => (
                 <RankingItem 
-                    // key 중복 방지 강화
                     key={item.id || `rank-${index}-${item.title}`} 
                     rank={item.rank} 
                     item={item} 
                 />
               ))
           ) : (
-              // 데이터가 없을 때 표시될 UI
               <div className="text-center py-8">
                 <p className="text-xs text-slate-400 italic mb-2">Ranking data preparing...</p>
                 <p className="text-[10px] text-slate-300">Run scraper to fetch data</p>
@@ -124,7 +130,7 @@ export default function Sidebar({ news, category }: SidebarProps) {
       <KeywordTicker />
       <VibeCheck />
       
-      {/* 3. 유저 초이스 (좋아요 순) */}
+      {/* 3. 유저 초이스 */}
       <section className="bg-white dark:bg-slate-900 rounded-[32px] p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
         <div className="flex items-center gap-2 mb-6 text-cyan-500">
           <Trophy size={18} className="fill-current" />
