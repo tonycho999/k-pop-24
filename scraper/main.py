@@ -18,11 +18,10 @@ GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 genai.configure(api_key=GOOGLE_API_KEY)
 
 # ---------------------------------------------------------
-# [수정] 모델 강제 고정 (자동 선택 기능 제거)
-# 이유: 2.0 버전은 아직 권한(Quota) 문제로 에러가 발생함.
-# 누구나 사용 가능한 'gemini-1.5-flash'로 고정.
+# [수정] 모델 이름 변경 (접두어 제거)
+# 'models/'를 빼고 이름만 적어야 에러가 안 납니다.
 # ---------------------------------------------------------
-SELECTED_MODEL_NAME = "models/gemini-1.5-flash"
+SELECTED_MODEL_NAME = "gemini-1.5-flash" 
 model = genai.GenerativeModel(SELECTED_MODEL_NAME, tools='google_search_retrieval')
 
 # ---------------------------------------------------------
