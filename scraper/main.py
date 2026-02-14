@@ -4,7 +4,7 @@ import time
 import requests
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from duckduckgo_search import DDGS
+from ddgs import DDGS # 패키지명 변경 반영
 
 # 1. 환경변수 로드
 load_dotenv()
@@ -27,15 +27,15 @@ CATEGORIES = {
 }
 
 def search_web(keyword):
-    """DuckDuckGo 검색 (라이브러리 경고 무시 및 안정성 확보)"""
+    """DuckDuckGo 검색 (안정성 강화)"""
     print(f"🔍 [Search] '{keyword}' 검색 중...")
     results = []
     try:
         with DDGS() as ddgs:
-            # 1. 뉴스 검색 시도
+            # 1. 뉴스 검색
             ddg_results = list(ddgs.news(keywords=keyword, region="kr-kr", safesearch="off", max_results=10))
             
-            # 2. 뉴스 없으면 일반 텍스트 검색 시도
+            # 2. 결과 없으면 텍스트 검색으로 대체
             if not ddg_results:
                 time.sleep(1)
                 ddg_results = list(ddgs.text(keywords=keyword, region="kr-kr", max_results=5))
@@ -54,34 +54,33 @@ def search_web(keyword):
 
 def call_gemini_api(category_name, raw_data):
     """
-    [핵심] 라이브러리 없이 직접 REST API 호출 (무적의 방식)
+    [핵심] 여러 모델을 순차적으로 시도하는 '생존형' API 호출 함수
     """
-    print(f"🤖 [Gemini] '{category_name}' 분석 요청 중 (REST API)...")
+    print(f"🤖 [Gemini] '{category_name}' 분석 요청 중...")
     
-    # Gemini 1.5 Flash 엔드포인트 URL
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}"
+    # 시도할 모델 후보군 (우선순위 순서)
+    # 1. v1beta + 1.5-flash (표준)
+    # 2. v1beta + 1.5-flash-latest (최신 별칭)
+    # 3. v1beta + gemini-pro (구형 안정화)
+    endpoints = [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+    ]
     
-    headers = {
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
     
     prompt = f"""
     You are a K-Entertainment news editor.
-    Here is the raw search data for '{category_name}':
-    {raw_data[:15000]} 
+    Raw data: {raw_data[:15000]} 
 
     Task: Extract 10 news items and Top 10 rankings.
-    Output must be strict JSON without Markdown formatting.
+    Output must be strict JSON.
 
     Format:
     {{
       "news_updates": [
-        {{
-          "keyword": "Core Keyword",
-          "title": "Korean Title",
-          "summary": "Korean Summary (1 sentence)",
-          "link": "URL"
-        }}
+        {{ "keyword": "Subject", "title": "Title", "summary": "Summary", "link": "URL" }}
       ],
       "rankings": [
         {{ "rank": 1, "title": "Name", "meta": "Info" }}
@@ -89,35 +88,32 @@ def call_gemini_api(category_name, raw_data):
     }}
     """
     
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    }
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        
-        # 응답 상태 체크
-        if response.status_code != 200:
-            print(f"❌ API 호출 실패: {response.status_code} - {response.text}")
-            return None
-            
-        result = response.json()
-        
-        # 텍스트 추출
+    # 모델 돌려막기 시작
+    for url in endpoints:
         try:
-            text = result['candidates'][0]['content']['parts'][0]['text']
-            # JSON 클리닝 (가끔 ```json 같은게 붙어옴)
-            text = text.replace("```json", "").replace("```", "").strip()
-            return json.loads(text)
-        except (KeyError, IndexError, json.JSONDecodeError) as e:
-            print(f"❌ JSON 파싱 실패: {e}")
-            return None
+            full_url = f"{url}?key={GOOGLE_API_KEY}"
+            response = requests.post(full_url, headers=headers, json=payload)
             
-    except Exception as e:
-        print(f"❌ 연결 오류: {e}")
-        return None
+            if response.status_code == 200:
+                print(f"   ✅ 성공! (사용된 모델: {url.split('models/')[1].split(':')[0]})")
+                try:
+                    text = response.json()['candidates'][0]['content']['parts'][0]['text']
+                    text = text.replace("```json", "").replace("```", "").strip()
+                    return json.loads(text)
+                except Exception:
+                    continue # JSON 파싱 에러나면 다음 모델 시도
+            else:
+                print(f"   ⚠️ 실패 ({response.status_code}): 다음 모델 시도...")
+                continue # 404나 429 등 에러나면 다음 모델 시도
+                
+        except Exception as e:
+            print(f"   ❌ 연결 오류: {e}")
+            continue
+
+    print("❌ 모든 모델 시도 실패")
+    return None
 
 def update_database(category, data):
     # 1. 뉴스 저장
@@ -160,24 +156,25 @@ def update_database(category, data):
             pass
 
 def main():
-    print("🚀 스크래퍼 시작 (Direct REST API 방식)")
+    print("🚀 스크래퍼 시작 (Multi-Model Failover)")
     
     for category, search_keyword in CATEGORIES.items():
         # 1. 검색
         raw_text = search_web(search_keyword)
         
-        if len(raw_text) < 50:
+        # 검색 결과가 너무 적어도 일단 시도 (fallback 검색이 있으므로)
+        if len(raw_text) < 10: 
             print(f"⚠️ {category} 정보 부족으로 건너뜀")
             continue
 
-        # 2. AI 요약 (REST API)
+        # 2. AI 요약
         data = call_gemini_api(category, raw_text)
         
         # 3. 저장
         if data:
             update_database(category, data)
         
-        time.sleep(3) # 대기
+        time.sleep(3)
 
     print("✅ 모든 작업 완료")
 
