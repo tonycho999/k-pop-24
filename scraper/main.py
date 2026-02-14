@@ -4,7 +4,7 @@ import time
 import requests
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from ddgs import DDGS # 패키지명 변경 반영
+from ddgs import DDGS
 
 # 1. 환경변수 로드
 load_dotenv()
@@ -27,18 +27,19 @@ CATEGORIES = {
 }
 
 def search_web(keyword):
-    """DuckDuckGo 검색 (안정성 강화)"""
+    """DuckDuckGo 검색 (파라미터명 query로 수정됨)"""
     print(f"🔍 [Search] '{keyword}' 검색 중...")
     results = []
     try:
         with DDGS() as ddgs:
-            # 1. 뉴스 검색
-            ddg_results = list(ddgs.news(keywords=keyword, region="kr-kr", safesearch="off", max_results=10))
+            # [수정 1] keywords -> query 로 변경 (라이브러리 업데이트 대응)
+            ddg_results = list(ddgs.news(query=keyword, region="kr-kr", safesearch="off", max_results=10))
             
-            # 2. 결과 없으면 텍스트 검색으로 대체
+            # 2. 뉴스 없으면 일반 텍스트 검색 시도
             if not ddg_results:
                 time.sleep(1)
-                ddg_results = list(ddgs.text(keywords=keyword, region="kr-kr", max_results=5))
+                # [수정 2] text 검색도 query로 변경
+                ddg_results = list(ddgs.text(query=keyword, region="kr-kr", max_results=5))
 
             for r in ddg_results:
                 title = r.get('title', '')
@@ -59,9 +60,6 @@ def call_gemini_api(category_name, raw_data):
     print(f"🤖 [Gemini] '{category_name}' 분석 요청 중...")
     
     # 시도할 모델 후보군 (우선순위 순서)
-    # 1. v1beta + 1.5-flash (표준)
-    # 2. v1beta + 1.5-flash-latest (최신 별칭)
-    # 3. v1beta + gemini-pro (구형 안정화)
     endpoints = [
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent",
@@ -90,7 +88,6 @@ def call_gemini_api(category_name, raw_data):
     
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
-    # 모델 돌려막기 시작
     for url in endpoints:
         try:
             full_url = f"{url}?key={GOOGLE_API_KEY}"
@@ -103,10 +100,10 @@ def call_gemini_api(category_name, raw_data):
                     text = text.replace("```json", "").replace("```", "").strip()
                     return json.loads(text)
                 except Exception:
-                    continue # JSON 파싱 에러나면 다음 모델 시도
+                    continue 
             else:
                 print(f"   ⚠️ 실패 ({response.status_code}): 다음 모델 시도...")
-                continue # 404나 429 등 에러나면 다음 모델 시도
+                continue
                 
         except Exception as e:
             print(f"   ❌ 연결 오류: {e}")
@@ -156,13 +153,12 @@ def update_database(category, data):
             pass
 
 def main():
-    print("🚀 스크래퍼 시작 (Multi-Model Failover)")
+    print("🚀 스크래퍼 시작 (Fixed DDGS Params)")
     
     for category, search_keyword in CATEGORIES.items():
         # 1. 검색
         raw_text = search_web(search_keyword)
         
-        # 검색 결과가 너무 적어도 일단 시도 (fallback 검색이 있으므로)
         if len(raw_text) < 10: 
             print(f"⚠️ {category} 정보 부족으로 건너뜀")
             continue
