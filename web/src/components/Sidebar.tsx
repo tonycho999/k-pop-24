@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import KeywordTicker from './KeywordTicker';
 import VibeCheck from './VibeCheck';
 import RankingItem from './RankingItem';
-import { Trophy, Flame, Music, Film, Tv, MapPin, ThumbsUp, TrendingUp } from 'lucide-react'; // TrendingUp 아이콘 추가
+import { Trophy, Flame, Music, Film, Tv, MapPin, ThumbsUp, TrendingUp } from 'lucide-react';
 import { LiveNewsItem, RankingItemData } from '@/types';
 
 interface SidebarProps {
@@ -17,50 +17,41 @@ export default function Sidebar({ news, category }: SidebarProps) {
   const [rankings, setRankings] = useState<RankingItemData[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 카테고리 변경 시 랭킹 데이터 새로고침
   useEffect(() => {
     const fetchRankings = async () => {
       setLoading(true);
-      
       try {
         let data: RankingItemData[] | null = null;
 
-        // ✅ All일 때는 '평점(score)' 높은 순으로 정렬
+        // ✅ [수정] 테이블 이름을 'live_rankings'로 통일
         if (category === 'All') {
           const { data: trendingData, error } = await supabase
-            .from('trending_rankings')
+            .from('live_rankings')  // <-- 여기 수정됨
             .select('*')
-            .order('score', { ascending: false }) // 평점 높은 순
+            .order('score', { ascending: false })
             .limit(10);
           
           if (error) throw error;
-
           if (trendingData) {
-            // 화면에 보여줄 때만 1위~10위로 번호 매김 (DB 데이터 변경 X)
             data = trendingData.map((item, index) => ({
               ...item,
               rank: index + 1
             })) as RankingItemData[];
           }
-
         } else {
-          // ✅ 개별 카테고리는 DB에 저장된 'rank' 순서대로 (기존 유지)
           const targetCategory = category.toLowerCase();
-          
           const { data: categoryData, error } = await supabase
-            .from('trending_rankings')
+            .from('live_rankings')  // <-- 여기 수정됨
             .select('*')
             .eq('category', targetCategory)
-            .order('rank', { ascending: true }) // 지정된 랭킹 순
+            .order('rank', { ascending: true })
             .limit(10);
             
           if (error) throw error;
-            
           data = categoryData as RankingItemData[];
         }
 
         setRankings(data || []);
-
       } catch (error) {
         console.error("Sidebar Error:", error);
         setRankings([]);
@@ -72,7 +63,6 @@ export default function Sidebar({ news, category }: SidebarProps) {
     fetchRankings();
   }, [category]);
 
-  // 상단 헤더 아이콘/제목 설정 (useMemo 사용)
   const headerInfo = useMemo(() => {
     switch (category) {
       case 'K-Pop': return { title: 'Top 10 Music Chart', icon: <Music size={18} /> };
@@ -80,12 +70,10 @@ export default function Sidebar({ news, category }: SidebarProps) {
       case 'K-Movie': return { title: 'Box Office Top 10', icon: <Film size={18} /> };
       case 'K-Entertain': return { title: 'Variety Show Trends', icon: <Flame size={18} /> };
       case 'K-Culture': return { title: "K-Culture Hot Picks", icon: <MapPin size={18} /> };
-      default: return { title: 'Total Trend Ranking', icon: <TrendingUp size={18} /> }; // 아이콘 변경
+      default: return { title: 'Total Trend Ranking', icon: <TrendingUp size={18} /> };
     }
   }, [category]);
 
-  
-  // 좋아요 순 정렬 (Top 3)
   const topLiked = useMemo(() => {
       if (!news) return [];
       return [...news]
@@ -94,9 +82,7 @@ export default function Sidebar({ news, category }: SidebarProps) {
   }, [news]);
 
   return (
-    <aside className="lg:col-span-1 space-y-6"> {/* lg:col-span-4 -> lg:col-span-1 로 수정 (전체 레이아웃 고려) */}
-      
-      {/* 1. 실시간 랭킹 (All 포함 모든 카테고리에서 표시) */}
+    <aside className="lg:col-span-1 space-y-6">
       <section className="bg-white dark:bg-slate-900 rounded-[32px] p-6 border border-slate-100 dark:border-slate-800 shadow-sm animate-in fade-in slide-in-from-right-4 duration-500">
         <div className="flex items-center gap-2 mb-4 text-cyan-600 dark:text-cyan-400 border-b border-slate-50 dark:border-slate-800 pb-3">
           {headerInfo.icon}
@@ -110,7 +96,6 @@ export default function Sidebar({ news, category }: SidebarProps) {
               <div className="text-center py-8 text-xs text-slate-400 animate-pulse">Update Charts...</div>
           ) : rankings.length > 0 ? (
               rankings.map((item, index) => (
-                // key prop 수정: id가 없으면 index 활용
                 <RankingItem 
                     key={item.id || `${item.category}-${item.rank}-${index}`} 
                     rank={item.rank} 
@@ -125,13 +110,9 @@ export default function Sidebar({ news, category }: SidebarProps) {
         </div>
       </section>
 
-      {/* 2. Hot Keywords */}
       <KeywordTicker />
-
-      {/* 3. AI Vibe Check */}
       <VibeCheck />
       
-      {/* 4. Users' Choice (Top Voted) */}
       <section className="bg-white dark:bg-slate-900 rounded-[32px] p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
         <div className="flex items-center gap-2 mb-6 text-cyan-500">
           <Trophy size={18} className="fill-current" />
