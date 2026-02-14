@@ -1,4 +1,5 @@
 requests
 supabase
 python-dotenv
-ddgs
+beautifulsoup4
+schedule
