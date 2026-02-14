@@ -1,18 +1,16 @@
-# scraper/naver_api.py
 import os
 import time
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+# .env 로드
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
 CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
-# [수정] 함수 정의에 sort='sim' 인자를 추가하여 
-# 인자가 전달되지 않을 때는 정확도순(sim), 전달될 때는 최신순(date)으로 작동하게 합니다.
 def search_news_api(keyword, display=10, sort='sim'):
-    """네이버 뉴스 검색 API"""
+    """네이버 뉴스 검색 API (정렬 옵션 포함)"""
     if not CLIENT_ID or not CLIENT_SECRET:
         print(f"   🚨 [Naver API Error] Client ID or Secret is MISSING.")
         return []
@@ -27,7 +25,7 @@ def search_news_api(keyword, display=10, sort='sim'):
     params = {
         "query": keyword, 
         "display": display, 
-        "sort": sort  # 여기서 인자로 받은 sort 값을 네이버 API에 전달합니다.
+        "sort": sort 
     }
 
     try:
@@ -45,7 +43,7 @@ def search_news_api(keyword, display=10, sort='sim'):
         return []
 
 def crawl_article(url):
-    """뉴스 본문 및 이미지 추출"""
+    """뉴스 본문 및 HTTPS 이미지 추출 필터링 강화"""
     if "news.naver.com" not in url:
         return {"text": "", "image": ""}
 
@@ -58,8 +56,8 @@ def crawl_article(url):
         resp = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(resp.text, 'html.parser')
 
+        # 1. 뉴스 본문 추출
         content = ""
-        # 주요 뉴스 본문 셀렉터
         for selector in ["#dic_area", "#articeBody", "#newsEndContents", ".go_trans._article_content"]:
             el = soup.select_one(selector)
             if el:
@@ -68,10 +66,18 @@ def crawl_article(url):
                 content = el.get_text(strip=True)
                 break
         
+        # 2. 이미지 추출 및 HTTPS 필터링 강화
         image_url = ""
         og_img = soup.select_one('meta[property="og:image"]')
         if og_img:
-            image_url = og_img.get('content', '')
+            temp_url = og_img.get('content', '').strip()
+            
+            # [필터링 강화] 반드시 https://로 시작하는 경우만 허용
+            if temp_url.startswith("https://"):
+                image_url = temp_url
+            else:
+                # http:// 이거나 프로토콜이 없는 경우 로깅 및 제외
+                image_url = ""
 
         return {"text": content, "image": image_url}
 
