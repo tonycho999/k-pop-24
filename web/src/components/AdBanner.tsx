@@ -8,14 +8,14 @@ import { useEffect, useState } from 'react';
 const BANNER_CONFIG = [
   { 
     id: 1, 
-    src: '/banners/banner1.gif', 
+    src: '/banner1.gif', 
     link: 'https://example.com/ad1', 
     probability: 50, // 50% 가중치
     targetCountry: 'All' 
   },
   { 
     id: 2, 
-    src: '/banners/banner2.gif', 
+    src: '/banner2.gif', 
     link: 'https://example.com/ad2', 
     probability: 30, // 30% 가중치
     targetCountry: 'KR' // 한국에서만 보임
