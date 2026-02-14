@@ -9,8 +9,10 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
 CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
-def search_news_api(keyword, display=10):
-    """네이버 뉴스 검색 API (최신순 정렬 적용)"""
+# [수정] 함수 정의에 sort='sim' 인자를 추가하여 
+# 인자가 전달되지 않을 때는 정확도순(sim), 전달될 때는 최신순(date)으로 작동하게 합니다.
+def search_news_api(keyword, display=10, sort='sim'):
+    """네이버 뉴스 검색 API"""
     if not CLIENT_ID or not CLIENT_SECRET:
         print(f"   🚨 [Naver API Error] Client ID or Secret is MISSING.")
         return []
@@ -22,12 +24,10 @@ def search_news_api(keyword, display=10):
         "X-Naver-Client-Secret": CLIENT_SECRET.strip()
     }
     
-    # [핵심 수정] sort: 'sim'(정확도) -> 'date'(최신순)
-    # 이렇게 해야 '옛날 명작'이 아니라 '지금 방영 중인 드라마' 기사가 뜹니다.
     params = {
         "query": keyword, 
         "display": display, 
-        "sort": "date" 
+        "sort": sort  # 여기서 인자로 받은 sort 값을 네이버 API에 전달합니다.
     }
 
     try:
@@ -46,7 +46,6 @@ def search_news_api(keyword, display=10):
 
 def crawl_article(url):
     """뉴스 본문 및 이미지 추출"""
-    # (기존 코드와 동일)
     if "news.naver.com" not in url:
         return {"text": "", "image": ""}
 
@@ -60,7 +59,7 @@ def crawl_article(url):
         soup = BeautifulSoup(resp.text, 'html.parser')
 
         content = ""
-        # 본문 추출 로직 강화 (연예 뉴스는 div id가 다를 수 있음)
+        # 주요 뉴스 본문 셀렉터
         for selector in ["#dic_area", "#articeBody", "#newsEndContents", ".go_trans._article_content"]:
             el = soup.select_one(selector)
             if el:
@@ -74,7 +73,7 @@ def crawl_article(url):
         if og_img:
             image_url = og_img.get('content', '')
 
-        return {"text": content[:3000], "image": image_url}
+        return {"text": content, "image": image_url}
 
     except Exception:
         return {"text": "", "image": ""}
