@@ -17,7 +17,12 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # 3. Gemini API 키 설정
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-# [설정] 검색어 최적화
+# API 키 확인 (보안을 위해 앞 5자리만 출력)
+if GOOGLE_API_KEY:
+    print(f"🔑 API Key 로드 완료: {GOOGLE_API_KEY[:5]}...")
+else:
+    print("❌ API Key가 설정되지 않았습니다! GitHub Secrets를 확인하세요.")
+
 CATEGORIES = {
     "K-Pop": "k-pop latest news trends",
     "K-Drama": "k-drama ratings news",
@@ -27,18 +32,17 @@ CATEGORIES = {
 }
 
 def search_web(keyword):
-    """DuckDuckGo 검색 (파라미터명 query로 수정됨)"""
+    """DuckDuckGo 검색 (안정성 강화)"""
     print(f"🔍 [Search] '{keyword}' 검색 중...")
     results = []
     try:
         with DDGS() as ddgs:
-            # [수정 1] keywords -> query 로 변경 (라이브러리 업데이트 대응)
+            # 1. 뉴스 검색 (파라미터: query)
             ddg_results = list(ddgs.news(query=keyword, region="kr-kr", safesearch="off", max_results=10))
             
-            # 2. 뉴스 없으면 일반 텍스트 검색 시도
+            # 2. 텍스트 검색 (뉴스 없을 경우)
             if not ddg_results:
                 time.sleep(1)
-                # [수정 2] text 검색도 query로 변경
                 ddg_results = list(ddgs.text(query=keyword, region="kr-kr", max_results=5))
 
             for r in ddg_results:
@@ -49,20 +53,20 @@ def search_web(keyword):
                     results.append(f"제목: {title}\n내용: {body}\n링크: {link}")
                 
     except Exception as e:
-        print(f"⚠️ 검색 중 오류 발생 (건너뜀): {e}")
+        print(f"⚠️ 검색 중 오류 (건너뜀): {e}")
     
     return "\n\n".join(results)
 
 def call_gemini_api(category_name, raw_data):
-    """
-    [핵심] 여러 모델을 순차적으로 시도하는 '생존형' API 호출 함수
-    """
     print(f"🤖 [Gemini] '{category_name}' 분석 요청 중...")
     
-    # 시도할 모델 후보군 (우선순위 순서)
+    # [핵심 수정] 정식 버전(v1)과 구체적인 모델명 사용
     endpoints = [
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent",
+        # 1순위: 1.5 Flash 정식 버전 (v1beta -> v1)
+        "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent",
+        # 2순위: 1.5 Flash 구체적 버전 (001)
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent",
+        # 3순위: 구형 Pro 모델 (최후의 보루)
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
     ]
     
@@ -73,7 +77,7 @@ def call_gemini_api(category_name, raw_data):
     Raw data: {raw_data[:15000]} 
 
     Task: Extract 10 news items and Top 10 rankings.
-    Output must be strict JSON.
+    Output must be strict JSON without Markdown code blocks.
 
     Format:
     {{
@@ -94,15 +98,18 @@ def call_gemini_api(category_name, raw_data):
             response = requests.post(full_url, headers=headers, json=payload)
             
             if response.status_code == 200:
-                print(f"   ✅ 성공! (사용된 모델: {url.split('models/')[1].split(':')[0]})")
+                print(f"   ✅ 성공! (모델: {url.split('models/')[1].split(':')[0]})")
                 try:
                     text = response.json()['candidates'][0]['content']['parts'][0]['text']
+                    # JSON 클리닝
                     text = text.replace("```json", "").replace("```", "").strip()
                     return json.loads(text)
-                except Exception:
+                except Exception as e:
+                    print(f"   ⚠️ JSON 파싱 실패: {e}")
                     continue 
             else:
-                print(f"   ⚠️ 실패 ({response.status_code}): 다음 모델 시도...")
+                # [디버깅] 왜 실패했는지 상세 메시지 출력
+                print(f"   ⚠️ 실패 ({response.status_code}): {response.text[:200]}")
                 continue
                 
         except Exception as e:
@@ -113,7 +120,6 @@ def call_gemini_api(category_name, raw_data):
     return None
 
 def update_database(category, data):
-    # 1. 뉴스 저장
     news_list = data.get("news_updates", [])
     if news_list:
         clean_news = []
@@ -134,7 +140,6 @@ def update_database(category, data):
         except Exception as e:
             print(f"   ⚠️ 뉴스 저장 실패: {e}")
 
-    # 2. 랭킹 저장
     rank_list = data.get("rankings", [])
     if rank_list:
         clean_ranks = []
@@ -153,20 +158,17 @@ def update_database(category, data):
             pass
 
 def main():
-    print("🚀 스크래퍼 시작 (Fixed DDGS Params)")
+    print("🚀 스크래퍼 시작 (Direct REST API v1)")
     
     for category, search_keyword in CATEGORIES.items():
-        # 1. 검색
         raw_text = search_web(search_keyword)
         
         if len(raw_text) < 10: 
             print(f"⚠️ {category} 정보 부족으로 건너뜀")
             continue
 
-        # 2. AI 요약
         data = call_gemini_api(category, raw_text)
         
-        # 3. 저장
         if data:
             update_database(category, data)
         
