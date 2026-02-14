@@ -1,4 +1,4 @@
-# scraper/gemini_api.py
+# scraper/gemini_api.py (디버깅 모드)
 import os
 import json
 import requests
@@ -9,59 +9,44 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
 API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# Flash 모델 고정
-MODEL_NAME = "models/gemini-1.5-flash"
+# [핵심] 모델명에서 'models/'를 뺐습니다. (requests가 알아서 처리하도록)
+MODEL_NAME = "gemini-1.5-flash"
 
 def ask_gemini(prompt):
-    """AI에게 질문 (타임아웃 방지 및 재시도 로직 포함)"""
+    """AI에게 질문 (에러 원문 출력 버전)"""
     if not API_KEY:
         print("🚨 Google API Key is missing!")
         return None
+    
+    # 공백 제거 (혹시 몰라 코드에서도 한 번 더 제거)
+    clean_key = API_KEY.strip()
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/{MODEL_NAME}:generateContent?key={API_KEY}"
+    # URL 생성 (models/ 접두사 명시)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={clean_key}"
     headers = {"Content-Type": "application/json"}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    # [중요] 최대 3번까지 재시도
-    max_retries = 3
-    
-    for attempt in range(max_retries):
-        try:
-            # [수정됨] timeout을 30초 -> 60초로 늘림
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
-            
-            # 성공 (200 OK)
-            if resp.status_code == 200:
-                try:
-                    text = resp.json()['candidates'][0]['content']['parts'][0]['text']
-                    text = text.replace("```json", "").replace("```", "").strip()
-                    return json.loads(text)
-                except Exception:
-                    return None
-
-            # 404 에러 (설정 문제)
-            elif resp.status_code == 404:
-                print("   👉 [Solution] Please ENABLE 'Generative Language API' in Google Cloud Console.")
-                return None
-            
-            # 429 에러 (너무 많이 요청함) -> 잠시 대기
-            elif resp.status_code == 429:
-                print(f"   ⏳ Too Many Requests (429). Waiting 5s... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(5)
-                continue
-                
-            else:
-                print(f"   ❌ Gemini Error {resp.status_code}: {resp.text[:100]}")
+    try:
+        # 타임아웃 60초
+        resp = requests.post(url, headers=headers, json=payload, timeout=60)
+        
+        # 성공 (200 OK)
+        if resp.status_code == 200:
+            try:
+                text = resp.json()['candidates'][0]['content']['parts'][0]['text']
+                text = text.replace("```json", "").replace("```", "").strip()
+                return json.loads(text)
+            except Exception:
                 return None
 
-        # [핵심] 타임아웃 발생 시 재시도
-        except requests.exceptions.Timeout:
-            print(f"   ⏳ Timeout error. Google is slow. Retrying... ({attempt+1}/{max_retries})")
-            time.sleep(2)
-            continue
+        # [여기가 핵심] 실패 시 구글이 보낸 진짜 메시지 출력
+        else:
+            print(f"\n   ❌ [CRITICAL ERROR] Status Code: {resp.status_code}")
+            print(f"   ❌ URL: {url.replace(clean_key, 'HIDDEN_KEY')}") # 키는 가리고 주소 확인
+            print(f"   ❌ GOOGLE SAYS: {resp.text} \n") # <-- 이 메시지가 진짜 원인입니다.
             
-        except Exception as e:
-            print(f"   ❌ Connection Error: {e}")
             return None
 
-    return None
+    except Exception as e:
+        print(f"   ❌ Connection Error: {e}")
+        return None
