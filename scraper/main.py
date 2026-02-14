@@ -5,50 +5,61 @@ import google.generativeai as genai
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# 1. 환경변수 로드 (로컬 테스트용)
+# 1. 환경변수 로드
 load_dotenv()
 
 # 2. Supabase 클라이언트 설정
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("❌ Supabase 환경변수가 설정되지 않았습니다.")
-
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # 3. Google Gemini 설정
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-
-if not GOOGLE_API_KEY:
-    raise ValueError("❌ Google API Key가 설정되지 않았습니다.")
-
 genai.configure(api_key=GOOGLE_API_KEY)
 
 # ---------------------------------------------------------
-# [기능 1] 최신 Flash 모델 자동 선택 함수
+# [기능 1] 최신 Flash 모델 자동 선택 (Lite/8b 제외)
 # ---------------------------------------------------------
 def get_best_flash_model():
+    """
+    Flash 모델 중 '검색 기능'이 지원되는 최신 버전을 찾습니다.
+    Lite 버전이나 8b 버전은 검색 도구를 지원하지 않으므로 제외합니다.
+    """
     try:
-        print("🔍 최신 AI 모델 탐색 중...")
+        print("🔍 최신 AI 모델(Flash) 탐색 중...")
         models = genai.list_models()
-        flash_models = []
-        for m in models:
-            if 'generateContent' in m.supported_generation_methods and 'flash' in m.name:
-                flash_models.append(m.name)
         
-        if flash_models:
-            best_model = sorted(flash_models)[-1]
+        valid_models = []
+        for m in models:
+            name = m.name.lower()
+            # 1. 'flash'가 포함되어야 함
+            if 'flash' not in name:
+                continue
+            # 2. 'lite'는 제외 (검색 기능 미지원)
+            if 'lite' in name:
+                continue
+            # 3. '8b'도 제외 (혹시 모를 기능 제한 방지)
+            if '8b' in name:
+                continue
+            # 4. 콘텐츠 생성이 가능한 모델이어야 함
+            if 'generateContent' in m.supported_generation_methods:
+                valid_models.append(m.name)
+        
+        if valid_models:
+            # 이름순 정렬 후 가장 마지막(최신) 것 선택
+            # 예: ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-latest'] -> latest 선택
+            best_model = sorted(valid_models)[-1]
             print(f"✅ 선택된 최적 모델: {best_model}")
             return best_model
         
-        print("⚠️ Flash 모델을 찾지 못해 기본값(1.5-flash)을 사용합니다.")
+        print("⚠️ 적절한 Flash 모델을 찾지 못해 기본값(1.5-flash)을 사용합니다.")
         return 'models/gemini-1.5-flash'
+
     except Exception as e:
         print(f"⚠️ 모델 탐색 중 에러: {e}")
         return 'models/gemini-1.5-flash'
 
-# 모델 초기화 (검색 도구 포함)
+# 모델 초기화 (자동 선택된 모델 적용)
 SELECTED_MODEL_NAME = get_best_flash_model()
 model = genai.GenerativeModel(SELECTED_MODEL_NAME, tools='google_search_retrieval')
 
@@ -143,31 +154,29 @@ def update_database(category, data):
                 "created_at": "now()"
             })
         
-        # [A] 아카이브 저장 (영구 보관)
+        # [A] 아카이브 저장
         try:
             supabase.table("search_archive").upsert(clean_news, on_conflict="category,keyword,title").execute()
             print(f"   🗄️ [Archive] 뉴스 {len(clean_news)}개 보관 완료")
         except Exception as e:
             print(f"   ⚠️ 아카이브 저장 실패: {e}")
 
-        # [B] 라이브 뉴스 저장 (화면용)
+        # [B] 라이브 뉴스 저장
         try:
             supabase.table("live_news").upsert(clean_news, on_conflict="category,keyword,title").execute()
             print(f"   💾 [Live] 뉴스 {len(clean_news)}개 업데이트 완료")
         except Exception as e:
             print(f"   ⚠️ 라이브 저장 실패: {e}")
 
-    # 2. 뉴스 롤링 업데이트 (Live 테이블만 오래된 것 삭제)
+    # 2. 뉴스 롤링 업데이트
     try:
-        # 해당 카테고리의 모든 데이터를 최신순으로 정렬해서 가져옴
         res = supabase.table("live_news").select("id").eq("category", category).order("created_at", desc=True).execute()
         all_ids = [row['id'] for row in res.data]
         
-        # 30개가 넘으면 삭제
         if len(all_ids) > 30:
-            ids_to_delete = all_ids[30:] # 31등부터 끝까지
+            ids_to_delete = all_ids[30:]
             supabase.table("live_news").delete().in_("id", ids_to_delete).execute()
-            print(f"   🧹 [Clean] 오래된 뉴스 {len(ids_to_delete)}개 삭제 (Archive에는 남음)")
+            print(f"   🧹 [Clean] 오래된 뉴스 {len(ids_to_delete)}개 삭제")
     except Exception as e:
         print(f"   ⚠️ 롤링 업데이트 실패: {e}")
 
@@ -190,12 +199,8 @@ def update_database(category, data):
         except Exception as e:
             print(f"   ⚠️ 랭킹 저장 실패: {e}")
 
-# ---------------------------------------------------------
-# [메인] 실행 진입점
-# ---------------------------------------------------------
 def main():
-    print("🚀 뉴스 및 랭킹 업데이트 시작 (Gemini Search Grounding)")
-    print(f"ℹ️ 사용 모델: {SELECTED_MODEL_NAME}")
+    print("🚀 뉴스 및 랭킹 업데이트 시작")
     
     for category, instructions in CATEGORIES.items():
         data = fetch_data_from_gemini(category, instructions)
@@ -204,7 +209,7 @@ def main():
         else:
             print(f"⚠️ {category} 데이터 수집 실패")
             
-        time.sleep(2) # 너무 빠른 요청 방지
+        time.sleep(2)
 
     print("✅ 모든 작업 완료")
 
