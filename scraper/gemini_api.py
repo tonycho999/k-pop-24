@@ -9,89 +9,85 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
 API_KEY = os.getenv("GOOGLE_API_KEY")
 
-def get_working_model_name():
+def get_best_model_name():
     """
-    [핵심] 구글에게 '나 지금 무슨 모델 쓸 수 있니?'라고 물어보고
-    가장 적절한 모델의 '정확한 이름'을 가져옵니다.
+    구글 API에서 현재 사용 가능한 최신 Flash 모델을 자동으로 찾아냅니다.
+    (1.5, 2.0, 2.5 등 버전이 바뀌어도 알아서 적응함)
     """
-    if not API_KEY: return None
+    if not API_KEY: return "models/gemini-2.5-flash"
 
-    # 1. 모델 목록 조회 URL
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY.strip()}"
     
     try:
         resp = requests.get(url, timeout=10)
-        
         if resp.status_code == 200:
             data = resp.json()
             models = data.get('models', [])
             
-            # 로그에 목록 출력 (디버깅용 - 나중에 로그 확인해보세요)
-            print(f"   📋 Available Models: {[m['name'] for m in models]}")
-
-            # 2. 우선순위대로 모델 찾기
-            # 'generateContent' 기능을 지원하는 모델만 필터링
-            chat_models = [m for m in models if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            # 'generateContent' 기능이 있는 모델만 필터링
+            chat_models = [m['name'] for m in models if 'generateContent' in m.get('supportedGenerationMethods', [])]
             
-            # 1순위: 1.5-flash (정확한 버전명 찾기)
+            # 1순위: 2.5-flash (최신)
             for m in chat_models:
-                if 'gemini-1.5-flash' in m['name']:
-                    # "models/gemini-1.5-flash-001" 같은 풀네임 반환
-                    return m['name'] 
+                if 'gemini-2.5-flash' in m: return m
             
-            # 2순위: 1.5-pro
+            # 2순위: 2.0-flash
             for m in chat_models:
-                if 'gemini-1.5-pro' in m['name']:
-                    return m['name']
-            
-            # 3순위: 아무거나 (1.0 pro 등)
-            if chat_models:
-                return chat_models[0]['name']
-                
-        else:
-            print(f"   ⚠️ ListModels Failed: {resp.status_code} {resp.text}")
-            
-    except Exception as e:
-        print(f"   ⚠️ Model Discovery Error: {e}")
+                if 'gemini-2.0-flash' in m: return m
 
-    # 실패 시 최후의 수단 (가장 옛날 모델이라도 시도)
-    return "models/gemini-pro"
+            # 3순위: 구형 flash
+            for m in chat_models:
+                if 'flash' in m: return m
+            
+            # 4순위: 아무거나 (Pro 등)
+            if chat_models: return chat_models[0]
+            
+    except Exception:
+        pass
+
+    # API 조회 실패 시 안전한 기본값 (로그 기반 최신 모델)
+    return "models/gemini-2.5-flash"
 
 def ask_gemini(prompt):
-    """AI에게 질문 (자동 모델 선택)"""
+    """AI에게 질문 (최종)"""
     if not API_KEY:
         print("🚨 Google API Key is missing!")
         return None
 
-    # [1] 쓸 수 있는 모델을 자동으로 찾아옴
-    model_name = get_working_model_name()
-    print(f"   🤖 Selected Model: {model_name}") # 로그에서 확인 가능
-
-    # [2] URL 생성
-    # model_name에는 이미 'models/'가 포함되어 있을 수 있음.
-    # 중복 방지를 위해 models/ 제거 후 다시 조합
-    clean_model_name = model_name.replace("models/", "")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model_name}:generateContent?key={API_KEY.strip()}"
+    # 1. 모델 자동 선택
+    model_name = get_best_model_name()
+    
+    # 2. URL 생성 (models/ 중복 방지 처리)
+    clean_model = model_name.replace("models/", "")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={API_KEY.strip()}"
     
     headers = {"Content-Type": "application/json"}
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
-    try:
-        # 타임아웃 60초
-        resp = requests.post(url, headers=headers, json=payload, timeout=60)
-        
-        if resp.status_code == 200:
-            try:
-                text = resp.json()['candidates'][0]['content']['parts'][0]['text']
-                text = text.replace("```json", "").replace("```", "").strip()
-                return json.loads(text)
-            except Exception:
+    # 재시도 로직 (최대 3회)
+    for attempt in range(3):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            
+            if resp.status_code == 200:
+                try:
+                    text = resp.json()['candidates'][0]['content']['parts'][0]['text']
+                    text = text.replace("```json", "").replace("```", "").strip()
+                    return json.loads(text)
+                except:
+                    return None
+            
+            # 429(Too Many Requests) 또는 500번대 에러 시 잠시 대기 후 재시도
+            elif resp.status_code in [429, 500, 502, 503]:
+                time.sleep(2)
+                continue
+            
+            else:
+                print(f"   ❌ Gemini Error {resp.status_code}: {resp.text[:100]}")
                 return None
-        
-        else:
-            print(f"   ❌ Gemini Error {resp.status_code}: {resp.text[:200]}")
-            return None
 
-    except Exception as e:
-        print(f"   ❌ Connection Error: {e}")
-        return None
+        except Exception as e:
+            print(f"   ⚠️ Connection Error (Attempt {attempt+1}): {e}")
+            time.sleep(2)
+
+    return None
