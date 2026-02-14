@@ -87,7 +87,7 @@ def run_master_scraper():
                 for art in raw_articles:
                     if not is_within_24h(art.get('pubDate')): continue
                         
-                    text, img = crawler.get_article_data(art['link'], target_keyword=kw)
+                       text, img = crawler.get_article_data(art['link'])
                     
                     if text: 
                         full_contents.append(text)
