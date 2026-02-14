@@ -1,4 +1,4 @@
-google-generativeai
+google-generativeai>=0.8.3
 supabase
 python-dotenv
-duckduckgo-search
+duckduckgo-search>=6.0.0
