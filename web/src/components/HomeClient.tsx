@@ -55,22 +55,27 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 3. [핵심 수정] 카테고리 변경 시 소문자로 변환하여 DB 조회
+  // 3. [핵심 수정] 카테고리 변경 시 정렬 로직 분기 (All: 평점순, 나머지: 랭킹순)
   const handleCategoryChange = async (newCategory: string) => {
     setCategory(newCategory);
     setLoading(true);
 
     try {
-      let query = supabase
-        .from('live_news')
-        .select('*')
-        .order('rank', { ascending: true }) 
-        .limit(30);
+      // 쿼리 시작
+      let query = supabase.from('live_news').select('*');
 
-      // 'All'이 아닐 경우, 소문자로 변환해서 DB와 비교 (DB에는 k-pop으로 저장됨)
-      if (newCategory !== 'All') {
-        query = query.eq('category', newCategory.toLowerCase());
+      if (newCategory === 'All') {
+        // ✅ [수정] All 트렌드는 '평점(score)' 높은 순으로 정렬
+        query = query.order('score', { ascending: false });
+      } else {
+        // ✅ [유지] 개별 카테고리는 소문자로 변환하여 조회 + '랭킹(rank)' 순 정렬
+        query = query
+          .eq('category', newCategory.toLowerCase())
+          .order('rank', { ascending: true });
       }
+
+      // 공통: 30개 제한
+      query = query.limit(30);
 
       const { data, error } = await query;
 
@@ -104,8 +109,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     await supabase.rpc('increment_vote', { row_id: id });
   };
 
-  // 5. [핵심 수정] 클라이언트 사이드 필터링도 소문자로 비교
-  // (All일 때는 전체 표시, 아니면 카테고리 소문자로 비교)
+  // 5. 클라이언트 사이드 필터링 (All일 때는 전체 표시, 아니면 카테고리 소문자로 비교)
   const displayNewsRaw = user ? news : news.slice(0, 1);
   const filteredDisplayNews = category === 'All' 
     ? displayNewsRaw 
