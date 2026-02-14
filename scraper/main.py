@@ -18,29 +18,65 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# [핵심] 검색 도구 없이 '순수 텍스트 생성' 모델 사용 (에러 원천 차단)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# [핵심 수정] 모델 자동 복구 시스템
+def get_working_model():
+    """
+    1순위(Flash)가 안 되면 2순위(Pro)를 돌려주는 똑똑한 함수입니다.
+    """
+    candidates = [
+        "gemini-1.5-flash",        # 1순위: 최신/빠름/무료
+        "gemini-1.5-flash-latest", # 1.5 다른 이름
+        "gemini-pro",              # 2순위: 구버전/매우안정적
+        "models/gemini-1.5-flash"  # 접두어 붙은 버전
+    ]
+    
+    print("🚑 작동 가능한 AI 모델을 찾는 중...")
+    for model_name in candidates:
+        try:
+            # 테스트용으로 살짝 찔러봅니다.
+            test_model = genai.GenerativeModel(model_name)
+            test_model.generate_content("Hi")
+            print(f"✅ 모델 확정: {model_name}")
+            return test_model
+        except Exception:
+            continue # 실패하면 다음 후보로
 
+    print("⚠️ 모든 신형 모델 실패. 'gemini-pro'로 강제 설정합니다.")
+    return genai.GenerativeModel("gemini-pro")
+
+# 확정된 모델 로드
+model = get_working_model()
+
+# 검색어 최적화 (너무 길면 검색 안됨)
 CATEGORIES = {
-    "K-Pop": "k-pop news latest trends ranking",
-    "K-Drama": "k-drama news ratings ranking actor controversy",
-    "K-Movie": "korean movie box office news actor interview",
-    "K-Variety": "korean variety show ratings news funny moments",
-    "K-Culture": "korea travel hot place seoul festival food trend"
+    "K-Pop": "k-pop latest news trends",
+    "K-Drama": "k-drama ratings news",
+    "K-Movie": "korean movie box office news",
+    "K-Variety": "korean variety show news",
+    "K-Culture": "seoul travel food trends"
 }
 
 def search_web(keyword):
-    """DuckDuckGo를 이용해 최신 뉴스를 검색합니다."""
+    """DuckDuckGo 검색 (에러 처리 강화)"""
     print(f"🔍 [Search] '{keyword}' 검색 중...")
     results = []
     try:
-        # ddg 인스턴스 생성
+        # max_results를 조금 줄여서 속도 향상
         with DDGS() as ddgs:
-            # 뉴스 검색 (최신순)
-            ddg_results = list(ddgs.news(keywords=keyword, region="kr-kr", safesearch="off", max_results=15))
+            ddg_results = list(ddgs.news(keywords=keyword, region="kr-kr", safesearch="off", max_results=10))
             
+            if not ddg_results:
+                # 뉴스 검색 실패시 일반 검색 시도
+                print(f"   ⚠️ 뉴스 검색 실패, 일반 검색으로 재시도...")
+                ddg_results = list(ddgs.text(keywords=keyword, region="kr-kr", max_results=5))
+
             for r in ddg_results:
-                results.append(f"제목: {r.get('title')}\n링크: {r.get('url')}\n내용: {r.get('body')}\n출처: {r.get('source')}")
+                # title과 body(또는 snippet)가 있는 경우만 수집
+                title = r.get('title', '')
+                body = r.get('body', r.get('snippet', ''))
+                link = r.get('url', r.get('href', ''))
+                if title and body:
+                    results.append(f"제목: {title}\n내용: {body}\n링크: {link}")
                 
     except Exception as e:
         print(f"⚠️ 검색 중 오류 발생: {e}")
@@ -48,43 +84,32 @@ def search_web(keyword):
     return "\n\n".join(results)
 
 def fetch_data_from_gemini(category_name, raw_data):
-    """검색된 텍스트 데이터를 Gemini에게 던져서 JSON으로 정리하게 시킵니다."""
-    print(f"🤖 [Gemini] '{category_name}' 데이터 정리 중...")
+    print(f"🤖 [Gemini] '{category_name}' 요약 및 정리 중...")
     
     prompt = f"""
     [Role]
-    You are a veteran K-Entertainment journalist.
+    You are a K-Entertainment news editor.
     
     [Context]
-    Here is the latest raw search data about '{category_name}':
-    {raw_data}
+    Raw search data for '{category_name}':
+    {raw_data[:10000]} 
 
     [Task]
-    Analyze the raw data above and extract the most important trends.
-    Return the result in strict JSON format.
-
-    [Requirements]
-    1. **news_updates**: Select 10 most important news.
-       - 'summary' must be in Korean (Hangul).
-       - 'title' must be in Korean.
-    2. **rankings**: Extract or infer Top 10 rankings based on the buzz.
-       - If exact ranking data is missing, rank them by mention frequency.
-       - Items must be unique.
+    Extract 10 news items and Top 10 rankings.
+    Output must be strict JSON.
 
     [Output Format (JSON Only)]
     {{
       "news_updates": [
         {{
-          "keyword": "Main Subject (e.g. NewJeans)",
-          "title": "News Title (Korean)",
-          "summary": "Summary (Korean, 150 chars)",
-          "link": "Source URL from raw data"
-        }},
-        ...
+          "keyword": "Core Keyword",
+          "title": "Korean Title",
+          "summary": "Korean Summary (1 sentence)",
+          "link": "URL"
+        }}
       ],
       "rankings": [
-        {{ "rank": 1, "title": "Song/Drama/Movie Title", "meta": "Artist/Actor/Channel" }},
-        ...
+        {{ "rank": 1, "title": "Name", "meta": "Info" }}
       ]
     }}
     """
@@ -94,7 +119,7 @@ def fetch_data_from_gemini(category_name, raw_data):
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
     except Exception as e:
-        print(f"❌ [Error] Gemini 처리 중 오류: {e}")
+        print(f"❌ [Error] AI 응답 실패: {e}")
         return None
 
 def update_database(category, data):
@@ -106,30 +131,21 @@ def update_database(category, data):
             clean_news.append({
                 "category": category,
                 "keyword": item.get("keyword", category),
-                "title": item.get("title", ""),
+                "title": item.get("title", "제목 없음"),
                 "summary": item.get("summary", ""),
                 "link": item.get("link", ""),
                 "created_at": "now()"
             })
         
         try:
-            supabase.table("search_archive").upsert(clean_news, on_conflict="category,keyword,title").execute()
+            # 라이브 & 아카이브 동시 저장
             supabase.table("live_news").upsert(clean_news, on_conflict="category,keyword,title").execute()
+            supabase.table("search_archive").upsert(clean_news, on_conflict="category,keyword,title").execute()
             print(f"   💾 뉴스 {len(clean_news)}개 저장 완료")
         except Exception as e:
             print(f"   ⚠️ 뉴스 저장 실패: {e}")
 
-    # 2. 롤링 업데이트 (30개 유지)
-    try:
-        res = supabase.table("live_news").select("id").eq("category", category).order("created_at", desc=True).execute()
-        all_ids = [row['id'] for row in res.data]
-        if len(all_ids) > 30:
-            ids_to_delete = all_ids[30:]
-            supabase.table("live_news").delete().in_("id", ids_to_delete).execute()
-    except Exception:
-        pass
-
-    # 3. 랭킹 저장
+    # 2. 랭킹 저장
     rank_list = data.get("rankings", [])
     if rank_list:
         clean_ranks = []
@@ -144,28 +160,28 @@ def update_database(category, data):
         try:
             supabase.table("live_rankings").upsert(clean_ranks, on_conflict="category,rank").execute()
             print(f"   🏆 랭킹 갱신 완료")
-        except Exception as e:
-            print(f"   ⚠️ 랭킹 저장 실패: {e}")
+        except Exception:
+            pass
 
 def main():
-    print("🚀 뉴스 크롤링 및 AI 요약 시작 (DuckDuckGo + Gemini)")
+    print("🚀 스크래퍼 시작 (DuckDuckGo + Auto-Gemini)")
     
     for category, search_keyword in CATEGORIES.items():
-        # 1. DuckDuckGo로 검색
+        # 1. 검색
         raw_text = search_web(search_keyword)
         
         if len(raw_text) < 50:
-            print(f"⚠️ {category} 검색 결과 부족. 건너뜀.")
+            print(f"⚠️ {category} 정보 부족으로 건너뜀")
             continue
 
-        # 2. Gemini에게 요약 요청
+        # 2. AI 요약
         data = fetch_data_from_gemini(category, raw_text)
         
-        # 3. DB 저장
+        # 3. 저장
         if data:
             update_database(category, data)
         
-        time.sleep(3) # 밴 방지용 대기
+        time.sleep(5) # 차단 방지 대기
 
     print("✅ 모든 작업 완료")
 
