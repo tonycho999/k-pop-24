@@ -170,7 +170,7 @@ def extract_top_entities(category, news_text_data):
     - Translate Korean titles to English.
     """
     
-    user_input = news_text_data[:12000]
+    user_input = news_text_data[:50000]
     raw_result = ask_ai_master(system_prompt, user_input)
     parsed = parse_json_result(raw_result)
     
@@ -201,7 +201,7 @@ def synthesize_briefing(keyword, news_contents):
     [CRITICAL] NO <think> tags. If data is invalid or purely corporate PR, output "INVALID_DATA".
     """
     
-    user_input = "\n\n".join(news_contents)[:6000] 
+    user_input = "\n\n".join(news_contents)[:40000] 
     result = ask_ai_master(system_prompt, user_input)
     
     if not result or "INVALID_DATA" in result or len(result) < 50:
