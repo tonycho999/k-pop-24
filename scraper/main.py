@@ -1,166 +1,188 @@
-import sys
 import os
+import json
 import time
-from datetime import datetime, timedelta
-from dateutil import parser
+import google.generativeai as genai
+from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# 상위 디렉토리 참조 설정
-sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
-
-from scraper import crawler, ai_engine, repository
-from scraper.config import CATEGORY_SEEDS
-
+# 환경변수 로드
 load_dotenv()
 
-# 유료 버전의 화력을 활용해 분석 범위를 30위까지 확대
-TARGET_RANK_LIMIT = 30 
+# 1. 설정: Supabase
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def is_within_24h(date_str):
-    if not date_str: return False
+# 2. 설정: Google Gemini
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") 
+genai.configure(api_key=GOOGLE_API_KEY)
+
+def get_best_flash_model():
+    """
+    사용 가능한 모델 목록을 조회하여, 
+    무료 사용량이 넉넉한 'Flash' 계열 중 가장 최신 모델을 자동으로 선택합니다.
+    """
     try:
-        pub_date = parser.parse(date_str)
-        if pub_date.tzinfo:
-            pub_date = pub_date.replace(tzinfo=None)
-        now = datetime.now()
-        diff = now - pub_date
-        return diff <= timedelta(hours=24)
-    except:
-        return False
-
-def run_master_scraper():
-    print(f"🚀 K-Enter Trend Master 가동 시작: {datetime.now()}")
-    
-    for category, seeds in CATEGORY_SEEDS.items():
-        print(f"\n📂 [{category.upper()}] 트렌드 분석 시작")
+        # 1. 모든 모델 목록 조회
+        print("🔍 최신 AI 모델 탐색 중...")
+        models = genai.list_models()
         
-        # [1단계] 씨앗 데이터 수집 (24시간 이내 뉴스 요약본들)
-        raw_text_data = [] 
+        # 2. 'generateContent' 기능이 있고, 이름에 'flash'가 포함된 모델만 필터링
+        flash_models = []
+        for m in models:
+            if 'generateContent' in m.supported_generation_methods and 'flash' in m.name:
+                flash_models.append(m.name)
+        
+        # 3. 모델이 있다면 정렬해서 가장 최신 것(버전 숫자가 높은 것) 선택
+        if flash_models:
+            # 보통 문자열 정렬 시 숫자가 높은 게 뒤로 감 (1.5 < 2.0)
+            best_model = sorted(flash_models)[-1]
+            print(f"✅ 선택된 최적 모델: {best_model}")
+            return best_model
+        
+        # 4. Flash 모델을 못 찾으면 안전한 기본값 사용
+        print("⚠️ Flash 모델을 찾지 못해 기본값(1.5-flash)을 사용합니다.")
+        return 'models/gemini-1.5-flash'
+        
+    except Exception as e:
+        print(f"⚠️ 모델 탐색 중 에러 발생({e}). 기본값을 사용합니다.")
+        return 'models/gemini-1.5-flash'
+
+# 동적으로 모델 선택
+SELECTED_MODEL_NAME = get_best_flash_model()
+model = genai.GenerativeModel(SELECTED_MODEL_NAME, tools='google_search_retrieval')
+
+# 카테고리 정의
+CATEGORIES = {
+    "K-Pop": {
+        "news_focus": "가수, 아이돌, 그룹 멤버의 활동 및 이슈",
+        "rank_focus": "현재 음원 차트 상위권 노래 제목(Song Title)"
+    },
+    "K-Drama": {
+        "news_focus": "드라마 출연 배우의 캐스팅, 인터뷰, 논란",
+        "rank_focus": "현재 방영중이거나 OTT 상위권 드라마 제목(Drama Title)"
+    },
+    "K-Movie": {
+        "news_focus": "영화 배우의 동향, 무대인사, 인터뷰",
+        "rank_focus": "현재 박스오피스 상위권 영화 제목(Movie Title)"
+    },
+    "K-Variety": {
+        "news_focus": "예능인, 방송인, 패널의 에피소드",
+        "rank_focus": "현재 방영중인 예능 프로그램 제목(Show Title)"
+    },
+    "K-Culture": {
+        "news_focus": "핫플레이스, 축제, 팝업스토어 (장소/Place 위주)",
+        "rank_focus": "유행하는 음식, 뷰티템, 패션, 밈 (물건/Item 위주)"
+    }
+}
+
+def fetch_data_from_gemini(category_name, instructions):
+    print(f"🤖 [Gemini] '{category_name}' 검색 및 분석 중... (Model: {SELECTED_MODEL_NAME})")
+    
+    prompt = f"""
+    [Role]
+    당신은 20년 경력의 연예부 기자입니다. 팩트에 기반한 최신 트렌드를 분석합니다.
+
+    [Task]
+    현재 시점(Latest)의 '{category_name}' 관련 데이터를 검색하여 JSON으로 작성하십시오.
+
+    [Requirements]
+    1. **뉴스(News)**: {instructions['news_focus']} 중심으로 화제가 높은 10개를 선정하십시오.
+       - 중복된 주제는 피하고 다양하게 구성하십시오.
+       - 요약은 150자 내외로 핵심만 담으십시오.
+    2. **랭킹(Ranking)**: {instructions['rank_focus']} 중심으로 인기 순위 TOP 10을 선정하십시오.
+       - 뉴스에 나온 내용과 겹치지 않게 '작품/대상' 위주로 뽑으십시오.
+       - 절대 중복된 항목이 있어서는 안 됩니다.
+
+    [Output Format (JSON Only)]
+    {{
+      "news_updates": [
+        {{
+          "keyword": "주제어 (예: 뉴진스, 김수현)",
+          "title": "기사 제목",
+          "summary": "기사 요약",
+          "link": "관련 기사 링크 (없으면 검색된 출처)"
+        }},
+        ... (10 items)
+      ],
+      "rankings": [
+        {{ "rank": 1, "title": "제목/이름", "meta": "부가정보 (가수명/방송사 등)" }},
+        ... (10 items)
+      ]
+    }}
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        text = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(text)
+    except Exception as e:
+        print(f"❌ [Error] {category_name} 처리 중 오류: {e}")
+        return None
+
+def update_database(category, data):
+    # 1. 뉴스 저장 (Smart Upsert)
+    news_list = data.get("news_updates", [])
+    if news_list:
+        clean_news = []
+        for item in news_list:
+            clean_news.append({
+                "category": category,
+                "keyword": item["keyword"],
+                "title": item["title"],
+                "summary": item["summary"],
+                "link": item.get("link", ""),
+                "created_at": "now()"
+            })
         
         try:
-            for seed in seeds:
-                # [수정] 24시간 이내 뉴스를 더 많이 확보하기 위해 display를 100으로 상향
-                news_items = crawler.get_naver_api_news(seed, display=100)
-                for item in news_items:
-                    if is_within_24h(item.get('pubDate')):
-                        combined_text = f"Title: {item['title']}\nSummary: {item['description']}"
-                        raw_text_data.append(combined_text)
-            
-            # AI 입력용 데이터 제한
-            raw_text_data = raw_text_data[:60]
-            print(f"   🌱 24시간 내 유효 기사 수집: {len(raw_text_data)}개")
-            
-            if len(raw_text_data) < 1:
-                print("   ⚠️ 기사가 너무 적어 스킵합니다.")
-                continue
-                
+            supabase.table("live_news").upsert(clean_news, on_conflict="category,keyword,title").execute()
+            print(f"   💾 뉴스 {len(clean_news)}개 처리 완료")
         except Exception as e:
-            print(f"   ⚠️ 씨앗 수집 오류: {e}")
-            continue
+            print(f"   ⚠️ 뉴스 저장 실패: {e}")
+
+    # 2. 뉴스 롤링 업데이트 (오래된 것 삭제)
+    try:
+        res = supabase.table("live_news").select("id").eq("category", category).order("created_at", desc=True).execute()
+        all_ids = [row['id'] for row in res.data]
         
-        # [2단계] AI 키워드 추출
-        top_entities = ai_engine.extract_top_entities(category, "\n".join(raw_text_data))
+        if len(all_ids) > 30:
+            ids_to_delete = all_ids[30:]
+            supabase.table("live_news").delete().in_("id", ids_to_delete).execute()
+            print(f"   🧹 오래된 뉴스 {len(ids_to_delete)}개 삭제 완료 (롤링 유지)")
+    except Exception as e:
+        print(f"   ⚠️ 롤링 업데이트 실패: {e}")
+
+    # 3. 랭킹 저장 (덮어쓰기)
+    rank_list = data.get("rankings", [])
+    if rank_list:
+        clean_ranks = []
+        for item in rank_list:
+            clean_ranks.append({
+                "category": category,
+                "rank": item["rank"],
+                "title": item["title"],
+                "meta_info": item.get("meta", ""),
+                "updated_at": "now()"
+            })
         
-        if not top_entities: 
-            print("   ⚠️ 키워드 추출 실패 혹은 유효한 키워드 없음")
-            continue
-            
-        print(f"   💎 유효 키워드 (Top 5): {', '.join([e['keyword'] for e in top_entities[:5]])}...")
+        try:
+            supabase.table("live_rankings").upsert(clean_ranks, on_conflict="category,rank").execute()
+            print(f"   🏆 랭킹 TOP 10 갱신 완료")
+        except Exception as e:
+            print(f"   ⚠️ 랭킹 저장 실패: {e}")
 
-        # [3단계] 키워드별 심층 분석 (30위까지)
-        category_news_list = []
-        target_list = top_entities[:TARGET_RANK_LIMIT]
-        
-        for rank, entity in enumerate(target_list):
-            kw = entity.get('keyword')
-            k_type = entity.get('type', 'content')
-            
-            print(f"   🔍 Rank {rank+1}: '{kw}' ({k_type}) 분석 중...")
-            
-            try:
-                # [수정] 특정 키워드 검색 시에도 기사를 100개로 상향
-                raw_articles = crawler.get_naver_api_news(kw, display=100)
-                if not raw_articles: continue
+def main():
+    print("🚀 뉴스 및 랭킹 업데이트 시작")
+    print(f"ℹ️ 사용할 AI 모델: {SELECTED_MODEL_NAME}")
+    
+    for category, instructions in CATEGORIES.items():
+        data = fetch_data_from_gemini(category, instructions)
+        if data:
+            update_database(category, data)
+        time.sleep(2)
 
-                full_contents = []
-                main_image = None
-                valid_article_count = 0
-                
-                for art in raw_articles:
-                    if not is_within_24h(art.get('pubDate')): continue
-                    
-                    # [들여쓰기 수정] 에러가 났던 부분의 공백을 주변 코드와 맞췄습니다.
-                    text, img = crawler.get_article_data(art['link'])
-                    
-                    if text: 
-                        full_contents.append(text)
-                        valid_article_count += 1
-                        if not main_image and img:
-                            if img.startswith("http://"): 
-                                img = img.replace("http://", "https://")
-                            main_image = img
-                            
-                    if valid_article_count >= 30: 
-                        break
-
-                if not full_contents:
-                    print(f"      ☁️ '{kw}': 유효 기사 수집 실패 (Skip)")
-                    continue
-
-                # [4단계] AI 브리핑 및 제목 생성
-                # [수정] 이제 AI가 제목(title)과 내용(summary)을 딕셔너리로 반환합니다.
-                ai_data = ai_engine.synthesize_briefing(kw, full_contents)
-                
-                if not ai_data or not ai_data.get('summary'):
-                    print(f"      🗑️ '{kw}': 브리핑 생성 실패로 폐기")
-                    continue
-                
-                ai_score = round(9.9 - (rank * 0.1), 1)
-                if ai_score < 7.0: ai_score = 7.0
-
-                final_img = main_image or f"https://placehold.co/600x400/111/cyan?text={kw}"
-
-                news_item = {
-                    "category": category,
-                    "rank": rank + 1,
-                    "keyword": kw,
-                    "type": k_type,
-                    # [수정] 고정된 제목 대신 AI가 생성한 제목을 사용합니다.
-                    "title": ai_data.get('title', f"[{kw}] Special Report"),
-                    "summary": ai_data.get('summary'),
-                    "link": None,
-                    "image_url": final_img,
-                    "score": ai_score,
-                    "likes": 0, "dislikes": 0,
-                    "created_at": datetime.now().isoformat(),
-                    "published_at": datetime.now().isoformat()
-                }
-                category_news_list.append(news_item)
-                
-                time.sleep(0.5) 
-                
-            except Exception as e:
-                print(f"      ⚠️ '{kw}' 처리 중 에러: {e}")
-                continue
-
-        # [5단계] 데이터베이스 분산 저장
-        if category_news_list:
-            print(f"   💾 저장 시작: 총 {len(category_news_list)}개")
-            repository.refresh_live_news(category, category_news_list)
-            
-            content_only_list = [n for n in category_news_list if n.get('type') == 'content']
-            final_ranking_list = []
-            source_list = content_only_list if len(content_only_list) >= 3 else category_news_list
-
-            for new_rank, item in enumerate(source_list[:10]):
-                ranked_item = item.copy()
-                ranked_item['rank'] = new_rank + 1
-                final_ranking_list.append(ranked_item)
-                
-            repository.update_sidebar_rankings(category, final_ranking_list)
-            repository.save_to_archive(category_news_list)
-
-    print("\n🎉 전체 업데이트 완료.")
+    print("✅ 모든 작업 완료")
 
 if __name__ == "__main__":
-    run_master_scraper()
+    main()
