@@ -39,39 +39,33 @@ def get_dynamic_model_url():
     try:
         response = requests.get(list_url)
         if response.status_code != 200:
-            print(f"⚠️ 모델 목록 조회 실패 ({response.status_code}): 기본값 사용")
             return "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
             
         data = response.json()
         models = data.get('models', [])
         
-        # 'flash'가 포함되고 'generateContent' 기능을 지원하는 모델 찾기
         valid_models = []
         for m in models:
-            name = m['name'] # 예: models/gemini-1.5-flash
+            name = m['name'] 
             methods = m.get('supportedGenerationMethods', [])
             if 'generateContent' in methods and 'flash' in name:
                 valid_models.append(name)
         
         if valid_models:
-            # 가장 최신 모델 선택 (보통 리스트 뒤쪽이 최신)
             best_model = valid_models[-1]
             print(f"✅ 사용 가능한 최적 모델 발견: {best_model}")
-            # models/gemini-1.5-flash -> https://.../models/gemini-1.5-flash:generateContent
             return f"https://generativelanguage.googleapis.com/v1beta/{best_model}:generateContent"
         
-        print("⚠️ Flash 모델을 찾지 못함. 기본 모델(gemini-pro) 시도.")
         return "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
 
     except Exception as e:
         print(f"❌ 모델 탐색 중 에러: {e}")
         return "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
-# 전역 변수로 모델 URL 확정
 CURRENT_MODEL_URL = get_dynamic_model_url()
 
 def search_web(keyword):
-    """DuckDuckGo 검색"""
+    """DuckDuckGo 검색 (이미지 포함)"""
     print(f"🔍 [Search] '{keyword}' 검색 중...")
     results = []
     try:
@@ -88,8 +82,12 @@ def search_web(keyword):
                 title = r.get('title', '')
                 body = r.get('body', r.get('snippet', ''))
                 link = r.get('url', r.get('href', ''))
+                # ✅ [추가] 이미지 URL 추출 (없으면 빈 문자열)
+                image = r.get('image', r.get('thumbnail', ''))
+
                 if title and body:
-                    results.append(f"제목: {title}\n내용: {body}\n링크: {link}")
+                    # Gemini에게 줄 데이터에 이미지 정보도 포함시킴
+                    results.append(f"제목: {title}\n내용: {body}\n링크: {link}\n이미지: {image}")
                 
     except Exception as e:
         print(f"⚠️ 검색 중 오류 (건너뜀): {e}")
@@ -101,20 +99,29 @@ def call_gemini_api(category_name, raw_data):
     
     headers = {"Content-Type": "application/json"}
     
+    # ✅ [수정] 프롬프트에 image_url 필드 추가 요청
     prompt = f"""
     You are a K-Entertainment news editor.
-    Raw data: {raw_data[:15000]} 
+    Raw data: {raw_data[:20000]} 
 
     Task: Extract 10 news items and Top 10 rankings.
+    IMPORTANT: You MUST include the 'image_url' from the raw data if available.
+
     Output must be strict JSON without Markdown.
 
     Format:
     {{
       "news_updates": [
-        {{ "keyword": "Subject", "title": "Title", "summary": "Summary", "link": "URL" }}
+        {{ 
+          "keyword": "Subject", 
+          "title": "Title", 
+          "summary": "Summary", 
+          "link": "URL",
+          "image_url": "Image URL from Raw Data (or null)"
+        }}
       ],
       "rankings": [
-        {{ "rank": 1, "title": "Name", "meta": "Info" }}
+        {{ "rank": 1, "title": "Name", "meta": "Info", "score": 95 }}
       ]
     }}
     """
@@ -152,13 +159,17 @@ def update_database(category, data):
                 "title": item.get("title", "제목 없음"),
                 "summary": item.get("summary", ""),
                 "link": item.get("link", ""),
-                "created_at": "now()"
+                "image_url": item.get("image_url", ""), # ✅ DB에 이미지 저장
+                "created_at": "now()",
+                "likes": 0,    # 기본값
+                "score": 50    # 기본값
             })
         
         try:
+            # upsert 시 image_url도 같이 업데이트
             supabase.table("live_news").upsert(clean_news, on_conflict="category,keyword,title").execute()
             supabase.table("search_archive").upsert(clean_news, on_conflict="category,keyword,title").execute()
-            print(f"   💾 뉴스 {len(clean_news)}개 저장 완료")
+            print(f"   💾 뉴스 {len(clean_news)}개 저장 완료 (이미지 포함)")
         except Exception as e:
             print(f"   ⚠️ 뉴스 저장 실패: {e}")
 
@@ -171,13 +182,15 @@ def update_database(category, data):
                 "rank": item.get("rank"),
                 "title": item.get("title"),
                 "meta_info": item.get("meta", ""),
+                "score": item.get("score", 0), # ✅ 랭킹 점수도 저장
                 "updated_at": "now()"
             })
         try:
-            supabase.table("live_rankings").upsert(clean_ranks, on_conflict="category,rank").execute()
+            supabase.table("trending_rankings").upsert(clean_ranks, on_conflict="category,rank").execute()
             print(f"   🏆 랭킹 갱신 완료")
-        except Exception:
-            pass
+        except Exception as e:
+             # 테이블 이름이 다를 수 있으니 에러 로그 확인용
+             print(f"   ⚠️ 랭킹 저장 실패 (테이블 확인 필요): {e}")
 
 def main():
     print(f"🚀 스크래퍼 시작 (Model: {CURRENT_MODEL_URL.split('/')[-1]})")
