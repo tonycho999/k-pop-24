@@ -79,9 +79,9 @@ def extract_top_entities(category, news_text_data):
     if category == 'K-Drama':
         specific_rule = """
         [STRICT K-DRAMA MODE]
-        1. 'content' MUST be a REAL Drama/Series Title (e.g. 'Squid Game').
-        2. DO NOT extract K-Pop singers or generic terms like 'K-Pop', 'Music', 'News'.
-        3. If no actual Drama Title is found, return an EMPTY LIST [].
+        1. 'content' MUST be a REAL Drama/Series Title.
+        2. NEVER use generic terms like 'K-Pop', 'Music', 'News', 'Ranking' as keywords.
+        3. If no drama title exists in the news, return [].
         """
     elif category == 'K-Movie':
         specific_rule = """
