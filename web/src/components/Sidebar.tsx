@@ -20,31 +20,47 @@ export default function Sidebar({ news, category }: SidebarProps) {
   // 카테고리 변경 시 랭킹 데이터 새로고침
   useEffect(() => {
     const fetchRankings = async () => {
-      // 1. UI에서 사용하는 카테고리 (대문자 포함, 예: 'K-Pop')
-      const targetCategory = category === 'All' ? 'K-Pop' : category;
-      
-      // 유효한 카테고리가 아니면 랭킹 로딩 스킵
-      if (!['K-Pop', 'K-Drama', 'K-Movie', 'K-Entertain', 'K-Culture'].includes(targetCategory)) {
-          setRankings([]); 
-          return;
-      }
-
       setLoading(true);
       
       try {
-        const { data, error } = await supabase
-          .from('trending_rankings')
-          // 2. [핵심 수정] DB에는 소문자('k-pop')로 저장되어 있으므로 소문자로 변환해서 조회
-          .select('*')
-          .eq('category', targetCategory.toLowerCase()) 
-          .order('rank', { ascending: true })
-          .limit(10);
+        let data: RankingItemData[] | null = null;
 
-        if (!error && data) {
-          setRankings(data as RankingItemData[]);
+        // ✅ All일 때는 '평점(score)' 높은 순으로 정렬
+        if (category === 'All') {
+          const response = await supabase
+            .from('trending_rankings')
+            .select('*')
+            .order('score', { ascending: false }) // 평점 높은 순
+            .limit(10);
+          
+          if (response.data) {
+            // 화면에 보여줄 때만 1위~10위로 번호 매김 (DB 데이터 변경 X)
+            data = response.data.map((item, index) => ({
+              ...item,
+              rank: index + 1
+            })) as RankingItemData[];
+          }
+
+        } else {
+          // ✅ 개별 카테고리는 DB에 저장된 'rank' 순서대로 (기존 유지)
+          const targetCategory = category.toLowerCase();
+          
+          const response = await supabase
+            .from('trending_rankings')
+            .select('*')
+            .eq('category', targetCategory)
+            .order('rank', { ascending: true }) // 지정된 랭킹 순
+            .limit(10);
+            
+          data = response.data as RankingItemData[];
+        }
+
+        if (data) {
+          setRankings(data);
         } else {
           setRankings([]);
         }
+
       } catch (error) {
         console.error("Sidebar Error:", error);
         setRankings([]);
@@ -55,20 +71,22 @@ export default function Sidebar({ news, category }: SidebarProps) {
     fetchRankings();
   }, [category]);
 
+  // 상단 헤더 아이콘/제목 설정
   const getHeaderInfo = () => {
     switch (category) {
       case 'K-Pop': return { title: 'Top 10 Music Chart', icon: <Music size={18} /> };
-      case 'K-Drama': return { title: 'Drama & Actors Ranking', icon: <Tv size={18} /> };
+      // ✅ [수정 완료] Drama Ranking으로 명칭 변경
+      case 'K-Drama': return { title: 'Drama Ranking', icon: <Tv size={18} /> }; 
       case 'K-Movie': return { title: 'Box Office Top 10', icon: <Film size={18} /> };
       case 'K-Entertain': return { title: 'Variety Show Trends', icon: <Flame size={18} /> };
       case 'K-Culture': return { title: "K-Culture Hot Picks", icon: <MapPin size={18} /> };
-      default: return { title: 'Top Voted News', icon: <Trophy size={18} /> };
+      default: return { title: 'Total Trend Ranking', icon: <Trophy size={18} /> }; // All 제목
     }
   };
 
   const headerInfo = getHeaderInfo();
   
-  // 좋아요 순 정렬 (Top 3) - undefined 방지 로직 추가
+  // 좋아요 순 정렬 (Top 3)
   const topLiked = news 
     ? [...news].sort((a, b) => (b.likes || 0) - (a.likes || 0)).slice(0, 3)
     : [];
@@ -76,31 +94,29 @@ export default function Sidebar({ news, category }: SidebarProps) {
   return (
     <aside className="lg:col-span-4 space-y-6">
       
-      {/* 1. 카테고리별 실시간 랭킹 (All 아닐 때만) */}
-      {category !== 'All' && (
-        <section className="bg-white dark:bg-slate-900 rounded-[32px] p-6 border border-slate-100 dark:border-slate-800 shadow-sm animate-in fade-in slide-in-from-right-4 duration-500">
-          <div className="flex items-center gap-2 mb-4 text-cyan-600 dark:text-cyan-400 border-b border-slate-50 dark:border-slate-800 pb-3">
-            {headerInfo.icon}
-            <h3 className="font-black uppercase tracking-wider text-sm">
-              {headerInfo.title}
-            </h3>
-          </div>
-          
-          <div className="space-y-1">
-            {loading ? (
-               <div className="text-center py-8 text-xs text-slate-400 animate-pulse">Update Charts...</div>
-            ) : rankings.length > 0 ? (
-               rankings.map((item) => (
-                 <RankingItem key={item.id} rank={item.rank} item={item} />
-               ))
-            ) : (
-               <div className="text-center py-6 text-xs text-slate-400 italic">
-                 Ranking data preparing...
-               </div>
-            )}
-          </div>
-        </section>
-      )}
+      {/* 1. 실시간 랭킹 (All 포함 모든 카테고리에서 표시) */}
+      <section className="bg-white dark:bg-slate-900 rounded-[32px] p-6 border border-slate-100 dark:border-slate-800 shadow-sm animate-in fade-in slide-in-from-right-4 duration-500">
+        <div className="flex items-center gap-2 mb-4 text-cyan-600 dark:text-cyan-400 border-b border-slate-50 dark:border-slate-800 pb-3">
+          {headerInfo.icon}
+          <h3 className="font-black uppercase tracking-wider text-sm">
+            {headerInfo.title}
+          </h3>
+        </div>
+        
+        <div className="space-y-1">
+          {loading ? (
+              <div className="text-center py-8 text-xs text-slate-400 animate-pulse">Update Charts...</div>
+          ) : rankings.length > 0 ? (
+              rankings.map((item) => (
+                <RankingItem key={`${item.category}-${item.rank}-${item.keyword}`} rank={item.rank} item={item} />
+              ))
+          ) : (
+              <div className="text-center py-6 text-xs text-slate-400 italic">
+                Ranking data preparing...
+              </div>
+          )}
+        </div>
+      </section>
 
       {/* 2. Hot Keywords */}
       <KeywordTicker />
