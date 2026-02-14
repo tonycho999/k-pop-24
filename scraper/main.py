@@ -77,7 +77,7 @@ def run_master_scraper():
             
             try:
                 # 기사 검색
-                raw_articles = crawler.get_naver_api_news(kw, display=10)
+                raw_articles = crawler.get_naver_api_news(kw, display=50)
                 if not raw_articles: continue
 
                 full_contents = []
@@ -96,7 +96,7 @@ def run_master_scraper():
                             if img.startswith("http://"): img = img.replace("http://", "https://")
                             main_image = img
                             
-                    if valid_article_count >= 3: break
+                    if valid_article_count >= 30: break
 
                 if not full_contents:
                     print(f"      ☁️ '{kw}': 유효 기사 없음 (Skip)")
