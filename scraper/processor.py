@@ -5,7 +5,7 @@ import re
 import json
 from datetime import datetime
 
-# 카테고리별 6단계 질문 세트 (검색어 및 태그 지침 포함)
+# 카테고리별 6단계 질문 세트 (기존 내용 유지)
 PROMPT_VERSIONS = {
     "K-Pop": [
         "너는 20년차 연예부 기자야. 최근 24시간 내 한국 기사에서 언급량이 가장 압도적인 K-pop 가수(그룹포함) 10명을 선정해 각각의 심층 기사 1개씩을 영어로 100자에서 300자로 써줘. 그리고 현시점 Top 10 곡 순위를 알려줘.",
@@ -53,14 +53,11 @@ def parse_rankings(raw_rankings_text, category):
     """텍스트 형태의 랭킹을 DB 객체 리스트로 변환"""
     if not raw_rankings_text: return []
     parsed = []
-    # 마크다운 기호 및 불필요한 공백 제거 후 줄바꿈 단위로 분리
     lines = raw_rankings_text.replace('*', '').strip().split('\n')
     for i, line in enumerate(lines):
         if i >= 10: break
         try:
-            # 주석([1]) 제거 및 클리닝
             line = re.sub(r'\[\d+\]', '', line).strip()
-            # 숫자와 기호 제거 후 순수 제목 추출
             title = re.sub(r'^\d+[\.\)\s-]*', '', line).strip()
             if title:
                 parsed.append({
@@ -80,7 +77,6 @@ def run_category_process(category, run_count):
     v_idx = run_count % 6
     task = PROMPT_VERSIONS[category][v_idx]
 
-    # AI에게 구조화된 응답을 강제하는 프롬프트 조립
     final_prompt = f"""
     실시간 검색을 사용하여 다음 과제를 수행하라: {task}
     
@@ -95,7 +91,7 @@ def run_category_process(category, run_count):
     ... 10위까지 작성
     """
 
-    # 1. AI 호출 (데이터와 원문을 동시에 수신)
+    # 1. AI 호출
     data, raw_text = news_api.ask_news_ai(final_prompt)
 
     # 2. 파싱 실패 시 에러 로그 기록 로직
@@ -110,8 +106,20 @@ def run_category_process(category, run_count):
         database.save_error_log(error_data)
         return
 
-    # 3. 데이터 저장 프로세스 (방어적 설계)
+    # 3. 데이터 저장 프로세스
     try:
+        # ✅ [추가] search_archive 테이블에 AI 검색 원문 기록
+        archive_data = {
+            "category": category,
+            "query": task, # AI에게 던진 질문
+            "raw_result": raw_text, # AI가 준 원문 전체
+            "run_count": run_count,
+            "created_at": datetime.now().isoformat()
+        }
+        # database.py에 해당 함수가 있다고 가정하고 호출합니다.
+        database.save_search_archive(archive_data)
+        print(f"📂 [Archive] AI 검색 원문을 'search_archive'에 저장했습니다.")
+
         # 랭킹 데이터 처리
         raw_rankings = data.get('raw_rankings', '')
         clean_rankings = parse_rankings(raw_rankings, category)
@@ -136,7 +144,6 @@ def run_category_process(category, run_count):
             "likes": 0
         }]
         
-        # 실시간 뉴스 테이블 저장
         database.save_news_to_live(news_items)
         print(f"🎉 성공: {target_en} 관련 기사 및 랭킹 발행 완료.")
 
@@ -145,6 +152,6 @@ def run_category_process(category, run_count):
         database.save_error_log({
             "category": category,
             "run_count": run_count,
-            "raw_response": str(data), # 파싱은 됐으나 저장 중 에러난 경우 파싱된 데이터 기록
+            "raw_response": str(data),
             "error_message": f"Processing Exception: {str(e)}"
         })
