@@ -61,6 +61,7 @@ def parse_rankings(raw_rankings_text, category):
             title = re.sub(r'^\d+[\.\)\s-]*', '', line).strip()
             if title:
                 parsed.append({
+                    # ✅ AI가 준 텍스트보다 인자로 받은 category를 우선 사용
                     "category": category,
                     "rank": i + 1,
                     "title_en": title,
@@ -72,7 +73,7 @@ def parse_rankings(raw_rankings_text, category):
     return parsed
 
 def run_category_process(category, run_count):
-    print(f"\n🚀 [Debug Mode Active] {category} (Run #{run_count})")
+    print(f"\n🚀 [Processing Start] {category} (Run #{run_count})")
 
     v_idx = run_count % 6
     task = PROMPT_VERSIONS[category][v_idx]
@@ -94,7 +95,7 @@ def run_category_process(category, run_count):
     # 1. AI 호출
     data, raw_text = news_api.ask_news_ai(final_prompt)
 
-    # 2. 파싱 실패 시 에러 로그 기록 로직
+    # 2. 파싱 실패 시 에러 로그 기록
     if not data or not data.get('headline'):
         print(f"❌ {category} 추출 실패! 원문을 DB 'error_logs'에 기록합니다.")
         error_data = {
@@ -108,20 +109,20 @@ def run_category_process(category, run_count):
 
     # 3. 데이터 저장 프로세스
     try:
-        # ✅ [추가] search_archive 테이블에 AI 검색 원문 기록
+        # ✅ search_archive 기록
         archive_data = {
             "category": category,
-            "query": task, # AI에게 던진 질문
-            "raw_result": raw_text, # AI가 준 원문 전체
+            "query": task,
+            "raw_result": raw_text,
             "run_count": run_count,
             "created_at": datetime.now().isoformat()
         }
-        # database.py에 해당 함수가 있다고 가정하고 호출합니다.
         database.save_search_archive(archive_data)
-        print(f"📂 [Archive] AI 검색 원문을 'search_archive'에 저장했습니다.")
+        print(f"📂 [Archive] AI 검색 원문 저장 완료.")
 
         # 랭킹 데이터 처리
         raw_rankings = data.get('raw_rankings', '')
+        # ✅ 파싱 함수에 현재 진행 중인 category를 명시적으로 전달
         clean_rankings = parse_rankings(raw_rankings, category)
         if clean_rankings:
             database.save_rankings_to_db(clean_rankings)
@@ -129,12 +130,14 @@ def run_category_process(category, run_count):
         # 타겟 정보 및 이미지 수집
         target_kr = data.get("target_kr", "K-Star").strip()
         target_en = data.get("target_en", "K-Star").strip()
-        print(f"📸 '{target_kr}' 관련 최적 이미지 수집 중...")
+        print(f"📸 '{target_kr}' 관련 이미지 수집 중...")
         final_image = naver_api.get_target_image(target_kr)
 
         # 뉴스 기사 객체 생성
         news_items = [{
-            "category": category,
+            # 🚨 [수정 핵심] AI가 준 data.get("category")를 쓰지 않고 
+            # 🚨 함수 인자로 넘어온 category를 강제로 사용합니다.
+            "category": category, 
             "keyword": target_en,
             "title": data.get("headline", "Breaking News"),
             "summary": data.get("content", ""),
@@ -145,10 +148,10 @@ def run_category_process(category, run_count):
         }]
         
         database.save_news_to_live(news_items)
-        print(f"🎉 성공: {target_en} 관련 기사 및 랭킹 발행 완료.")
+        print(f"🎉 성공: [{category}] {target_en} 기사 발행 완료.")
 
     except Exception as e:
-        print(f"🚨 저장 과정 중 오류 발생: {e}")
+        print(f"🚨 저장 과정 중 오류 발생 ({category}): {e}")
         database.save_error_log({
             "category": category,
             "run_count": run_count,
