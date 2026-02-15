@@ -1,4 +1,3 @@
-# scraper/database.py
 import os
 from datetime import datetime, timedelta
 from supabase import create_client, Client
@@ -18,6 +17,19 @@ try:
         print("🚨 Supabase credentials missing in .env")
 except Exception as e:
     print(f"🚨 Supabase Connection Error: {e}")
+
+def save_error_log(error_data):
+    """
+    [디버깅용] AI 파싱 실패 시 원문 및 에러 메시지를 error_logs 테이블에 저장
+    """
+    if not supabase or not error_data: return
+
+    try:
+        # 데이터가 딕셔너리인지 확인 후 저장
+        supabase.table("error_logs").insert(error_data).execute()
+        print(f"📁 [Debug] AI Response raw data logged to 'error_logs'.")
+    except Exception as e:
+        print(f"🚨 [Debug Error] Failed to save error log: {e}")
 
 def is_keyword_used_recently(category, keyword, hours=4):
     """
@@ -59,8 +71,6 @@ def save_news_to_archive(data_list):
 
     try:
         # [중요 수정] ID 충돌 방지 로직
-        # live_news 저장 후 객체에 'id'가 생겼을 수 있으므로,
-        # 복사본을 만들어서 'id'를 제거하고 순수 데이터만 아카이브에 저장함
         clean_data = []
         for item in data_list:
             new_item = item.copy() # 복사
@@ -80,7 +90,6 @@ def save_rankings_to_db(rank_list):
 
     try:
         # 1. 해당 카테고리의 기존 랭킹 싹 지우기 (초기화)
-        # 리스트의 첫 번째 아이템에서 카테고리 추출
         category = rank_list[0].get("category")
         if category:
             supabase.table("live_rankings").delete().eq("category", category).execute()
