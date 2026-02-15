@@ -1,7 +1,7 @@
 'use client';
 
 import { LiveNewsItem } from '@/types';
-import { Clock, ThumbsUp, ArrowRight, ExternalLink, PlayCircle } from 'lucide-react';
+import { Clock, ThumbsUp, ArrowRight } from 'lucide-react';
 import Image from 'next/image';
 
 interface NewsFeedProps {
@@ -32,10 +32,7 @@ export default function NewsFeed({ news, loading, onOpen }: NewsFeedProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
       {news.map((item, index) => {
-        // ✅ [수정] DB에 rank가 없으므로, 배열의 순서(index)를 랭킹으로 사용
         const displayRank = index + 1;
-        
-        // 레이아웃 결정 로직 (1~2위: 대형, 3~6위: 중형, 7위~: 리스트형)
         const isHero = displayRank <= 2;
         const isMedium = displayRank > 2 && displayRank <= 6;
 
@@ -48,7 +45,7 @@ export default function NewsFeed({ news, loading, onOpen }: NewsFeedProps) {
               ${isHero ? 'md:col-span-3 h-[420px]' : isMedium ? 'md:col-span-2 h-[340px]' : 'md:col-span-6 h-[140px] flex gap-6 items-center pr-6'}
             `}
           >
-            {/* 이미지 영역 */}
+            {/* 이미지 영역 - [수정됨] object-top 추가로 얼굴 잘림 방지 */}
             <div className={`
               relative overflow-hidden bg-slate-100 dark:bg-slate-800
               ${isHero ? 'h-3/5 w-full' : isMedium ? 'h-1/2 w-full' : 'h-full w-1/3 min-w-[140px]'}
@@ -58,8 +55,12 @@ export default function NewsFeed({ news, loading, onOpen }: NewsFeedProps) {
                   src={item.image_url}
                   alt={item.title}
                   fill
-                  className="object-cover group-hover:scale-105 transition-transform duration-700"
+                  /* ✅ object-top을 추가하여 이미지의 윗부분(얼굴)을 우선적으로 보여줍니다. 
+                    ✅ group-hover:scale-105로 호버 시 부드러운 확대 효과를 유지합니다.
+                  */
+                  className="object-cover object-top group-hover:scale-105 transition-transform duration-700"
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                  priority={isHero} // 상위 기사는 우선 로딩
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-slate-300">
