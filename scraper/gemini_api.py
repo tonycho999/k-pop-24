@@ -11,8 +11,8 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 def ask_gemini_with_search_debug(prompt):
     if not API_KEY: return None, "API_KEY_MISSING"
 
-    # [진단] 모델 리스트 조회 시에도 타임아웃 설정
-    model_name = "models/gemini-1.5-flash-latest" # 가장 안정적인 모델 고정 시도
+    # [수정] 진단 정보에서 1순위로 확인되었던 확실한 모델명으로 교체
+    model_name = "models/gemini-2.0-flash" 
     url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY.strip()}"
     
     headers = {"Content-Type": "application/json"}
@@ -25,20 +25,28 @@ def ask_gemini_with_search_debug(prompt):
     # 최대 2회 시도
     for attempt in range(2):
         try:
-            # [핵심] timeout을 30초로 짧게 설정하여 무한 대기 방지
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            # [안전장치] timeout을 45초로 설정하여 무한 대기(Hang) 방지
+            resp = requests.post(url, headers=headers, json=payload, timeout=45)
             
+            # 할당량 초과(429) 발생 시 즉시 리턴하여 main.py의 랜덤 휴식 유도
             if resp.status_code == 429:
-                print(f"⚠️ 429 감지. 즉시 루프 탈출 후 대기 로직으로 이동.")
-                return None, f"HTTP_429: Rate Limit"
+                return None, f"HTTP_429: Rate Limit Exceeded. (Retry in main.py)"
 
             if resp.status_code != 200:
                 return None, f"HTTP_{resp.status_code}: {resp.text}"
 
             res_json = resp.json()
-            raw_text = res_json['candidates'][0]['content']['parts'][0]['text']
             
-            # (기존 파싱 로직 동일...)
+            # 응답 구조 안전하게 추출
+            try:
+                raw_text = res_json['candidates'][0]['content']['parts'][0]['text']
+            except (KeyError, IndexError):
+                return None, f"STRUCT_ERR: Response structure changed. {str(res_json)[:200]}"
+            
+            # 검색 주석 제거
+            raw_text = re.sub(r'\[\d+\]', '', raw_text)
+            
+            # 태그 파싱 로직
             def get_content(tag, text):
                 pattern = rf"(?:\*+|#+)?{tag}(?:\*+|#+)?[:\s-]*(.*?)(?=\s*(?:#+|TARGET|HEADLINE|CONTENT|RANKINGS)|$)"
                 match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
@@ -54,12 +62,12 @@ def ask_gemini_with_search_debug(prompt):
 
             if parsed['headline'] and parsed['content']:
                 return parsed, raw_text
-            return None, f"PARSING_ERROR: {raw_text[:100]}"
+            return None, f"PARSING_FAILED: Missing Tags. Raw: {raw_text[:100]}"
 
         except requests.exceptions.Timeout:
-            print(f"⏰ 타임아웃 발생! AI가 너무 느립니다. (시도 {attempt+1})")
+            print(f"⏰ {model_name} 응답 지연 발생 (시도 {attempt+1})")
             continue 
         except Exception as e:
             return None, f"EXCEPTION: {str(e)}"
             
-    return None, "TIMEOUT_OR_UNKNOWN_FAILURE"
+    return None, "ALL_ATTEMPTS_FAILED_OR_TIMEOUT"
