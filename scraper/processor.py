@@ -1,4 +1,4 @@
-import gemini_api
+import news_api
 import database
 import naver_api
 import re
@@ -96,7 +96,7 @@ def run_category_process(category, run_count):
     """
 
     # 1. AI 호출 (데이터와 원문을 동시에 수신)
-    data, raw_text = gemini_api.ask_gemini_with_search_debug(final_prompt)
+    data, raw_text = news_api.ask_news_ai(final_prompt)
 
     # 2. 파싱 실패 시 에러 로그 기록 로직
     if not data or not data.get('headline'):
