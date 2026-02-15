@@ -2,10 +2,10 @@ import gemini_api
 import database
 import naver_api
 import re
+import json
 from datetime import datetime
 
-# PROMPT_VERSIONS는 기존과 동일하게 유지
-# 카테고리 6단계 질문 (원문 그대로 유지)
+# 카테고리별 6단계 질문 세트 (검색어 및 태그 지침 포함)
 PROMPT_VERSIONS = {
     "K-Pop": [
         "최근 24시간 내 언급량이 가장 압도적인 K-pop 가수를 선정해 심층 기사 1개를 쓰고 Top 10 곡 순위를 알려줘.",
@@ -49,21 +49,27 @@ PROMPT_VERSIONS = {
     ]
 }
 
-def parse_rankings(raw_rankings_text):
+def parse_rankings(raw_rankings_text, category):
+    """텍스트 형태의 랭킹을 DB 객체 리스트로 변환"""
     if not raw_rankings_text: return []
     parsed = []
+    # 마크다운 기호 및 불필요한 공백 제거 후 줄바꿈 단위로 분리
     lines = raw_rankings_text.replace('*', '').strip().split('\n')
     for i, line in enumerate(lines):
         if i >= 10: break
         try:
+            # 주석([1]) 제거 및 클리닝
             line = re.sub(r'\[\d+\]', '', line).strip()
+            # 숫자와 기호 제거 후 순수 제목 추출
             title = re.sub(r'^\d+[\.\)\s-]*', '', line).strip()
             if title:
                 parsed.append({
+                    "category": category,
                     "rank": i + 1,
                     "title_en": title,
                     "title_kr": title,
-                    "score": 100 - (i * 5)
+                    "score": 100 - (i * 5),
+                    "created_at": datetime.now().isoformat()
                 })
         except: continue
     return parsed
@@ -74,10 +80,11 @@ def run_category_process(category, run_count):
     v_idx = run_count % 6
     task = PROMPT_VERSIONS[category][v_idx]
 
+    # AI에게 구조화된 응답을 강제하는 프롬프트 조립
     final_prompt = f"""
     실시간 검색을 사용하여 다음 과제를 수행하라: {task}
     
-    결과물은 반드시 아래 태그를 사용하여 구분하라.
+    결과물은 반드시 아래 태그를 사용하여 구분하라. (다른 설명 금지)
     
     ##TARGET_KR## 한국어 이름
     ##TARGET_EN## English Name
@@ -85,55 +92,59 @@ def run_category_process(category, run_count):
     ##CONTENT## 영문 기사 본문
     ##RANKINGS##
     1. 순위 데이터 1
-    ... 10위까지
+    ... 10위까지 작성
     """
 
-    # gemini_api.ask_gemini_with_search 가 원문을 함께 반환하도록 수정되었다고 가정하거나,
-    # 해당 함수에서 파싱 실패 시 None을 주면 내부에서 raw_text를 로깅해야 합니다.
-    # 여기서는 gemini_api를 수정하여 'raw_text'까지 받아오는 구조로 설명드립니다.
-    
+    # 1. AI 호출 (데이터와 원문을 동시에 수신)
     data, raw_text = gemini_api.ask_gemini_with_search_debug(final_prompt)
 
-    if not data:
+    # 2. 파싱 실패 시 에러 로그 기록 로직
+    if not data or not data.get('headline'):
         print(f"❌ {category} 추출 실패! 원문을 DB 'error_logs'에 기록합니다.")
-        # [핵심] 실패 원인 분석을 위해 DB에 raw_text 저장
         error_data = {
             "category": category,
             "run_count": run_count,
             "raw_response": raw_text if raw_text else "NO RESPONSE FROM AI",
-            "error_message": "Tag parsing failed or safety filter triggered"
+            "error_message": "Tag parsing failed: Critical tags (HEADLINE/CONTENT) missing."
         }
-        database.save_error_log(error_data) # database.py에 이 함수를 추가해야 합니다.
+        database.save_error_log(error_data)
         return
 
-    # --- 이하 성공 시 로직 (기존과 동일) ---
+    # 3. 데이터 저장 프로세스 (방어적 설계)
     try:
+        # 랭킹 데이터 처리
         raw_rankings = data.get('raw_rankings', '')
-        clean_rankings = parse_rankings(raw_rankings)
+        clean_rankings = parse_rankings(raw_rankings, category)
         if clean_rankings:
             database.save_rankings_to_db(clean_rankings)
 
+        # 타겟 정보 및 이미지 수집
         target_kr = data.get("target_kr", "K-Star").strip()
         target_en = data.get("target_en", "K-Star").strip()
+        print(f"📸 '{target_kr}' 관련 최적 이미지 수집 중...")
         final_image = naver_api.get_target_image(target_kr)
 
+        # 뉴스 기사 객체 생성
         news_items = [{
             "category": category,
             "keyword": target_en,
-            "title": data.get("headline"),
-            "summary": data.get("content"),
+            "title": data.get("headline", "Breaking News"),
+            "summary": data.get("content", ""),
             "image_url": final_image,
             "score": 100,
             "created_at": datetime.now().isoformat(),
             "likes": 0
         }]
+        
+        # 실시간 뉴스 테이블 저장
         database.save_news_to_live(news_items)
-        print(f"🎉 성공: {target_en} 뉴스 발행 완료.")
+        print(f"🎉 성공: {target_en} 관련 기사 및 랭킹 발행 완료.")
+
     except Exception as e:
-        print(f"🚨 저장 과정 중 오류: {e}")
+        print(f"🚨 저장 과정 중 오류 발생: {e}")
         database.save_error_log({
             "category": category,
             "run_count": run_count,
-            "raw_response": str(data),
-            "error_message": f"Save Error: {str(e)}"
+            "raw_response": str(data), # 파싱은 됐으나 저장 중 에러난 경우 파싱된 데이터 기록
+            "error_message": f"Processing Exception: {str(e)}"
         })
