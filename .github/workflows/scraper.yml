@@ -1,11 +1,11 @@
 name: K-Enter 24 Auto Scraper
 
 on:
-  # schedule 부분을 삭제하거나 주석 처리하여 자동 실행을 끕니다.
+  # 매시간 실행하고 싶다면 아래 주석을 해제하세요. (무료 Groq 티어 고려 시 권장)
   # schedule:
-  #   - cron: '12,42 * * * *'
+  #   - cron: '11 * * * *'
   
-  workflow_dispatch: # 이 부분이 있어 필요할 때 버튼을 눌러 수동 실행은 가능합니다.
+  workflow_dispatch: # 수동 실행 버튼 활성화
 
 jobs:
   build:
@@ -26,12 +26,17 @@ jobs:
 
       - name: Run Scraper
         env:
-          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          # Supabase: 데이터 입력을 위해 SERVICE_ROLE_KEY 사용 권장
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          
+          # AI & Search APIs
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }} # 신규 추가
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          
+          # 기타 설정
           RUN_COUNT: ${{ github.run_number }}
         run: |
           cd scraper
