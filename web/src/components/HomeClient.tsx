@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Lock, Zap, Globe, Menu, X } from 'lucide-react';
+import { Lock, Zap } from 'lucide-react';
 import { User } from '@supabase/supabase-js';
 
 import Header from '@/components/Header';
@@ -23,6 +23,7 @@ interface HomeClientProps {
 
 export default function HomeClient({ initialNews }: HomeClientProps) {
   
+  // HTTP 이미지를 HTTPS로 변환하는 유틸리티
   const filterSecureNews = useCallback((items: LiveNewsItem[]) => {
     if (!items) return [];
     return items.map(item => ({
@@ -40,6 +41,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
   const [showWelcome, setShowWelcome] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
+  // 1. 유저 인증 및 웰컴 모달 체크
   useEffect(() => {
     const checkUser = async () => {
       const { data } = await supabase.auth.getUser();
@@ -59,7 +61,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ✅ [여기가 문제입니다] 카테고리 클릭 시 데이터 가져오는 부분 수정
+  // 2. 카테고리 변경 핸들러 (핵심 수정 부분)
   const handleCategoryChange = useCallback(async (newCategory: string) => {
     setCategory(newCategory);
     setLoading(true);
@@ -68,14 +70,15 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
       let query = supabase.from('live_news').select('*');
 
       if (newCategory === 'All') {
-        // All: 점수 높은 순
+        // 전체보기: 점수(score) 높은 순
         query = query.order('score', { ascending: false });
       } else {
-        // 🚨 [수정 완료] 기존에 여기서 .order('rank')를 써서 400 에러가 났던 겁니다.
-        // live_news 테이블에는 rank가 없으므로 score로 바꿔야 기사가 나옵니다.
+        // ✅ [핵심 수정] UI는 'K-Pop'이지만 DB는 'k-pop'이므로 소문자 변환 필수!
+        const dbCategory = newCategory.toLowerCase();
+        
         query = query
-          .eq('category', newCategory)
-          .order('score', { ascending: false }); 
+          .eq('category', dbCategory)
+          .order('score', { ascending: false }); // 랭킹 대신 점수순 정렬
       }
 
       // 30개 제한
@@ -84,7 +87,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
       const { data, error } = await query;
 
       if (error) {
-        console.error("Supabase Error:", error); // 에러 확인용 로그
+        console.error("Supabase Error:", error);
         throw error;
       }
 
@@ -98,6 +101,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     }
   }, [filterSecureNews]);
 
+  // 3. 투표 핸들러
   const handleVote = useCallback(async (id: string, type: 'likes' | 'dislikes') => {
     if (!user) {
       alert("Please sign in to vote!");
@@ -109,11 +113,11 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
        return;
     }
 
-    setNews(prev => prev.map(item => item.id === id ? { ...item, likes: item.likes + 1 } : item));
+    setNews(prev => prev.map(item => item.id === id ? { ...item, likes: (item.likes || 0) + 1 } : item));
     
     setSelectedArticle((prev) => {
         if (prev && prev.id === id) {
-            return { ...prev, likes: prev.likes + 1 };
+            return { ...prev, likes: (prev.likes || 0) + 1 };
         }
         return prev;
     });
@@ -121,6 +125,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     await supabase.rpc('increment_vote', { row_id: id });
   }, [user]);
 
+  // 4. 모달 이벤트 리스너
   useEffect(() => {
     const handleSearchModalOpen = (e: CustomEvent<LiveNewsItem>) => {
       if (e.detail) setSelectedArticle(e.detail);
@@ -141,11 +146,11 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     });
   };
 
-  const filteredDisplayNews = category === 'All' 
-    ? news 
-    : news.filter(item => item.category === category);
-  
-  const displayedNews = user ? filteredDisplayNews : filteredDisplayNews.slice(0, 1);
+  // 로그인 안 한 유저에게는 1개만 보여주기 (블러 처리용)
+  // 이미 API에서 필터링해서 가져왔으므로 여기서는 추가 필터링 없이 그대로 사용하거나,
+  // 'All' 상태에서 클라이언트 사이드 필터링이 필요하다면 아래 로직 유지.
+  // 현재 로직: category state와 상관없이 news state는 이미 fetch된 데이터임.
+  const displayedNews = user ? news : news.slice(0, 1);
 
   return (
     <main className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans overflow-x-hidden">
@@ -174,6 +179,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
               onOpen={setSelectedArticle} 
             />
             
+            {/* 로그인 안 했을 때 블러 처리 영역 */}
             {!user && !loading && news.length > 0 && (
               <div className="mt-4 sm:mt-6 relative w-full">
                  <div className="space-y-4 sm:space-y-6 opacity-40 blur-md select-none pointer-events-none grayscale">
