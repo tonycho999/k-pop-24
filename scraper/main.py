@@ -12,7 +12,6 @@ from supabase import create_client
 # ---------------------------------------------------------
 # K-Pop: 매번 실행 (조건 없음)
 # 그 외 카테고리: 아래 리스트에 있는 '순서'에만 실행
-# (예: 5번째 실행일 때, 17번째 실행일 때)
 TARGET_COUNTS_FOR_OTHERS = [5, 17] 
 
 def clean_json_text(text):
@@ -26,7 +25,6 @@ def clean_json_text(text):
 # ---------------------------------------------------------
 # [DB 연동] 실행 카운트 관리 함수
 # ---------------------------------------------------------
-# system_status 테이블에서 카운트를 가져오고 업데이트합니다.
 supa_url = os.environ.get("SUPABASE_URL")
 supa_key = os.environ.get("SUPABASE_KEY")
 supabase = create_client(supa_url, supa_key)
@@ -34,24 +32,29 @@ supabase = create_client(supa_url, supa_key)
 def get_run_count():
     """DB에서 현재 run_count 가져오기 (기본값 0)"""
     try:
-        res = supabase.from('system_status').select('run_count').eq('id', 1).single()
+        # [수정] .from() -> .table()
+        res = supabase.table('system_status').select('run_count').eq('id', 1).single().execute()
+        
+        # supabase-py 최신 버전에서는 .execute() 결과를 바로 사용하거나 .data로 접근
         if res.data:
             return res.data['run_count']
         return 0
-    except:
+    except Exception as e:
+        # 테이블이 없거나 데이터가 없으면 0 리턴
+        print(f"⚠️ Init Run Count Error (Using 0): {e}")
         return 0
 
 def update_run_count(current):
     """
     실행이 끝나면 카운트를 1 올림
-    23에서 1 올리면 0으로 초기화 (0~23 루프)
     """
     next_count = current + 1
     if next_count >= 24:
         next_count = 0
     
     try:
-        supabase.from('system_status').upsert({'id': 1, 'run_count': next_count}).execute()
+        # [수정] .from() -> .table()
+        supabase.table('system_status').upsert({'id': 1, 'run_count': next_count}).execute()
         print(f"🔄 Cycle Count Updated: {current} -> {next_count}")
     except Exception as e:
         print(f"⚠️ Failed to update run count: {e}")
