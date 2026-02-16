@@ -1,4 +1,4 @@
-requests
 supabase
-python-dotenv
-beautifulsoup4
+openai
+groq
+requests
