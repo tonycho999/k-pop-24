@@ -6,20 +6,32 @@ from naver_api import NaverManager
 from database import DatabaseManager
 
 def clean_json_text(text):
-    """AI 응답에서 마크다운 코드 블록을 제거하고 순수 JSON만 추출"""
+    """
+    AI 응답에서 JSON만 정교하게 발라내는 함수
+    1. 마크다운(```json) 제거
+    2. 앞뒤 잡설 제거 (첫 '{'와 마지막 '}' 사이만 추출)
+    """
+    # 1. 마크다운 제거
     match = re.search(r"```(?:json)?\s*(.*)\s*```", text, re.DOTALL)
     if match:
-        return match.group(1).strip()
+        text = match.group(1)
+    
+    # 2. 순수 JSON 영역 추출 (괄호 찾기)
+    start = text.find('{')
+    end = text.rfind('}')
+    
+    if start != -1 and end != -1:
+        return text[start:end+1]
     return text.strip()
 
 def run_automation():
-    print("🚀 K-Enter24 Automation Started (Minute 11 Schedule)")
+    print("🚀 K-Enter24 Automation Started")
     
     db = DatabaseManager()
     engine = NewsEngine()
     naver = NaverManager()
     
-    # 런 카운트 (GitHub Actions 환경변수 없으면 0)
+    # 아카이브용 실행 번호
     run_count = int(os.environ.get("RUN_COUNT", 0))
     
     categories = ["k-pop", "k-drama", "k-movie", "k-entertain", "k-culture"]
@@ -27,36 +39,35 @@ def run_automation():
     for cat in categories:
         print(f"\n[{cat}] Processing...")
         try:
-            # 1. Perplexity 데이터 수집
+            # 1. Perplexity 데이터 수집 (한국 뉴스 한정)
             raw_data_str, original_query = engine.get_trends_and_rankings(cat)
             
             # 2. JSON 파싱
             cleaned_str = clean_json_text(raw_data_str)
             if not cleaned_str or cleaned_str == "{}":
-                print(f"⚠️ [{cat}] No data returned from AI.")
+                print(f"⚠️ [{cat}] No data returned.")
                 continue
 
             parsed_data = json.loads(cleaned_str)
             
             # ---------------------------------------------------
-            # A. [사이드바] TOP 10 랭킹 저장 (live_rankings)
+            # A. [사이드바] TOP 10 랭킹 저장
             # ---------------------------------------------------
             top10_list = parsed_data.get('top10', [])
             if top10_list:
                 print(f"  > Saving {len(top10_list)} Rankings...")
                 for item in top10_list:
-                    # DB 스키마: category, rank, title, meta_info, score, created_at
+                    # [수정] live_rankings에는 run_count 컬럼이 없으므로 제거함
                     db.save_rankings([{
                         "category": cat,
                         "rank": item.get('rank'),
                         "title": item.get('title'),
                         "meta_info": item.get('info', ''),
-                        "score": 0, # 초기값
-                        "run_count": run_count
+                        "score": 0
                     }])
 
             # ---------------------------------------------------
-            # B. [메인 피드] 인물 뉴스 저장 (live_news + archive)
+            # B. [메인 피드] 인물 뉴스 저장
             # ---------------------------------------------------
             people_list = parsed_data.get('people', [])
             if people_list:
@@ -77,7 +88,7 @@ def run_automation():
                     # 네이버 이미지 검색
                     img_url = naver.get_image(name)
                     
-                    # DB 저장용 데이터 객체
+                    # 1. 아카이브 저장 (여기는 run_count 있음)
                     article_data = {
                         "category": cat,
                         "keyword": name,
@@ -89,14 +100,11 @@ def run_automation():
                         "likes": 0,
                         "query": original_query,
                         "raw_result": str(person),
-                        "run_count": run_count
+                        "run_count": run_count 
                     }
-
-                    # 1. 아카이브 저장 (영구 보관)
                     db.save_to_archive(article_data)
                     
-                    # 2. 라이브 뉴스 저장 (실시간 노출용)
-                    # archive용 필드(query, raw_result 등) 제외하고 전달
+                    # 2. 라이브 뉴스 저장 (run_count 제거)
                     live_data = {
                         "category": article_data['category'],
                         "keyword": article_data['keyword'],
@@ -111,7 +119,7 @@ def run_automation():
                     print(f"    - Article updated: {name}")
 
         except json.JSONDecodeError:
-            print(f"❌ [{cat}] JSON Parsing Error. Raw: {raw_data_str[:50]}...")
+            print(f"❌ [{cat}] JSON Parsing Error. Raw Start: {cleaned_str[:50]}...")
         except Exception as e:
             print(f"❌ [{cat}] Unknown Error: {e}")
 
