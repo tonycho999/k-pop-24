@@ -1,9 +1,9 @@
-name: K-Enter 24 Auto Scraper (Bot Mode)
+name: K-Enter 24 Multi-Bot Scraper
 
 on:
-  workflow_dispatch: # 수동 실행 버튼
-#  schedule:
-#    - cron: '11 * * * *' # 매시간 11분에 실행
+  workflow_dispatch:
+  schedule:
+    - cron: '11 * * * *' # 매시간 11분 실행
 
 jobs:
   build:
@@ -19,18 +19,26 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r scraper/requirements.txt
-          # [핵심] 봇 실행을 위한 브라우저 설치
+          pip install playwright supabase requests groq
           playwright install chromium
 
       - name: Run Scraper
         env:
+          # Supabase 연동 (스크린샷 기반)
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # Groq 키 로테이션 (1~8)
+          GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
+          GROQ_API_KEY2: ${{ secrets.GROQ_API_KEY2 }}
+          GROQ_API_KEY3: ${{ secrets.GROQ_API_KEY3 }}
+          GROQ_API_KEY4: ${{ secrets.GROQ_API_KEY4 }}
+          GROQ_API_KEY5: ${{ secrets.GROQ_API_KEY5 }}
+          GROQ_API_KEY6: ${{ secrets.GROQ_API_KEY6 }}
+          GROQ_API_KEY7: ${{ secrets.GROQ_API_KEY7 }}
+          GROQ_API_KEY8: ${{ secrets.GROQ_API_KEY8 }}
+          # Naver API
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-          RUN_COUNT: ${{ github.run_number }}
         run: |
           cd scraper
           python main.py
