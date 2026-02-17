@@ -8,7 +8,7 @@ from database import DatabaseManager
 from supabase import create_client
 
 # ---------------------------------------------------------
-# [Settings] Counter-based Scheduling (0 ~ 23 cycles)
+# [설정] 실행 사이클 및 타겟
 # ---------------------------------------------------------
 TARGET_COUNTS_FOR_OTHERS = [5, 17] 
 
@@ -21,12 +21,11 @@ def clean_json_text(text):
     return text.strip()
 
 # ---------------------------------------------------------
-# [DB Connection]
+# [DB 연동]
 # ---------------------------------------------------------
 supa_url = os.environ.get("SUPABASE_URL")
 supa_key = os.environ.get("SUPABASE_KEY")
 
-# Initialize Supabase client globally if credentials exist
 supabase = None
 if not supa_url or not supa_key:
     print("⚠️ Supabase credentials missing. Count logic disabled.")
@@ -39,13 +38,11 @@ else:
 def get_run_count():
     if not supabase: return 0
     try:
-        # [FIX] Use .table() instead of .from()
         res = supabase.table('system_status').select('run_count').eq('id', 1).single().execute()
         if res.data:
             return res.data['run_count']
         return 0
-    except Exception as e:
-        print(f"⚠️ Error reading run count: {e}")
+    except:
         return 0
 
 def update_run_count(current):
@@ -53,7 +50,6 @@ def update_run_count(current):
     next_count = current + 1
     if next_count >= 24: next_count = 0
     try:
-        # [FIX] Use .table() instead of .from()
         supabase.table('system_status').upsert({'id': 1, 'run_count': next_count}).execute()
         print(f"🔄 Cycle Count Updated: {current} -> {next_count}")
     except Exception as e:
@@ -66,17 +62,19 @@ def is_target_run(category, run_count):
     return False
 
 # ---------------------------------------------------------
-# [Main Logic]
+# [메인 로직]
 # ---------------------------------------------------------
 def run_automation():
     run_count = get_run_count()
     print(f"🚀 Automation Started (Cycle: {run_count}/23)")
     
     db = DatabaseManager()
-    engine = NewsEngine()
+    
+    # [수정] run_count를 넘겨줘서 키를 순서대로 선택하게 함
+    engine = NewsEngine(run_count)
     naver = NaverManager()
     
-    # Check if we are using Key 1 (Time for Ranking Update)
+    # Key 1번(순서상 첫번째)을 쓰고 있는지 확인
     is_ranking_update_time = engine.is_using_primary_key()
     if is_ranking_update_time:
         print("💎 [GROQ_API_KEY1 Active] -> Rankings will be updated.")
@@ -101,9 +99,7 @@ def run_automation():
 
             parsed_data = json.loads(cleaned_str)
             
-            # ----------------------------------------------------------------
-            # A. Save Rankings (Condition: Only when GROQ_API_KEY1 is active)
-            # ----------------------------------------------------------------
+            # A. 랭킹 저장 (Key 1번일 때만)
             top10_list = parsed_data.get('top10', [])
             if top10_list:
                 if is_ranking_update_time:
@@ -119,9 +115,7 @@ def run_automation():
                 else:
                     print(f"  > ⏩ Skipping Ranking Update (Not Key 1).")
 
-            # ----------------------------------------------------------------
-            # B. Write Articles (Always execute)
-            # ----------------------------------------------------------------
+            # B. 기사 작성 (항상)
             people_list = parsed_data.get('people', [])
             if people_list:
                 print(f"  > Processing {len(people_list)} Articles...")
