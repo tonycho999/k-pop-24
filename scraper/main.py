@@ -3,6 +3,7 @@ import re
 import os
 import time
 from news_api import NewsEngine
+from chart_api import ChartEngine
 from naver_api import NaverManager
 from database import DatabaseManager
 from supabase import create_client
