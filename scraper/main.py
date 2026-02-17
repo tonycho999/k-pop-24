@@ -2,7 +2,7 @@ import os
 import json
 import re
 import time
-from chart_api import ChartEngine # 수정된 엔진 임포트
+from chart_api import ChartEngine
 from database import DatabaseManager
 from supabase import create_client
 
@@ -13,6 +13,7 @@ def clean_json_text(text):
     if start != -1 and end != -1: return text[start:end+1]
     return text.strip()
 
+# Supabase 연결 설정
 supa_url = os.environ.get("SUPABASE_URL")
 supa_key = os.environ.get("SUPABASE_KEY")
 supabase = create_client(supa_url, supa_key) if supa_url and supa_key else None
@@ -26,54 +27,75 @@ def get_run_count():
 
 def update_run_count(current):
     if not supabase: return
-    next_count = (current + 1) % 24
+    next_count = (current + 1) % 24 # 0~23 순환
     try:
         supabase.table('system_status').upsert({'id': 1, 'run_count': next_count}).execute()
         print(f"🔄 Cycle Count Updated: {current} -> {next_count}")
     except Exception as e:
         print(f"⚠️ Failed to update run count: {e}")
 
+def get_groq_config(run_count):
+    """
+    8개의 Groq 키 중 이번 시간에 사용할 키를 결정합니다.
+    사용자 요청: 1번, 5번 키 시간일 때 차트 수집 실행.
+    """
+    key_idx = (run_count % 8) + 1  # 1, 2, 3, 4, 5, 6, 7, 8
+    key_name = f"GROQ_API_KEY{key_idx}"
+    api_key = os.environ.get(key_name)
+    
+    # 차트 실행 여부 (1번 키 또는 5번 키일 때만 True)
+    should_run_chart = key_idx in [1, 5]
+    
+    return api_key, key_idx, should_run_chart
+
 def run_automation():
     run_count = get_run_count()
-    print(f"🚀 Bot Automation Started (Cycle: {run_count}/23)")
+    print(f"🚀 [Cycle {run_count}/23] Automation Started")
+    
+    # 1. Groq 키 로테이션 및 차트 실행 여부 판단
+    groq_api_key, key_num, is_chart_time = get_groq_config(run_count)
+    print(f"🔑 Using GROQ_API_KEY{key_num}")
     
     db = DatabaseManager()
-    engine = ChartEngine()
     
-    # 우선 테스트할 카테고리 설정
-    categories = ["k-pop"]
+    # 2. [Phase 1] 차트 수집 (1번, 5번 키 시간일 때만 수행)
+    if is_chart_time:
+        print(f"📊 Chart Update Time! (Key #{key_num} active)")
+        engine = ChartEngine()
+        categories = ["k-pop", "k-drama", "k-movie", "k-entertain"]
 
-    for cat in categories:
-        print(f"\n[{cat}] Starting Direct Scraping...")
-        
-        try:
-            # 봇이 가져온 텍스트 JSON
-            chart_json = engine.get_top10_chart(cat)
+        for cat in categories:
+            print(f"[{cat}] Scraping...")
+            chart_json = engine.get_top10_chart(cat, run_count)
             cleaned_chart = clean_json_text(chart_json)
             
-            parsed_chart = json.loads(cleaned_chart)
-            top10_list = parsed_chart.get('top10', [])
-            
-            if top10_list:
-                print(f"  > 📊 Found {len(top10_list)} items. Saving to Database...")
-                db_data = []
-                for item in top10_list:
-                    # 로그용 출력
-                    print(f"    #{item['rank']} {item['title']} - {item['info']}")
-                    
-                    db_data.append({
-                        "category": cat,
-                        "rank": item.get('rank'),
-                        "title": item.get('title'),
-                        "meta_info": item.get('info', ''),
-                        "score": 100 # 봇 수집 데이터는 최상위 신뢰도
-                    })
-                db.save_rankings(db_data)
-            else:
-                print("  > ⚠️ No data extracted from the page.")
+            try:
+                parsed_chart = json.loads(cleaned_chart)
+                top10_list = parsed_chart.get('top10', [])
                 
-        except Exception as e:
-            print(f"  > ❌ Scraping Phase Error: {e}")
+                if top10_list:
+                    print(f"  > Saving {len(top10_list)} items to DB...")
+                    db_data = []
+                    for item in top10_list:
+                        db_data.append({
+                            "category": cat,
+                            "rank": item.get('rank'),
+                            "title": item.get('title'),
+                            "meta_info": item.get('info', ''),
+                            "score": 100
+                        })
+                    db.save_rankings(db_data)
+                else:
+                    print(f"  > ⚠️ No data for {cat}")
+            except Exception as e:
+                print(f"  > ❌ Error: {e}")
+    else:
+        print(f"⏭️ Skipping Chart Scrape (Key #{key_num} is for News only)")
+
+    # 3. [Phase 2] 기사 작성 (news_api.py 연동 구역)
+    # 이 섹션은 매시간(Every Cycle) 실행됩니다.
+    print(f"📝 Starting News Article Generation with Key #{key_num}...")
+    # TODO: news_api.process(groq_api_key) 호출 예정
 
     update_run_count(run_count)
 
