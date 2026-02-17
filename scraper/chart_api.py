@@ -19,21 +19,25 @@ class ChartEngine:
         print(f"🔍 [Attempt] Category: {category} | Primary: {target}")
         result = await self._scrape_entry(target, category)
         
-        if not result or len(result) < 5:
-            print(f"⚠️ {target} failed. Switching to Backup: naver_search")
+        # 메인 타겟 실패 시 네이버 백업 실행
+        if not result or len(result) < 3:
+            print(f"⚠️ {target} failed/insufficient. Switching to Emergency Backup: naver_search")
             result = await self._scrape_entry("naver_search", category)
             
         return json.dumps({"top10": result}, ensure_ascii=False)
 
     async def _scrape_entry(self, target, category):
         async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            # 권한 및 언어 설정 추가 (차단 방지)
+            context = await browser.new_context(user_agent=self.ua, locale="ko-KR")
+            page = await context.new_page()
+            data = []
+            
             try:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page(user_agent=self.ua)
-                data = []
-                
                 if target == "melon":
                     await page.goto("https://www.melon.com/chart/index.htm", timeout=30000)
+                    await page.wait_for_selector(".lst50", timeout=10000)
                     rows = await page.query_selector_all(".lst50")
                     for i, r in enumerate(rows[:10]):
                         t = await (await r.query_selector(".rank01 a")).inner_text()
@@ -41,25 +45,46 @@ class ChartEngine:
                         data.append({"rank": i+1, "title": t.strip(), "info": a.strip()})
                 
                 elif target == "naver_search":
-                    queries = {"k-pop":"멜론차트", "k-drama":"드라마 시청률", "k-movie":"박스오피스", "k-entertain":"예능 시청률"}
-                    await page.goto(f"https://search.naver.com/search.naver?query={queries.get(category, category)}")
-                    await page.wait_for_timeout(2000)
-                    items = await page.query_selector_all(".api_subject_bx .list_box .item")
+                    # 카테고리별 검색어 최적화
+                    queries = {
+                        "k-pop": "멜론 차트 순위",
+                        "k-drama": "드라마 시청률 순위",
+                        "k-movie": "박스오피스 순위",
+                        "k-entertain": "예능 시청률 순위"
+                    }
+                    search_url = f"https://search.naver.com/search.naver?query={queries.get(category, category)}"
+                    await page.goto(search_url, timeout=30000)
+                    
+                    # 네이버 통합검색 결과 로딩 대기 (중요)
+                    await page.wait_for_load_state("networkidle")
+                    await page.mouse.wheel(0, 500) # 약간의 스크롤로 로딩 유도
+                    await asyncio.sleep(2) # 안정적인 로딩을 위한 대기
+
+                    # [수정된 Selector] 네이버 통합검색 순위 리스트 패턴 (2026 기준 대응)
+                    # 시청률/박스오피스 공통 요소를 더 넓게 잡음
+                    items = await page.query_selector_all(".api_subject_bx .list_box .item, .api_subject_bx .lst_common .item")
+                    
+                    if not items:
+                        # 대안 Selector 시도 (박스오피스 전용 등)
+                        items = await page.query_selector_all(".box_image_list .item, .movie_audience_ranking .item")
+
                     for i, item in enumerate(items[:10]):
-                        title_el = await item.query_selector(".name, .title")
-                        info_el = await item.query_selector(".figure, .sub_text")
+                        # 제목 찾기
+                        title_el = await item.query_selector(".name, .title, .tit")
+                        # 정보(시청률/관객수) 찾기
+                        info_el = await item.query_selector(".figure, .sub_text, .value")
+                        
                         if title_el:
-                            t = await title_el.inner_text()
-                            inf = await info_el.inner_text() if info_el else ""
-                            data.append({"rank": i+1, "title": t.strip(), "info": inf.strip()})
+                            t_text = await title_el.inner_text()
+                            i_text = await info_el.inner_text() if info_el else ""
+                            data.append({"rank": i+1, "title": t_text.strip(), "info": i_text.strip()})
 
                 await browser.close()
                 return data
+
             except Exception as e:
-                print(f"❌ Scrape Error ({target}): {e}")
-                if 'page' in locals():
-                    await page.screenshot(path=f"error_{category}.png")
-                    with open(f"error_{category}.html", "w", encoding="utf-8") as f:
-                        f.write(await page.content())
+                print(f"❌ Scrape Error ({target} - {category}): {e}")
+                # 실패 시 로그용 스크린샷 저장
+                await page.screenshot(path=f"debug_{category}.png")
                 await browser.close()
                 return None
