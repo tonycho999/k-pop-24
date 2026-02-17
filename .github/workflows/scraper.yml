@@ -1,9 +1,9 @@
 name: K-Enter 24 Scraper
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: '11 * * * *'
+#  workflow_dispatch:
+#  schedule:
+#    - cron: '11 * * * *'
 
 jobs:
   run-scraper:
