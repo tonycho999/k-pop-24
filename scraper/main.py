@@ -11,8 +11,6 @@ from supabase import create_client
 # ---------------------------------------------------------
 # [설정] 실행 사이클
 # ---------------------------------------------------------
-# K-Pop은 매시간 차트 갱신, 나머지는 특정 시간에만 차트 갱신
-# 하지만 "인물 뉴스"는 매시간 트렌드를 체크합니다.
 TARGET_COUNTS_FOR_OTHERS = [5, 17] 
 
 def clean_json_text(text):
@@ -24,7 +22,7 @@ def clean_json_text(text):
     return text.strip()
 
 # ---------------------------------------------------------
-# [DB 연동]
+# [DB 연동 (Main용)]
 # ---------------------------------------------------------
 supa_url = os.environ.get("SUPABASE_URL")
 supa_key = os.environ.get("SUPABASE_KEY")
@@ -48,29 +46,39 @@ def update_run_count(current):
         print(f"⚠️ Failed to update run count: {e}")
 
 # ---------------------------------------------------------
-# [Helper] 이전에 작성된 기사 목록 가져오기 (중복/신규 체크용)
+# [Helper] 이전 순위 기록 가져오기 (순위 변동 체크용)
 # ---------------------------------------------------------
-def get_recent_keywords(category):
+def get_previous_rank_map(category):
     """
-    최근 12시간 내에 해당 카테고리에서 작성된 인물 이름(keyword)을 가져옴
+    search_archive에서 최근 24시간 내 데이터를 조회하여
+    { "인물이름": 랭킹숫자 } 형태의 맵을 반환합니다.
     """
-    if not supabase: return []
+    if not supabase: return {}
     try:
-        # 12시간 전 시간 구하기
-        time_limit = (datetime.utcnow() - timedelta(hours=12)).isoformat()
-        
+        # 최근 100건 조회 (충분한 양)
         res = supabase.table('search_archive') \
-            .select('keyword') \
+            .select('keyword, query') \
             .eq('category', category) \
-            .gte('created_at', time_limit) \
+            .order('created_at', desc=True) \
+            .limit(100) \
             .execute()
             
+        rank_map = {}
         if res.data:
-            return set([item['keyword'] for item in res.data])
-        return set()
+            for item in res.data:
+                kw = item['keyword']
+                if kw in rank_map: continue # 최신 기록만 사용
+                
+                # query 필드에서 rank 파싱 ("k-pop top 30 rank 5")
+                try:
+                    match = re.search(r'rank (\d+)', item['query'])
+                    if match:
+                        rank_map[kw] = int(match.group(1))
+                except: pass
+        return rank_map
     except Exception as e:
-        print(f"⚠️ Failed to fetch history: {e}")
-        return set()
+        print(f"⚠️ Failed to fetch rank history: {e}")
+        return {}
 
 # ---------------------------------------------------------
 # [메인 로직]
@@ -80,10 +88,9 @@ def run_automation():
     print(f"🚀 Automation Started (Cycle: {run_count}/23)")
     
     db = DatabaseManager()
-    engine = NewsEngine(run_count) # Run count 전달 (키 로테이션용)
+    engine = NewsEngine(run_count)
     naver = NaverManager()
     
-    # Key 1번 사용 여부 (차트 갱신용)
     is_key1 = engine.is_using_primary_key()
     
     categories = ["k-pop", "k-drama", "k-movie", "k-entertain", "k-culture"]
@@ -91,29 +98,27 @@ def run_automation():
     for cat in categories:
         print(f"\n[{cat}] Analyzing Trends...")
         
-        # 1. 최근에 다룬 인물 목록 가져오기 (신규 진입 판별용)
-        recent_people = get_recent_keywords(cat)
+        # 1. 이전 순위 정보 로드 (순위 변동 비교용)
+        prev_ranks = get_previous_rank_map(cat)
 
         try:
             # -----------------------------------------------------------
-            # Step 1. 리스트 확보 (Top 10 Chart + Top 30 People List)
+            # Step 1. 리스트 확보
             # -----------------------------------------------------------
             list_json = engine.get_rankings_list(cat)
-            
             cleaned_list = clean_json_text(list_json)
             if not cleaned_list or cleaned_list == "{}":
-                print(f"⚠️ [{cat}] No list data returned. Skipping.")
+                print(f"⚠️ [{cat}] No list data returned.")
                 continue
-                
+            
             parsed_list = json.loads(cleaned_list)
             
             # -----------------------------------------------------------
             # Step 2. Top 10 차트 저장
             # -----------------------------------------------------------
-            # 규칙: K-POP은 매시간, 나머지는 Key 1번일 때만 저장
             should_update_chart = (cat == 'k-pop') or is_key1
-            
             top10_data = parsed_list.get('top10', [])
+            
             if top10_data and should_update_chart:
                 print(f"  > 📊 Saving Top 10 Chart ({len(top10_data)} items)...")
                 db_data = []
@@ -130,12 +135,11 @@ def run_automation():
                 print(f"  > ⏩ Skipping Chart Update (Not Key 1).")
 
             # -----------------------------------------------------------
-            # Step 3. 인물별 기사 작성 (조건부)
+            # Step 3. 인물별 기사 작성 (순위 변동 로직 적용)
             # -----------------------------------------------------------
             people_list = parsed_list.get('people', [])
             if people_list:
                 print(f"  > 👥 Reviewing {len(people_list)} People for updates...")
-                
                 live_news_buffer = [] 
 
                 for person in people_list:
@@ -146,35 +150,38 @@ def run_automation():
                     if not name_en or not rank: continue
                     if not name_kr: name_kr = name_en
                     
-                    # [조건 로직]
-                    # 1위~3위: 무조건 작성 (변화 없어도 최신 이슈 체크)
-                    # 4위~30위: 최근(12시간)에 다룬 적 없는 "신규 진입자"만 작성
+                    # [업데이트 결정 로직]
+                    # 1. Top 3: 무조건 작성
+                    # 2. 4~30위: 
+                    #    - New Entry (이전에 없던 사람)
+                    #    - Rank Change (이전 순위와 현재 순위가 다름)
                     
                     should_write = False
                     reason = ""
                     
                     if rank <= 3:
                         should_write = True
-                        reason = "Top 3 Rank"
-                    elif name_en not in recent_people:
+                        reason = "🔥 Top 3 Always"
+                    elif name_en not in prev_ranks:
                         should_write = True
-                        reason = "New Entry"
+                        reason = "✨ New Entry"
+                    elif prev_ranks[name_en] != rank:
+                        should_write = True
+                        reason = "📈 Rank Change"
                     
                     if should_write:
-                        print(f"    -> 📝 Processing Rank #{rank}: {name_en} ({reason})...")
+                        print(f"    -> 📝 #{rank} {name_en} ({reason})...")
                         
-                        # (1) 심층 취재 (Perplexity) - 기사 개수 자동 조절됨
-                        # fetch_article_details 내부에서 rank에 따라 4개/3개/2개 읽음
+                        # (1) 기사 수집 (Perplexity) - rank에 따라 기사 수 자동 조절
                         facts = engine.fetch_article_details(name_kr, name_en, cat, rank)
-                        
                         if "Failed" in facts:
-                            print(f"       ⚠️ Skip: Facts collection failed.")
+                            print("       ⚠️ Skip: Facts failed.")
                             continue
 
                         # (2) 기사 작성 (Groq)
                         full_text = engine.edit_with_groq(name_en, facts, cat)
                         
-                        # (3) 데이터 파싱
+                        # (3) 파싱
                         score = 70
                         if "###SCORE:" in full_text:
                             try:
@@ -195,7 +202,7 @@ def run_automation():
                             "keyword": name_en,
                             "title": title,
                             "summary": summary,
-                            "link": "", # 링크 없음
+                            "link": "",
                             "image_url": img_url,
                             "score": score,
                             "likes": 0,
@@ -204,9 +211,10 @@ def run_automation():
                             "run_count": run_count
                         }
                         
-                        # (4) DB 저장
+                        # (4) 아카이브 저장
                         db.save_to_archive(article_data)
                         
+                        # (5) 라이브 뉴스 버퍼 추가
                         live_news_buffer.append({
                             "category": article_data['category'],
                             "keyword": article_data['keyword'],
@@ -217,21 +225,19 @@ def run_automation():
                             "score": score,
                             "likes": 0
                         })
-                        
-                        # API 속도 조절을 위해 약간 대기 (너무 빠르면 에러남)
-                        time.sleep(1) 
+                        time.sleep(1) # 안정성 확보
                     else:
-                        pass # 이미 다뤘고 순위도 4위 밖이면 스킵
+                        pass # 순위 변동 없음
 
-                # Live News 테이블 업데이트 (새로 쓴 기사들)
+                # 배치 저장 실행
                 if live_news_buffer:
+                    print(f"  > 💾 Saving {len(live_news_buffer)} articles to Live News...")
                     db.save_live_news(live_news_buffer)
-                    print(f"  > ✅ Published {len(live_news_buffer)} New Articles.")
                 else:
-                    print("  > 💤 No new articles needed.")
+                    print("  > 💤 No updates needed (Ranks unchanged).")
 
         except Exception as e:
-            print(f"❌ [{cat}] Critical Error: {e}")
+            print(f"❌ [{cat}] Error: {e}")
 
     update_run_count(run_count)
 
