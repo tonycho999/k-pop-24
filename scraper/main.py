@@ -2,15 +2,12 @@ import json
 import re
 import os
 import time
-from datetime import datetime, timedelta
 from news_api import NewsEngine
 from naver_api import NaverManager
 from database import DatabaseManager
 from supabase import create_client
 
-# ---------------------------------------------------------
-# [설정] 실행 사이클
-# ---------------------------------------------------------
+# 설정
 TARGET_COUNTS_FOR_OTHERS = [5, 17] 
 
 def clean_json_text(text):
@@ -21,9 +18,7 @@ def clean_json_text(text):
     if start != -1 and end != -1: return text[start:end+1]
     return text.strip()
 
-# ---------------------------------------------------------
-# [DB 연동 (Main용)]
-# ---------------------------------------------------------
+# DB 초기화
 supa_url = os.environ.get("SUPABASE_URL")
 supa_key = os.environ.get("SUPABASE_KEY")
 supabase = create_client(supa_url, supa_key) if supa_url and supa_key else None
@@ -45,43 +40,30 @@ def update_run_count(current):
     except Exception as e:
         print(f"⚠️ Failed to update run count: {e}")
 
-# ---------------------------------------------------------
-# [Helper] 이전 순위 기록 가져오기 (순위 변동 체크용)
-# ---------------------------------------------------------
+# 순위 변동 체크용 (이전 기록 로드)
 def get_previous_rank_map(category):
-    """
-    search_archive에서 최근 24시간 내 데이터를 조회하여
-    { "인물이름": 랭킹숫자 } 형태의 맵을 반환합니다.
-    """
     if not supabase: return {}
     try:
-        # 최근 100건 조회 (충분한 양)
         res = supabase.table('search_archive') \
             .select('keyword, query') \
             .eq('category', category) \
             .order('created_at', desc=True) \
             .limit(100) \
             .execute()
-            
         rank_map = {}
         if res.data:
             for item in res.data:
                 kw = item['keyword']
-                if kw in rank_map: continue # 최신 기록만 사용
-                
-                # query 필드에서 rank 파싱 ("k-pop top 30 rank 5")
+                if kw in rank_map: continue
                 try:
                     match = re.search(r'rank (\d+)', item['query'])
-                    if match:
-                        rank_map[kw] = int(match.group(1))
+                    if match: rank_map[kw] = int(match.group(1))
                 except: pass
         return rank_map
-    except Exception as e:
-        print(f"⚠️ Failed to fetch rank history: {e}")
-        return {}
+    except: return {}
 
 # ---------------------------------------------------------
-# [메인 로직]
+# [메인 실행 함수]
 # ---------------------------------------------------------
 def run_automation():
     run_count = get_run_count()
@@ -90,57 +72,67 @@ def run_automation():
     db = DatabaseManager()
     engine = NewsEngine(run_count)
     naver = NaverManager()
-    
     is_key1 = engine.is_using_primary_key()
     
     categories = ["k-pop", "k-drama", "k-movie", "k-entertain", "k-culture"]
 
     for cat in categories:
-        print(f"\n[{cat}] Analyzing Trends...")
+        print(f"\n[{cat}] Starting Analysis...")
         
-        # 1. 이전 순위 정보 로드 (순위 변동 비교용)
-        prev_ranks = get_previous_rank_map(cat)
+        # =========================================================
+        # [Phase 1] Top 10 차트 조사 및 저장 (완전 분리)
+        # =========================================================
+        # 실행 조건: K-POP(매시간) OR Key 1번(다른 카테고리)
+        should_update_chart = (cat == 'k-pop') or is_key1
+        
+        if should_update_chart:
+            try:
+                chart_json = engine.get_top10_chart(cat)
+                cleaned_chart = clean_json_text(chart_json)
+                if cleaned_chart and cleaned_chart != "{}":
+                    parsed_chart = json.loads(cleaned_chart)
+                    top10_list = parsed_chart.get('top10', [])
+                    
+                    if top10_list:
+                        print(f"  > 📊 Saving Top 10 Chart ({len(top10_list)} items)...")
+                        db_data = []
+                        for item in top10_list:
+                            db_data.append({
+                                "category": cat,
+                                "rank": item.get('rank'),
+                                "title": item.get('title'),
+                                "meta_info": item.get('info', ''),
+                                "score": 0
+                            })
+                        db.save_rankings(db_data)
+                    else:
+                        print("  > ⚠️ Top 10 list is empty.")
+            except Exception as e:
+                print(f"  > ❌ Phase 1 Error (Chart): {e}")
+        else:
+            print("  > ⏩ Phase 1 Skipped (Chart update not required).")
 
+        # =========================================================
+        # [Phase 2] Top 30 인물 뉴스 조사 (Phase 1 완료 후 실행)
+        # =========================================================
         try:
-            # -----------------------------------------------------------
-            # Step 1. 리스트 확보
-            # -----------------------------------------------------------
-            list_json = engine.get_rankings_list(cat)
-            cleaned_list = clean_json_text(list_json)
-            if not cleaned_list or cleaned_list == "{}":
-                print(f"⚠️ [{cat}] No list data returned.")
+            # 1. 이전 순위 로드
+            prev_ranks = get_previous_rank_map(cat)
+            
+            # 2. Top 30 명단 확보
+            people_json = engine.get_top30_people(cat)
+            cleaned_people = clean_json_text(people_json)
+            
+            if not cleaned_people or cleaned_people == "{}":
+                print("  > ⚠️ No people list returned. Skipping Phase 2.")
                 continue
+                
+            parsed_people = json.loads(cleaned_people)
+            people_list = parsed_people.get('people', [])
             
-            parsed_list = json.loads(cleaned_list)
-            
-            # -----------------------------------------------------------
-            # Step 2. Top 10 차트 저장
-            # -----------------------------------------------------------
-            should_update_chart = (cat == 'k-pop') or is_key1
-            top10_data = parsed_list.get('top10', [])
-            
-            if top10_data and should_update_chart:
-                print(f"  > 📊 Saving Top 10 Chart ({len(top10_data)} items)...")
-                db_data = []
-                for item in top10_data:
-                    db_data.append({
-                        "category": cat,
-                        "rank": item.get('rank'),
-                        "title": item.get('title'),
-                        "meta_info": item.get('info', ''),
-                        "score": 0
-                    })
-                db.save_rankings(db_data)
-            elif top10_data:
-                print(f"  > ⏩ Skipping Chart Update (Not Key 1).")
-
-            # -----------------------------------------------------------
-            # Step 3. 인물별 기사 작성 (순위 변동 로직 적용)
-            # -----------------------------------------------------------
-            people_list = parsed_list.get('people', [])
             if people_list:
-                print(f"  > 👥 Reviewing {len(people_list)} People for updates...")
-                live_news_buffer = [] 
+                print(f"  > 👥 Analyzing {len(people_list)} People for Article Generation...")
+                live_news_buffer = []
 
                 for person in people_list:
                     rank = person.get('rank')
@@ -150,18 +142,16 @@ def run_automation():
                     if not name_en or not rank: continue
                     if not name_kr: name_kr = name_en
                     
-                    # [업데이트 결정 로직]
-                    # 1. Top 3: 무조건 작성
-                    # 2. 4~30위: 
-                    #    - New Entry (이전에 없던 사람)
-                    #    - Rank Change (이전 순위와 현재 순위가 다름)
+                    # [업데이트 로직 적용]
+                    # 1위~3위: 무조건 (Always Update)
+                    # 4위~30위: 순위 변동(Change) or 신규 진입(New)
                     
                     should_write = False
                     reason = ""
                     
                     if rank <= 3:
                         should_write = True
-                        reason = "🔥 Top 3 Always"
+                        reason = "🔥 Top 3 (Auto)"
                     elif name_en not in prev_ranks:
                         should_write = True
                         reason = "✨ New Entry"
@@ -170,18 +160,18 @@ def run_automation():
                         reason = "📈 Rank Change"
                     
                     if should_write:
-                        print(f"    -> 📝 #{rank} {name_en} ({reason})...")
+                        print(f"    -> 📝 Processing #{rank} {name_en} ({reason})...")
                         
-                        # (1) 기사 수집 (Perplexity) - rank에 따라 기사 수 자동 조절
+                        # (A) 기사 팩트 수집 (4/3/2개 규칙 적용됨)
                         facts = engine.fetch_article_details(name_kr, name_en, cat, rank)
                         if "Failed" in facts:
                             print("       ⚠️ Skip: Facts failed.")
                             continue
 
-                        # (2) 기사 작성 (Groq)
+                        # (B) Groq 기사 작성
                         full_text = engine.edit_with_groq(name_en, facts, cat)
                         
-                        # (3) 파싱
+                        # (C) 점수 및 내용 파싱
                         score = 70
                         if "###SCORE:" in full_text:
                             try:
@@ -211,10 +201,10 @@ def run_automation():
                             "run_count": run_count
                         }
                         
-                        # (4) 아카이브 저장
+                        # (D) 아카이브 저장
                         db.save_to_archive(article_data)
                         
-                        # (5) 라이브 뉴스 버퍼 추가
+                        # (E) 라이브 뉴스 버퍼 추가
                         live_news_buffer.append({
                             "category": article_data['category'],
                             "keyword": article_data['keyword'],
@@ -225,19 +215,19 @@ def run_automation():
                             "score": score,
                             "likes": 0
                         })
-                        time.sleep(1) # 안정성 확보
+                        time.sleep(1) 
                     else:
-                        pass # 순위 변동 없음
+                        pass # 변동 없음
 
-                # 배치 저장 실행
+                # 배치 저장
                 if live_news_buffer:
                     print(f"  > 💾 Saving {len(live_news_buffer)} articles to Live News...")
                     db.save_live_news(live_news_buffer)
                 else:
-                    print("  > 💤 No updates needed (Ranks unchanged).")
+                    print("  > 💤 No rank changes. No new articles.")
 
         except Exception as e:
-            print(f"❌ [{cat}] Error: {e}")
+            print(f"  > ❌ Phase 2 Error (People): {e}")
 
     update_run_count(run_count)
 
