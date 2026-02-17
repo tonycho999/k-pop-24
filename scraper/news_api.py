@@ -1,20 +1,18 @@
 import os
-import time
 import json
-import re
-import random
+from datetime import datetime, timedelta, timezone
 from openai import OpenAI
 from groq import Groq
 
 class NewsEngine:
     def __init__(self, run_count=0):
-        # Perplexity
+        # Perplexity for news searching
         self.pplx = OpenAI(
             api_key=os.environ.get("PERPLEXITY_API_KEY"), 
             base_url="https://api.perplexity.ai"
         )
         
-        # 키 로테이션 (1~8번)
+        # Groq Key Rotation
         self.groq_keys = []
         for i in range(1, 9): 
             key_name = f"GROQ_API_KEY{i}"
@@ -52,90 +50,41 @@ class NewsEngine:
         except: return default
 
     # ----------------------------------------------------------------
-    # [Task 1] Top 10 차트 데이터 수집 (인물 뉴스 배제)
-    # ----------------------------------------------------------------
-    def get_top10_chart(self, category):
-        """
-        오직 '랭킹 차트'만 검색해서 가져옵니다.
-        """
-        target_info = ""
-        if category == "k-pop":
-            target_info = "Source: **Melon Chart (Real-time)**. Target: Song Titles & Artists."
-        elif category == "k-drama":
-            target_info = "Source: **Naver TV Ratings (Drama)**. Target: Drama Titles only."
-        elif category == "k-movie":
-            target_info = "Source: **Naver Movie Box Office**. Target: Movie Titles (Foreign movies allowed)."
-        elif category == "k-entertain":
-            target_info = "Source: **Naver TV Ratings (Variety)**. Target: Show Titles."
-        elif category == "k-culture":
-            target_info = "Source: Trending Keywords (Place, Festival, Food). Target: Keywords."
-
-        system_prompt = "You are a specialized researcher. Search ONLY Korean domestic sources."
-        user_prompt = f"""
-        Search **Korean domestic portals (Naver, Melon)** within the **last 24 hours**.
-        Category: {category}
-
-        **Task: Extract the Top 10 Ranking Chart**
-        {target_info}
-        - Get the actual ranking data.
-        - **Translate all Titles/Names to English.**
-
-        **Output JSON Format ONLY:**
-        {{
-            "top10": [
-                {{"rank": 1, "title": "...", "info": "..."}},
-                ...
-                {{"rank": 10, "title": "...", "info": "..."}}
-            ]
-        }}
-        """
-        print(f"  🔍 [Perplexity] Fetching Top 10 Chart for {category}...")
-        try:
-            response = self.pplx.chat.completions.create(
-                model="sonar-pro",
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                temperature=0.1,
-                timeout=180
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"❌ PPLX Chart Error: {e}")
-            return "{}"
-
-    # ----------------------------------------------------------------
-    # [Task 2] Top 30 인물 명단 수집 (기사 요약 전 단계)
+    # [Task 2] Top 30 People (Strict Naver News Only)
     # ----------------------------------------------------------------
     def get_top30_people(self, category):
-        """
-        언급량 기준 상위 30명의 인물 이름만 가져옵니다.
-        """
+        kst = timezone(timedelta(hours=9))
+        today_str = datetime.now(kst).strftime("%Y-%m-%d")
+
         target_people = ""
-        if category == "k-pop": target_people = "Singers / Idol Groups"
-        elif category == "k-drama": target_people = "Actors / PDs (Drama related)"
-        elif category == "k-movie": target_people = "Actors / Directors (Movie related)"
-        elif category == "k-entertain": target_people = "Variety Show Cast / MCs / PDs"
-        elif category == "k-culture": target_people = "Figures related to K-Culture (EXCLUDING Celebrities)"
+        if category == "k-pop": target_people = "Singers / Idols"
+        elif category == "k-drama": target_people = "Actors / PDs"
+        elif category == "k-movie": target_people = "Actors / Directors"
+        elif category == "k-entertain": target_people = "Variety Stars / MCs"
+        elif category == "k-culture": target_people = "Public Figures (Non-Celebs)"
 
-        system_prompt = "You are a specialized researcher. Search ONLY Korean domestic sources."
+        # Strict Prompt
+        system_prompt = "You are a news curator. Search ONLY 'Naver News' (news.naver.com)."
         user_prompt = f"""
-        Search **Korean news (Naver News)** within the **last 24 hours**.
-        Category: {category}
+        **Strict Search Rule:**
+        1. Source: **Naver News (news.naver.com)** ONLY.
+        2. Date: Articles published on **{today_str}** (Last 24h).
+        3. ❌ **EXCLUDE**: Community posts (Theqoo, Instiz, DC Inside, Twitter, Blogs, Cafes).
+        4. ❌ **EXCLUDE**: People with NO official news articles today.
 
-        **Task: Identify Top 30 Trending People**
-        - Target: {target_people}
-        - Rank them 1 to 30 based on news buzz/volume.
-        - **Output JUST their names (English & Korean).**
-
-        **Output JSON Format ONLY:**
+        **Task:**
+        Identify Top 30 people in '{category}' ({target_people}) who have the **most official news articles** today.
+        
+        **Output JSON ONLY:**
         {{
             "people": [
-                {{"rank": 1, "name_en": "...", "name_kr": "..."}},
+                {{ "rank": 1, "name_en": "...", "name_kr": "..." }},
                 ...
-                {{"rank": 30, "name_en": "...", "name_kr": "..."}}
+                {{ "rank": 30, "name_en": "...", "name_kr": "..." }}
             ]
         }}
         """
-        print(f"  🔍 [Perplexity] Fetching Top 30 People List for {category}...")
+        print(f"  🔍 [Perplexity] Fetching Top 30 People (Naver News Only)...")
         try:
             response = self.pplx.chat.completions.create(
                 model="sonar-pro",
@@ -149,28 +98,26 @@ class NewsEngine:
             return "{}"
 
     # ----------------------------------------------------------------
-    # [Task 3] 심층 기사 조사 (순위별 기사 수 차등 적용)
+    # [Task 3] Deep Dive & Verification
     # ----------------------------------------------------------------
     def fetch_article_details(self, name_kr, name_en, category, rank):
-        # [조건 적용] 순위별 기사 참조 개수
         article_count = 2
-        if rank <= 3: article_count = 4    # 1~3위: 4개
-        elif rank <= 10: article_count = 3 # 4~10위: 3개
-        # 11~30위: 2개 (기본값)
-
-        system_prompt = "You are a reporter summarizing Korean news."
+        if rank <= 3: article_count = 4
+        elif rank <= 10: article_count = 3
+        
+        system_prompt = "You are a reporter. Search ONLY Naver News."
         user_prompt = f"""
-        Search for **Korean news articles** about '{name_kr}' ({category}) published within the **last 24 hours**.
+        Search **Naver News (news.naver.com)** for '{name_kr}' ({category}) in the **last 24 hours**.
         
         **Constraints:**
-        1. Read at least **{article_count} distinct articles**.
-        2. Summarize the key facts in English.
-        3. Use ONLY Korean domestic media (Naver, Dispatch, etc.). Ignore international sources.
+        1. Find at least **{article_count} distinct OFFICIAL ARTICLES**.
+        2. If no official news exists, return "NO NEWS FOUND".
+        3. Do NOT use blogs or twitter.
         
-        Output format: Just the factual summary points in English.
+        Summarize the key facts in English.
         """
         
-        print(f"    ... [Perplexity] Reading {article_count} articles for Rank #{rank} {name_en}...")
+        print(f"    ... [Perplexity] Checking news for #{rank} {name_en}...")
         try:
             response = self.pplx.chat.completions.create(
                 model="sonar-pro",
@@ -179,22 +126,20 @@ class NewsEngine:
                 timeout=60
             )
             return response.choices[0].message.content
-        except Exception as e:
-            print(f"    ⚠️ Detail Fetch Error: {e}")
-            return "Failed."
+        except: return "Failed."
 
     # ----------------------------------------------------------------
-    # [Task 4] Groq 기사 작성
+    # [Task 4] Groq Article Writing
     # ----------------------------------------------------------------
     def edit_with_groq(self, name_en, facts, category):
-        system_msg = "You are a Senior Editor at a top Global K-Pop Magazine."
+        system_msg = "You are a Senior Editor."
         user_msg = f"""
         Topic: {name_en}
         Facts: {facts}
         Write a news article **in English**.
         - Headline: Catchy, No "News about" prefix.
         - Body: 3 paragraphs, professional tone.
-        - End with "###SCORE: XX" (10-99).
+        - End with "###SCORE: XX".
         """
         try:
             completion = self.groq.chat.completions.create(
@@ -209,6 +154,4 @@ class NewsEngine:
                 lines[0] = lines[0].replace("News about ", "").replace("news about ", "").strip()
                 return "\n".join(lines)
             return content
-        except Exception as e:
-            print(f"    ⚠️ Groq Error: {e}")
-            return f"{name_en}: Latest Updates\n{facts}\n###SCORE: 50"
+        except: return f"{name_en}: Latest Updates\n{facts}\n###SCORE: 50"
