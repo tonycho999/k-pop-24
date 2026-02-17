@@ -8,13 +8,14 @@ from groq import Groq
 
 class NewsEngine:
     def __init__(self, run_count=0):
+        # Perplexity (Search & Data Collection)
         self.pplx = OpenAI(
             api_key=os.environ.get("PERPLEXITY_API_KEY"), 
             base_url="https://api.perplexity.ai"
         )
         
         # ---------------------------------------------------------
-        # [키 로테이션] Run Count 기반 (0~7)
+        # [Core] Sequential Key Rotation
         # ---------------------------------------------------------
         self.groq_keys = []
         for i in range(1, 9): 
@@ -23,6 +24,7 @@ class NewsEngine:
             if val: self.groq_keys.append(val)
         
         if not self.groq_keys:
+            print("⚠️ No Groq API Keys found!")
             self.current_key = None
             self.current_key_index = -1
         else:
@@ -32,6 +34,7 @@ class NewsEngine:
 
         self.groq = self._create_groq_client()
         self.model_id = self._get_optimal_model()
+        print(f"🤖 Selected AI Model: {self.model_id}")
 
     def _create_groq_client(self):
         if not self.current_key: return None
@@ -46,42 +49,39 @@ class NewsEngine:
         try:
             models = self.groq.models.list()
             ids = [m.id for m in models.data]
-            for k in ["llama-3.3-70b", "llama-3.2-90b", "llama-3.1-70b", "mixtral"]:
+            for k in ["llama-3.3-70b", "llama-3.2-90b", "llama-3.1-70b", "mixtral", "llama3-70b"]:
                 for mid in ids:
                     if k in mid: return mid
             return default
         except: return default
 
     # ----------------------------------------------------------------
-    # [1단계] 순위 및 차트 데이터 수집 (Top 30 인물 리스트 + Top 10 차트)
+    # [Step 1] Get Rankings List (Top 10 Charts + Top 30 People Names)
     # ----------------------------------------------------------------
     def get_rankings_list(self, category):
         """
-        인물 30위 리스트와 Top 10 차트 데이터만 JSON으로 가져옵니다. (기사 내용은 아직 안 가져옴)
+        Fetches ONLY the list of names and titles. No article bodies yet.
         """
-        
-        # 1. Top 10 차트 소스 정의
         chart_instruction = ""
+        people_instruction = ""
+
         if category == "k-pop":
-            chart_instruction = "Source: **Melon Chart (Real-time or Daily)**. Target: Song Titles & Artists."
+            chart_instruction = "Source: **Melon Chart (Real-time)**. Target: Song Titles & Artists."
+            people_instruction = "Singers / Idol Groups"
         elif category == "k-drama":
             chart_instruction = "Source: **Naver TV Ratings (Drama)**. Target: Drama Titles only."
+            people_instruction = "Actors / PDs (Drama related)"
         elif category == "k-movie":
             chart_instruction = "Source: **Naver Movie Box Office**. Target: Movie Titles (Foreign allowed)."
+            people_instruction = "Actors / Directors (Movie related)"
         elif category == "k-entertain":
-            chart_instruction = "Source: **Naver TV Ratings (Variety/Entertainment)**. Target: Show Titles."
+            chart_instruction = "Source: **Naver TV Ratings**. Target: Show Titles."
+            people_instruction = "Variety Show Cast / MCs / PDs"
         elif category == "k-culture":
-            chart_instruction = "Source: Current Trending Keywords (Place, Festival, Food). Target: Keywords."
+            chart_instruction = "Source: Current Trending Keywords. Target: Place, Festival, Food."
+            people_instruction = "Figures related to K-Culture (EXCLUDING Celebrities)"
 
-        # 2. 인물(People) 정의
-        people_instruction = ""
-        if category == "k-pop": people_instruction = "Singers / Idol Groups"
-        elif category == "k-drama": people_instruction = "Actors / PDs (Drama related)"
-        elif category == "k-movie": people_instruction = "Actors / Directors (Movie related)"
-        elif category == "k-entertain": people_instruction = "Variety Show Cast / MCs / PDs"
-        elif category == "k-culture": people_instruction = "Figures related to K-Culture (EXCLUDING Celebrities)"
-
-        system_prompt = "You are a specialized researcher for Korean Entertainment. Search ONLY Korean domestic sources (Naver, Daum, Melon)."
+        system_prompt = "You are a specialized researcher. Search ONLY Korean domestic sources (Naver, Daum, Melon)."
         
         user_prompt = f"""
         Perform a search on **Korean domestic portals (Naver, Melon)** within the **last 24 hours**.
@@ -109,11 +109,13 @@ class NewsEngine:
         }}
         """
 
+        print(f"  🔍 [Perplexity] Searching Trends for {category}... (Timeout: 180s)")
         try:
             response = self.pplx.chat.completions.create(
                 model="sonar-pro",
                 messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                temperature=0.1
+                temperature=0.1,
+                timeout=180
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -121,13 +123,13 @@ class NewsEngine:
             return "{}"
 
     # ----------------------------------------------------------------
-    # [2단계] 개별 인물 심층 기사 조사 (기사 N개 참조)
+    # [Step 2] Deep Dive: Fetch Article Details for Specific Person
     # ----------------------------------------------------------------
     def fetch_article_details(self, name_kr, name_en, category, rank):
         """
-        특정 인물에 대해 한국 뉴스 N개를 읽고 영어로 요약합니다.
+        Reads N articles about a specific person and summarizes facts.
         """
-        # 순위에 따른 참조 기사 수 결정
+        # Determine number of articles based on rank
         article_count = 2
         if rank <= 3: article_count = 4
         elif rank <= 10: article_count = 3
@@ -145,42 +147,63 @@ class NewsEngine:
         Output format: Just the factual summary points in English.
         """
         
+        print(f"    ... [Perplexity] Digging details for {name_en} (Rank {rank})...")
         try:
             response = self.pplx.chat.completions.create(
                 model="sonar-pro",
                 messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                temperature=0.1
+                temperature=0.1,
+                timeout=60
             )
             return response.choices[0].message.content
         except Exception as e:
+            print(f"    ⚠️ Failed to fetch details for {name_en}: {e}")
             return f"Failed to fetch details for {name_en}."
 
     # ----------------------------------------------------------------
-    # [3단계] Groq 기사 작성
+    # [Step 3] Groq: Write Article
     # ----------------------------------------------------------------
     def edit_with_groq(self, name_en, facts, category):
+        """
+        Uses Groq (Llama 3) to write the final article based on facts.
+        """
         system_msg = "You are a Senior Editor at a top Global K-Pop Magazine."
         user_msg = f"""
         Topic: {name_en}
         Facts: {facts}
         
         Write a news article **in English**.
-        - Headline: Catchy, No "News about" prefix.
-        - Body: 3 paragraphs, professional journalist tone.
-        - End with "###SCORE: XX" (10-99).
+        
+        [Headline Rules]
+        1. **Format**: Catchy, professional headline (1st line).
+        2. ❌ **FORBIDDEN**: Do NOT start with "News about", "Update on".
+        3. ✅ **Style**: Active verbs (e.g., "Dominates", "Reveals").
+
+        [Body Rules]
+        1. Style: Write in the style of a professional Korean entertainment journalist.
+        2. Tone: Professional yet engaging for global fans.
+        3. Structure: At least 3 paragraphs.
+        4. Formatting: Start body text from the 2nd line.
+        
+        [Score Rule]
+        - At the very end, write "###SCORE: XX" (10-99) based on viral potential.
         """
+        
         try:
             completion = self.groq.chat.completions.create(
                 model=self.model_id,
                 messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-                temperature=0.7
+                temperature=0.7,
+                timeout=60
             )
             content = completion.choices[0].message.content
-            # 후처리
+            
+            # Post-processing
             lines = content.split('\n')
             if lines[0].lower().startswith("news about"):
                 lines[0] = lines[0].replace("News about ", "").replace("news about ", "").strip()
                 return "\n".join(lines)
             return content
-        except:
+        except Exception as e:
+            print(f"    ⚠️ Groq Error: {e}")
             return f"{name_en}: Latest Updates\n{facts}\n###SCORE: 50"
