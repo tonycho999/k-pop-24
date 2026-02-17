@@ -21,12 +21,11 @@ def clean_json_text(text):
     return text.strip()
 
 # ---------------------------------------------------------
-# [DB 연동] 실행 카운트 관리 함수
+# [DB 연동]
 # ---------------------------------------------------------
 supa_url = os.environ.get("SUPABASE_URL")
 supa_key = os.environ.get("SUPABASE_KEY")
 
-# 키가 없는 경우 안전하게 처리
 if not supa_url or not supa_key:
     print("⚠️ Supabase credentials missing. Count logic disabled.")
     supabase = None
@@ -38,39 +37,28 @@ else:
         supabase = None
 
 def get_run_count():
-    """DB에서 현재 run_count 가져오기 (기본값 0)"""
     if not supabase: return 0
     try:
-        # [수정됨] .from -> .table
         res = supabase.table('system_status').select('run_count').eq('id', 1).single().execute()
         if res.data:
             return res.data['run_count']
         return 0
-    except Exception as e:
-        print(f"⚠️ Init Run Count Error: {e}")
+    except:
         return 0
 
 def update_run_count(current):
-    """실행이 끝나면 카운트를 1 올림"""
     if not supabase: return
-
     next_count = current + 1
-    if next_count >= 24:
-        next_count = 0
-    
+    if next_count >= 24: next_count = 0
     try:
-        # [수정됨] .from -> .table
         supabase.table('system_status').upsert({'id': 1, 'run_count': next_count}).execute()
         print(f"🔄 Cycle Count Updated: {current} -> {next_count}")
     except Exception as e:
         print(f"⚠️ Failed to update run count: {e}")
 
 def is_target_run(category, run_count):
-    """실행 여부 결정"""
-    if category == 'k-pop':
-        return True
-    if run_count in TARGET_COUNTS_FOR_OTHERS:
-        return True
+    if category == 'k-pop': return True
+    if run_count in TARGET_COUNTS_FOR_OTHERS: return True
     print(f"  ⏭️ [Skip] {category} (Current Count: {run_count})")
     return False
 
@@ -84,6 +72,13 @@ def run_automation():
     db = DatabaseManager()
     engine = NewsEngine()
     naver = NaverManager()
+    
+    # [확인] 현재 Key 1번(00:xx, 08:xx, 16:xx)을 사용 중인지?
+    is_ranking_update_time = engine.is_using_primary_key()
+    if is_ranking_update_time:
+        print("💎 [GROQ_API_KEY1 Active] -> Rankings will be updated.")
+    else:
+        print("⏩ [Backup Key Active] -> Rankings update SKIPPED (Articles only).")
     
     categories = ["k-pop", "k-drama", "k-movie", "k-entertain", "k-culture"]
 
@@ -103,20 +98,27 @@ def run_automation():
 
             parsed_data = json.loads(cleaned_str)
             
-            # A. 랭킹 저장
+            # ----------------------------------------------------------------
+            # A. 랭킹 저장 (조건: GROQ_API_KEY1 사용 중일 때만)
+            # ----------------------------------------------------------------
             top10_list = parsed_data.get('top10', [])
             if top10_list:
-                print(f"  > Saving {len(top10_list)} Rankings...")
-                for item in top10_list:
-                    db.save_rankings([{
-                        "category": cat,
-                        "rank": item.get('rank'),
-                        "title": item.get('title'),
-                        "meta_info": item.get('info', ''),
-                        "score": 0
-                    }])
+                if is_ranking_update_time:
+                    print(f"  > 💎 Saving {len(top10_list)} Rankings (Key 1 Active)...")
+                    for item in top10_list:
+                        db.save_rankings([{
+                            "category": cat,
+                            "rank": item.get('rank'),
+                            "title": item.get('title'),
+                            "meta_info": item.get('info', ''),
+                            "score": 0
+                        }])
+                else:
+                    print(f"  > ⏩ Skipping Ranking Update (Not Key 1).")
 
-            # B. 기사 작성
+            # ----------------------------------------------------------------
+            # B. 기사 작성 (항상 실행)
+            # ----------------------------------------------------------------
             people_list = parsed_data.get('people', [])
             if people_list:
                 print(f"  > Processing {len(people_list)} Articles...")
@@ -136,7 +138,7 @@ def run_automation():
                     if "###SCORE:" in full_text:
                         try:
                             parts = full_text.split("###SCORE:")
-                            full_text = parts[0].strip() # 텍스트 정리
+                            full_text = parts[0].strip()
                             import re
                             score_match = re.search(r'\d+', parts[1])
                             if score_match: score = int(score_match.group())
