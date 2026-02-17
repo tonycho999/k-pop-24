@@ -8,7 +8,7 @@ from database import DatabaseManager
 from supabase import create_client
 
 # ---------------------------------------------------------
-# [설정] 카운터 기반 스케줄링 (0 ~ 23 사이클)
+# [Settings] Counter-based Scheduling (0 ~ 23 cycles)
 # ---------------------------------------------------------
 TARGET_COUNTS_FOR_OTHERS = [5, 17] 
 
@@ -21,29 +21,31 @@ def clean_json_text(text):
     return text.strip()
 
 # ---------------------------------------------------------
-# [DB 연동]
+# [DB Connection]
 # ---------------------------------------------------------
 supa_url = os.environ.get("SUPABASE_URL")
 supa_key = os.environ.get("SUPABASE_KEY")
 
+# Initialize Supabase client globally if credentials exist
+supabase = None
 if not supa_url or not supa_key:
     print("⚠️ Supabase credentials missing. Count logic disabled.")
-    supabase = None
 else:
     try:
         supabase = create_client(supa_url, supa_key)
     except Exception as e:
         print(f"⚠️ Failed to init Supabase client: {e}")
-        supabase = None
 
 def get_run_count():
     if not supabase: return 0
     try:
+        # [FIX] Use .table() instead of .from()
         res = supabase.table('system_status').select('run_count').eq('id', 1).single().execute()
         if res.data:
             return res.data['run_count']
         return 0
-    except:
+    except Exception as e:
+        print(f"⚠️ Error reading run count: {e}")
         return 0
 
 def update_run_count(current):
@@ -51,6 +53,7 @@ def update_run_count(current):
     next_count = current + 1
     if next_count >= 24: next_count = 0
     try:
+        # [FIX] Use .table() instead of .from()
         supabase.table('system_status').upsert({'id': 1, 'run_count': next_count}).execute()
         print(f"🔄 Cycle Count Updated: {current} -> {next_count}")
     except Exception as e:
@@ -63,7 +66,7 @@ def is_target_run(category, run_count):
     return False
 
 # ---------------------------------------------------------
-# [메인 로직]
+# [Main Logic]
 # ---------------------------------------------------------
 def run_automation():
     run_count = get_run_count()
@@ -73,7 +76,7 @@ def run_automation():
     engine = NewsEngine()
     naver = NaverManager()
     
-    # [확인] 현재 Key 1번(00:xx, 08:xx, 16:xx)을 사용 중인지?
+    # Check if we are using Key 1 (Time for Ranking Update)
     is_ranking_update_time = engine.is_using_primary_key()
     if is_ranking_update_time:
         print("💎 [GROQ_API_KEY1 Active] -> Rankings will be updated.")
@@ -99,7 +102,7 @@ def run_automation():
             parsed_data = json.loads(cleaned_str)
             
             # ----------------------------------------------------------------
-            # A. 랭킹 저장 (조건: GROQ_API_KEY1 사용 중일 때만)
+            # A. Save Rankings (Condition: Only when GROQ_API_KEY1 is active)
             # ----------------------------------------------------------------
             top10_list = parsed_data.get('top10', [])
             if top10_list:
@@ -117,7 +120,7 @@ def run_automation():
                     print(f"  > ⏩ Skipping Ranking Update (Not Key 1).")
 
             # ----------------------------------------------------------------
-            # B. 기사 작성 (항상 실행)
+            # B. Write Articles (Always execute)
             # ----------------------------------------------------------------
             people_list = parsed_data.get('people', [])
             if people_list:
