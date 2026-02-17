@@ -2,9 +2,9 @@ name: K-Enter 24 Auto Scraper
 
 on:
   schedule:
-    - cron: '11 * * * *' # 매시간 11분에 실행
+    - cron: '11 * * * *' # Executes at minute 11 of every hour
   
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch: # Manual run button
 
 jobs:
   build:
@@ -25,15 +25,14 @@ jobs:
 
       - name: Run Scraper
         env:
-          # DB 연결 (Secrets 이름 불일치 방지용 안전장치)
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || secrets.SUPABASE_KEY }}
+          # [CRITICAL FIX] Mapping real Secret names to what Python expects
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           
           # Perplexity API Key
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
           
-          # [핵심] Groq Multi-Key Rotation (1~8번 키 매핑)
-          # GitHub Secrets에 GROQ_API_KEY1 ~ GROQ_API_KEY8 이 등록되어 있어야 합니다.
+          # Groq Multi-Key Rotation
           GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
           GROQ_API_KEY2: ${{ secrets.GROQ_API_KEY2 }}
           GROQ_API_KEY3: ${{ secrets.GROQ_API_KEY3 }}
@@ -47,7 +46,7 @@ jobs:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
           
-          # 실행 카운트 (로그 확인용)
+          # Run count for logs
           RUN_COUNT: ${{ github.run_number }}
         
         run: |
