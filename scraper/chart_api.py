@@ -1,90 +1,56 @@
+import asyncio
 import os
-import json
-from datetime import datetime, timedelta, timezone
-from openai import OpenAI
+from playwright.async_api import async_playwright
 
 class ChartEngine:
     def __init__(self):
-        # Perplexity API Client
-        self.pplx = OpenAI(
-            api_key=os.environ.get("PERPLEXITY_API_KEY"), 
-            base_url="https://api.perplexity.ai"
-        )
+        # 이제 Perplexity를 사용하지 않으므로 API 설정은 생략하거나 유지해도 됩니다.
+        pass
 
     def get_top10_chart(self, category):
         """
-        Perplexity에게 '현재 시간'을 주고 검색하여 차트를 가져옵니다.
-        크롤링을 사용하지 않습니다.
+        Playwright 봇을 사용하여 멜론에서 직접 텍스트를 추출합니다.
+        (현재 K-POP 카테고리만 봇으로 동작하도록 설정)
         """
-        # 1. 한국 시간(KST) 구하기
-        kst = timezone(timedelta(hours=9))
-        now = datetime.now(kst)
-        # 예: "2024년 5월 21일 15시"
-        current_time_str = now.strftime("%Y년 %m월 %d일 %H시")
-        
-        # 2. 카테고리별 검색어 및 타겟 설정
-        search_keywords = ""
-        target_info = ""
-        
         if category == "k-pop":
-            # [핵심] 멜론 공홈 대신 실시간 정보가 올라오는 커뮤니티/뉴스 검색 유도
-            search_keywords = f"{current_time_str} 멜론 실시간 차트 1위 10위 인스티즈 더쿠 트위터"
-            target_info = "Target: Song Titles & Artists (Melon Real-time)."
-        elif category == "k-drama":
-            search_keywords = f"{current_time_str} 기준 한국 드라마 시청률 순위 닐슨코리아"
-            target_info = "Target: Drama Titles."
-        elif category == "k-movie":
-            search_keywords = f"{current_time_str} 기준 한국 박스오피스 영화 순위"
-            target_info = "Target: Movie Titles."
-        elif category == "k-entertain":
-            search_keywords = f"{current_time_str} 기준 한국 예능 프로그램 시청률 순위"
-            target_info = "Target: Variety Show Titles."
-        elif category == "k-culture":
-            search_keywords = f"{current_time_str} 한국 요즘 유행하는 핫플레이스 음식 트렌드"
-            target_info = "Target: Trending Keywords (Place, Food)."
+            print(f"🚀 [Bot] Scraping Melon Top 10 Chart directly...")
+            return asyncio.run(self._scrape_melon())
+        else:
+            # 다른 카테고리는 현재 빈 데이터 반환 (필요시 추가 확장 가능)
+            return '{"top10": []}'
 
-        # 3. 프롬프트 작성
-        system_prompt = "You are a specialized researcher. Search ONLY Korean domestic sources to find the latest real-time rankings."
-        
-        user_prompt = f"""
-        **Current Time (KST): {current_time_str}**
-        
-        Perform a search for: "**{search_keywords}**"
-        
-        **Task: Extract the Top 10 Ranking Chart**
-        Category: {category}
-        {target_info}
-        
-        **Strict Constraints:**
-        1. **DATA MUST BE FROM {current_time_str} (or within the last 1-2 hours).**
-        2. Do NOT use data from last year or last month. Check the upload time of the search results.
-        3. If specific ranking numbers aren't found, find the most mentioned/trending items right now.
-        4. **Translate all Titles/Names to English.**
+    async def _scrape_melon(self):
+        async with async_playwright() as p:
+            # GitHub Actions 환경에서는 headless=True 필수
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            
+            try:
+                # 멜론 차트 접속
+                await page.goto("https://www.melon.com/chart/index.htm", timeout=60000)
+                await page.wait_for_selector(".lst50", timeout=10000)
 
-        **Output JSON Format ONLY:**
-        {{
-            "top10": [
-                {{"rank": 1, "title": "...", "info": "..."}},
-                ...
-                {{"rank": 10, "title": "...", "info": "..."}}
-            ]
-        }}
-        """
-        
-        print(f"  🔍 [Perplexity] Searching Chart for '{category}' at {current_time_str}...")
-        
-        try:
-            # 타임아웃 180초 (검색 시간이 좀 걸릴 수 있음)
-            response = self.pplx.chat.completions.create(
-                model="sonar-pro",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.1,
-                timeout=180
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"❌ Chart API Error: {e}")
-            return "{}"
+                top10_data = []
+                # 상위 10개 행 추출
+                rows = await page.query_selector_all(".lst50")
+                for i, row in enumerate(rows[:10]):
+                    title_el = await row.query_selector(".rank01 a")
+                    artist_el = await row.query_selector(".rank02 a")
+                    
+                    title = (await title_el.inner_text()).strip()
+                    artist = (await artist_el.inner_text()).strip()
+                    
+                    top10_data.append({
+                        "rank": i + 1,
+                        "title": title,
+                        "info": artist  # 메타 정보에 가수명 저장
+                    })
+
+                await browser.close()
+                # 기존 main.py와 호환되도록 JSON 형식으로 반환
+                return json.dumps({"top10": top10_data}, ensure_ascii=False)
+            
+            except Exception as e:
+                print(f"❌ Bot Scraping Error: {e}")
+                await browser.close()
+                return '{"top10": []}'
