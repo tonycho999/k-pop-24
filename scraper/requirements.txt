@@ -1,5 +1,4 @@
 supabase
-openai
 groq
 requests
-playwright
+feedparser
