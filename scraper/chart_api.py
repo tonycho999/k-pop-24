@@ -1,135 +1,78 @@
 import os
 import json
-import requests
-import time
-import random
-import email.utils
-from datetime import datetime, timedelta
+from datetime import datetime
 from groq import Groq
+from supabase import create_client
 
-class ChartEngine:
-    def __init__(self):
-        self.groq_client = None
-        self.kobis_key = os.environ.get("KOBIS_API_KEY")
-        self.selected_model = None
+# 1. 초기 설정
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY1") # 로테이션 키 중 하나 사용
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-    def set_groq_client(self, api_key):
-        """API 키 설정 및 실시간 가용 모델 자동 선택"""
-        self.groq_client = Groq(api_key=api_key)
-        self._auto_select_model()
+client = Groq(api_key=GROQ_API_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    def _auto_select_model(self):
-        """Groq 가용 모델 중 최적의 모델 선택"""
-        try:
-            models = self.groq_client.models.list()
-            model_ids = [m.id for m in models.data]
-            preferences = [
-                "llama-3.3-70b-specdec",
-                "llama-3.1-70b-versatile",
-                "llama-3.1-8b-instant"
-            ]
-            for pref in preferences:
-                if pref in model_ids:
-                    self.selected_model = pref
-                    print(f"🤖 AI Model Selected: {self.selected_model}")
-                    return
-            self.selected_model = model_ids[0]
-        except Exception as e:
-            print(f"❌ Model selection error: {e}")
-            self.selected_model = "llama-3.1-8b-instant"
+def get_rankings_from_groq(category):
+    """Groq에게 실시간 데이터를 물어보고 영문 JSON으로 받음"""
+    
+    # K-Culture의 경우 연예인 제외 조건을 프롬프트에 강력하게 주입
+    category_constraints = ""
+    if category == "k-culture":
+        category_constraints = "STRICT RULE: Exclude ANY celebrities, idols, actors, or fan-related events. Focus only on locations, food, or traditional trends."
 
-    def get_top10_chart(self, category):
-        """24시간 이내의 최신 데이터만 수집하여 영문으로 번역 반환"""
-        max_retries = 1
-        for attempt in range(max_retries + 1):
-            try:
-                # API 호출 간격 유지 (랜덤 대기)
-                wait_time = random.uniform(3.0, 5.0)
-                time.sleep(wait_time)
+    prompt = f"""
+    Today's date is {datetime.now().strftime('%B %d, %2026')}.
+    Search and analyze the LATEST South Korean data (within the last 24 hours).
+    Provide the Top 10 rankings for '{category}' in South Korea.
+    
+    {category_constraints}
 
-                if category == "k-movie":
-                    # 영화는 공식 API에서 어제(24시간 내) 데이터를 직접 가져옴
-                    raw_data = self._get_kobis_movie()
-                else:
-                    # 카테고리별 검색어 (최신성 유도를 위해 '오늘', '실시간' 강조)
-                    queries = {
-                        "k-pop": "오늘 실시간 음원 차트 순위 멜론 써클차트",
-                        "k-drama": "오늘 드라마 시청률 순위 닐슨코리아",
-                        "k-entertain": "오늘 예능 시청률 순위 닐슨코리아",
-                        "k-culture": "오늘 성수동 한남동 팝업스토어 핫플레이스 추천"
-                    }
-                    raw_data = self._get_fresh_news_data(category, queries.get(category))
+    [OUTPUT RULES]
+    1. Language: English (Translate all titles and info).
+    2. Timeframe: Must be based on news/trends from the last 24 hours.
+    3. Format: Return ONLY a JSON object:
+       {{"top10": [{{"rank": 1, "title": "English Title", "info": "Brief English Info"}}, ...]}}
+    """
 
-                # 분석 및 영문 번역
-                return self._ai_extract_and_translate(category, raw_data)
-
-            except Exception as e:
-                if attempt < max_retries:
-                    print(f"⚠️ [{category}] Retry (Attempt {attempt+2}): {e}")
-                    time.sleep(5)
-                else:
-                    print(f"❌ [{category}] Skipped: {e}")
-                    return json.dumps({"top10": []})
-
-    def _get_fresh_news_data(self, category, query):
-        """네이버 뉴스에서 정확히 24시간 이내의 기사만 필터링하여 추출"""
-        client_id = os.environ.get("NAVER_CLIENT_ID")
-        client_secret = os.environ.get("NAVER_CLIENT_SECRET")
-        
-        url = f"https://openapi.naver.com/v1/search/news.json?query={query}&display=30&sort=date"
-        headers = {
-            "X-Naver-Client-Id": client_id,
-            "X-Naver-Client-Secret": client_secret
-        }
-        
-        res = requests.get(url, headers=headers, timeout=10)
-        items = res.json().get('items', [])
-        
-        now = datetime.now()
-        fresh_contents = []
-        
-        for item in items:
-            # 네이버 날짜 형식(RFC822) 파싱
-            pub_date = email.utils.parsedate_to_datetime(item['pubDate']).replace(tzinfo=None)
-            
-            # 정확히 현재 시간으로부터 24시간 이내 기사만 통과
-            if now - pub_date <= timedelta(hours=24):
-                fresh_contents.append(f"[{pub_date.strftime('%H:%M')}] {item['title']} {item['description']}")
-
-        if not fresh_contents:
-            raise ValueError(f"No fresh news found for {category} within the last 24 hours.")
-            
-        print(f"✅ Found {len(fresh_contents)} fresh news items for {category}.")
-        return "\n".join(fresh_contents)[:5000]
-
-    def _get_kobis_movie(self):
-        """영화진흥위원회 API (어제 날짜 고정)"""
-        target_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-        url = f"http://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={self.kobis_key}&targetDt={target_date}"
-        res = requests.get(url, timeout=10)
-        return res.text
-
-    def _ai_extract_and_translate(self, category, raw_data):
-        """AI를 통한 데이터 분석 및 영문 번역"""
-        prompt = f"""
-        Analyze the provided South Korean news snippets from the LAST 24 HOURS to extract the {category} Top 10.
-        
-        [STRICT GUIDELINES]
-        1. TIME SENSITIVITY: Use ONLY data from the provided text. Ensure it represents current trends.
-        2. TRANSLATION: Translate the 'title' and 'info' into English.
-        3. PROPER NOUNS: Use official English names for artists and shows (e.g., 'NewJeans' instead of 'Nyujinseu', 'IU' instead of 'Aiyu').
-        4. ACCURACY: If the text doesn't provide a clear ranking, list the most discussed topics/items in the text.
-        5. OUTPUT: Respond ONLY with a JSON object in this format:
-           {{"top10": [{{"rank": 1, "title": "English Title", "info": "Brief English Info"}}, ...]}}
-        
-        Data (Last 24h):
-        {raw_data}
-        """
-        
-        chat = self.groq_client.chat.completions.create(
+    try:
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-specdec", # 실시간 추론에 가장 강력한 모델
             messages=[{"role": "user", "content": prompt}],
-            model=self.selected_model,
             response_format={"type": "json_object"},
-            temperature=0.1
+            temperature=0.1 # 정확도를 위해 낮게 설정
         )
-        return chat.choices[0].message.content
+        return json.loads(completion.choices[0].message.content)
+    except Exception as e:
+        print(f"❌ Groq Error for {category}: {e}")
+        return {"top10": []}
+
+def run_update():
+    # 영화는 공식 API가 있으니 그대로 두고, 나머지만 Groq로 수집
+    categories = ["k-pop", "k-drama", "k-entertain", "k-culture"]
+    
+    for cat in categories:
+        print(f"🤖 Groq is searching for {cat}...")
+        result = get_rankings_from_groq(cat)
+        data = result.get("top10", [])
+        
+        if data:
+            db_data = []
+            for item in data:
+                db_data.append({
+                    "category": cat,
+                    "rank": item.get('rank'),
+                    "title": item.get('title'),
+                    "meta_info": str(item.get('info', '')),
+                    "score": 100,
+                    "updated_at": datetime.now().isoformat()
+                })
+            
+            # DB 갱신
+            supabase.table('live_rankings').delete().eq('category', cat).execute()
+            supabase.table('live_rankings').insert(db_data).execute()
+            print(f"✅ {cat} updated in English via Groq.")
+        else:
+            print(f"⚠️ No data for {cat}.")
+
+if __name__ == "__main__":
+    run_update()
