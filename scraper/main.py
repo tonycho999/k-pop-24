@@ -1,59 +1,60 @@
 import os
 import json
+import time
 from datetime import datetime
 from chart_api import ChartEngine
 from supabase import create_client
 
-# Supabase 클라이언트 설정
+# Supabase 연결
 supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
 
-def run_automation():
-    # 1. GitHub Secrets에서 API 키 가져오기
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    
-    if not gemini_key:
-        print("❌ CRITICAL: GEMINI_API_KEY is missing!")
+def run_test():
+    # Tavily 키 확인
+    if not os.environ.get("TAVILY_API_KEY"):
+        print("❌ Error: TAVILY_API_KEY is missing in GitHub Secrets.")
         return
 
-    # 2. 엔진 초기화 (Gemini + Kobis)
+    # 엔진 시작
     engine = ChartEngine()
-    engine.set_api_key(gemini_key) # Gemini 키 주입 및 모델 자동 선택
     
+    # 5개 카테고리 정의
     categories = ["k-pop", "k-drama", "k-movie", "k-entertain", "k-culture"]
     
+    print("🚀 Starting Test Run (Tavily Search + Groq Summary)...")
+
     for cat in categories:
         print(f"\n📊 Processing {cat}...")
         
-        # 3. 데이터 수집 및 번역 (API or Search)
-        translated_json = engine.get_top10_chart(cat)
-        
         try:
-            # JSON 파싱
-            data = json.loads(translated_json).get("top10", [])
+            # 1. 데이터 가져오기 (Tavily -> Groq)
+            json_str = engine.get_top10_chart(cat)
+            data = json.loads(json_str).get("top10", [])
             
             if data:
                 db_data = []
                 for item in data:
+                    # DB 형식에 맞게 데이터 가공
                     db_data.append({
                         "category": cat,
                         "rank": item.get('rank'),
                         "title": item.get('title'),
                         "meta_info": str(item.get('info', '')),
-                        "score": 100,
+                        "score": 100, # 테스트용 고정 점수
                         "updated_at": datetime.now().isoformat()
                     })
                 
-                # 4. Supabase DB 업데이트 (기존 데이터 삭제 후 삽입)
+                # 2. Supabase 저장 (기존 데이터 지우고 새로 쓰기)
                 supabase.table('live_rankings').delete().eq('category', cat).execute()
                 supabase.table('live_rankings').insert(db_data).execute()
-                print(f"✅ {cat} Updated Successfully.")
+                print(f"✅ {cat} Saved to DB (Total {len(db_data)} items).")
             else:
-                print(f"⚠️ {cat} No data found.")
+                print(f"⚠️ {cat} No data found from search.")
                 
-        except json.JSONDecodeError:
-            print(f"❌ {cat} JSON Parsing Error. Response was not valid JSON.")
         except Exception as e:
-            print(f"❌ {cat} Unexpected Error: {e}")
+            print(f"❌ Error processing {cat}: {e}")
+
+        # 3. 2초 휴식 (API 보호)
+        time.sleep(2)
 
 if __name__ == "__main__":
-    run_automation()
+    run_test()
