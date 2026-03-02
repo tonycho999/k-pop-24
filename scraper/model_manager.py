@@ -15,81 +15,88 @@ class ModelManager:
             return None
 
     def _get_best_groq_model(self):
-        """(기존 로직 유지) Groq 실시간 고성능 모델 선택"""
+        """Groq 실시간 리스트에서 가장 성능 좋은 모델 1개 선택"""
         try:
+            # 1. 모델 리스트 조회
             models = self.client.models.list()
             available_models = models.data
             
             if not available_models:
-                return "llama-3.1-8b-instant"
+                return "llama-3.3-70b-versatile" # 안전장치
 
-            # 1. 70b/90b 고성능 모델 우선
-            high_performance_models = [
-                m.id for m in available_models 
-                if ("70b" in m.id.lower() or "90b" in m.id.lower()) 
-                and "preview" not in m.id.lower()
+            # 2. 모델 ID 문자열만 추출
+            model_ids = [m.id for m in available_models]
+
+            # 3. 우선순위 1: Llama 3.3 또는 3.1의 70B급 (가장 똑똑함)
+            # 'preview'가 아닌 정식 버전을 선호
+            high_perf = [
+                m for m in model_ids 
+                if ("70b" in m.lower() or "90b" in m.lower()) 
+                and "preview" not in m.lower()
             ]
             
-            if high_performance_models:
-                selected = high_performance_models
-                print(f"🤖 [GroqManager] High-performance model auto-selected: {selected}")
+            # 리스트가 비어있지 않으면 가장 첫번째(보통 최신) 선택
+            if high_perf:
+                # Groq는 보통 llama-3.3-70b-versatile이 리스트 상단에 옴
+                selected = high_perf
+                print(f"🤖 [GroqManager] Selected High-Performance: {selected}")
                 return selected
 
-            # 2. Llama 계열 차선
-            llama_models = [m.id for m in available_models if "llama" in m.id.lower()]
+            # 4. 우선순위 2: 70B가 없으면 Llama 계열 아무거나 (8b 등)
+            llama_models = [m for m in model_ids if "llama" in m.lower()]
             if llama_models:
                 selected = llama_models
-                print(f"🤖 [GroqManager] Llama model auto-selected: {selected}")
+                print(f"🤖 [GroqManager] Selected Standard Llama: {selected}")
                 return selected
 
-            # 3. 최후의 수단
-            fallback = available_models.id
+            # 5. 최후의 수단: 리스트의 맨 첫 번째 모델
+            fallback = model_ids
             print(f"⚠️ [GroqManager] Fallback: {fallback}")
             return fallback
             
         except Exception as e:
             print(f"❌ [GroqManager] Error: {e}")
-            return "llama-3.1-8b-instant"
+            return "llama-3.3-70b-versatile"
 
     def _get_best_gemini_model(self):
         """
-        [신규 추가] Gemini 실시간 가용 모델 리스트 조회 및 자동 선택
-        - 'Pro', 'Ultra' 등 무거운 유료 모델 제외
-        - 'Flash' 등 빠르고 가벼운 모델 우선 선택
+        Gemini 실시간 리스트에서 무료/고속(Flash) 모델 1개 선택
         """
         try:
-            # self.client는 여기서 google.generativeai 모듈 자체입니다.
             import google.generativeai as genai
             
-            # 1. 'generateContent' 기능을 지원하는 모델만 리스트업
+            # 1. 'generateContent' 지원 모델 조회
             models = [m for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             
-            # 2. 제외 키워드 설정 (유료/고비용 모델 방지)
-            # 'pro', 'ultra', 'advanced' 등이 포함된 모델은 리스트에서 배제
+            # 2. 제외 키워드 (유료/무거운 모델)
             excluded_keywords = ["pro", "ultra", "advanced", "vision"] 
             
-            filtered_models = []
+            # 3. 1차 필터링: 제외 키워드 없는 것들
+            candidates = []
             for m in models:
-                name = m.name.lower() # 예: models/gemini-1.5-flash
-                # 제외 키워드가 없고, 'latest'나 'flash' 같은 최신/경량 키워드가 있는지 확인
+                name = m.name.lower()
                 if not any(ex in name for ex in excluded_keywords):
-                    filtered_models.append(m.name)
+                    candidates.append(m.name)
 
-            if not filtered_models:
-                # 필터링을 너무 빡빡하게 해서 남은게 없다면, 'flash'가 들어간 모델이라도 찾음
-                filtered_models = [m.name for m in models if "flash" in m.name.lower()]
+            # 4. 2차 필터링: 그 중에서 'flash'가 들어간 것 우선 (속도/최신성)
+            flash_models = [m for m in candidates if "flash" in m]
 
-            # 3. 우선순위 정렬 (최신 버전인 1.5가 1.0보다 먼저 오도록)
-            # 보통 리스트는 알파벳 순이므로 역순 정렬하면 1.5가 위로 뜰 확률 높음
-            filtered_models.sort(reverse=True)
-
-            if filtered_models:
-                selected = filtered_models
-                print(f"✨ [GeminiManager] Auto-selected model: {selected}")
+            # 5. 정렬 및 선택 (역순 정렬하면 최신 버전이 위로 옴: 1.5 > 1.0)
+            if flash_models:
+                flash_models.sort(reverse=True)
+                selected = flash_models # [중요] 리스트가 아니라 요소 1개 선택
+                print(f"✨ [GeminiManager] Auto-selected: {selected}")
                 return selected
             
-            # 4. 정말 아무것도 못 찾았을 때의 안전장치
-            print("⚠️ [GeminiManager] No optimal model found. Using hardcoded fallback.")
+            # Flash가 없으면 candidates 중 최신 선택
+            if candidates:
+                candidates.sort(reverse=True)
+                selected = candidates
+                print(f"⚠️ [GeminiManager] Fallback to candidate: {selected}")
+                return selected
+
+            # 정말 아무것도 없으면 하드코딩
+            print("⚠️ [GeminiManager] No optimal model found. Using default.")
             return "models/gemini-1.5-flash"
 
         except Exception as e:
