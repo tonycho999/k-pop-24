@@ -38,9 +38,11 @@ class ChartEngine:
         return self._process_with_groq(category, raw_context, source_type)
 
     def _get_kobis_data(self):
-        if not self.kobis_key: return None
+        if not self.kobis_key:
+            print("❌ KOBIS Key missing")
+            return None
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-        url = f"[http://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key=](http://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key=){self.kobis_key}&targetDt={yesterday}"
+        url = f"http://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={self.kobis_key}&targetDt={yesterday}"
         try:
             res = requests.get(url, timeout=5)
             data = res.json()
@@ -50,10 +52,14 @@ class ChartEngine:
             for movie in box_office_list:
                 context += f"- Rank {movie['rank']}: {movie['movieNm']} (Audiences: {movie['audiCnt']})\n"
             return context
-        except: return None
+        except Exception as e:
+            print(f"❌ KOBIS API Error: {e}")
+            return None
 
     def _search_tavily(self, category):
-        if not self.tavily: return None
+        if not self.tavily:
+            print("❌ Tavily Key missing")
+            return None
         queries = {
             "k-pop": "Melon Chart Top 10 ranking today 2026",
             "k-drama": "Nielsen Korea Drama ratings ranking yesterday 2026",
@@ -67,7 +73,9 @@ class ChartEngine:
             for result in response.get('results', []):
                 context += f"- Title: {result['title']}\n  Content: {result['content']}\n\n"
             return context if context else None
-        except: return None
+        except Exception as e:
+            print(f"❌ Tavily Search Error: {e}")
+            return None
 
     def _process_with_groq(self, category, context, source_type):
         today = datetime.now().strftime('%Y-%m-%d')
@@ -79,7 +87,7 @@ class ChartEngine:
         
         Rules:
         1. Extract Top 10.
-        2. Translate to English.
+        2. Translate titles to English.
         3. Output strictly JSON.
         
         Format: {{ "top10": [ {{ "rank": 1, "title": "...", "info": "..." }} ] }}
@@ -89,14 +97,15 @@ class ChartEngine:
             chat = self.groq.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model="llama-3.3-70b-versatile",
-                response_format={"type": "json_object"}, # JSON 모드 강제
+                response_format={"type": "json_object"}, 
                 temperature=0.1
             )
             
-            # 1. 안전하게 콘텐츠 추출
+            # [🔥 절대 수정 금지] 에러 해결된 구간
+            # 리스트() 접근 후 message.content 가져오기
             content = chat.choices.message.content
             
-            # 2. [핵심] 마크다운 코드 블록 제거 (JSON 에러 주범 해결)
+            # 마크다운 제거
             content = content.replace("```json", "").replace("```", "").strip()
             
             return content
