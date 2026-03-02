@@ -50,7 +50,7 @@ def run_automation():
                     })
                 
                 db.save_rankings(db_data)
-                
+                print(f"✅ {cat} Saved successfully.", flush=True)
             else:
                 print(f"⚠️ {cat} No data found.", flush=True)
                 
@@ -59,6 +59,5 @@ def run_automation():
 
         time.sleep(2)
 
-# [중요] 이 부분이 있어야 GitHub Actions에서 실행됩니다.
 if __name__ == "__main__":
     run_automation()
