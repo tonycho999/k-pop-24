@@ -1,4 +1,4 @@
-supabase
 groq
+tavily-python
+supabase
 requests
-feedparser
