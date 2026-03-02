@@ -5,35 +5,47 @@ from datetime import datetime
 from chart_api import ChartEngine
 from supabase import create_client
 
-# Supabase 연결
-supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
+# 환경변수 로드 확인
+url = os.environ.get("SUPABASE_URL")
+key = os.environ.get("SUPABASE_KEY")
+
+if not url or not key:
+    print("❌ Critical Error: Supabase credentials missing.")
+    exit(1)
+
+supabase = create_client(url, key)
 
 def run_test():
-    # Tavily 키 확인
-    if not os.environ.get("TAVILY_API_KEY"):
-        print("❌ Error: TAVILY_API_KEY is missing in GitHub Secrets.")
-        return
+    print("🚀 Starting Test Run (Tavily + KOBIS + Groq)...")
 
-    # 엔진 시작
-    engine = ChartEngine()
+    # 엔진 초기화
+    try:
+        engine = ChartEngine()
+    except Exception as e:
+        print(f"❌ Engine Initialization Failed: {e}")
+        return
     
-    # 5개 카테고리 정의
+    # 5개 카테고리
     categories = ["k-pop", "k-drama", "k-movie", "k-entertain", "k-culture"]
     
-    print("🚀 Starting Test Run (Tavily Search + Groq Summary)...")
-
     for cat in categories:
-        print(f"\n📊 Processing {cat}...")
+        print(f"\n⚡ Processing: {cat}")
         
         try:
-            # 1. 데이터 가져오기 (Tavily -> Groq)
+            # 1. 데이터 가져오기 (Tavily/KOBIS -> Groq)
             json_str = engine.get_top10_chart(cat)
-            data = json.loads(json_str).get("top10", [])
+            
+            # JSON 파싱 시도
+            try:
+                parsed_json = json.loads(json_str)
+                data = parsed_json.get("top10", [])
+            except json.JSONDecodeError:
+                print(f"⚠️ JSON Decode Error for {cat}. Raw output: {json_str[:50]}...")
+                data = []
             
             if data:
                 db_data = []
                 for item in data:
-                    # DB 형식에 맞게 데이터 가공
                     db_data.append({
                         "category": cat,
                         "rank": item.get('rank'),
@@ -43,18 +55,19 @@ def run_test():
                         "updated_at": datetime.now().isoformat()
                     })
                 
-                # 2. Supabase 저장 (기존 데이터 지우고 새로 쓰기)
+                # 2. Supabase 저장
+                # delete()로 기존 해당 카테고리 데이터 삭제 후 insert
                 supabase.table('live_rankings').delete().eq('category', cat).execute()
-                supabase.table('live_rankings').insert(db_data).execute()
-                print(f"✅ {cat} Saved to DB (Total {len(db_data)} items).")
+                result = supabase.table('live_rankings').insert(db_data).execute()
+                print(f"✅ {cat} Saved successfully ({len(db_data)} items).")
             else:
-                print(f"⚠️ {cat} No data found from search.")
+                print(f"⚠️ {cat} No valid data generated.")
                 
         except Exception as e:
             print(f"❌ Error processing {cat}: {e}")
 
-        # 3. 2초 휴식 (API 보호)
-        time.sleep(2)
+        # API 호출 간 2초 휴식
+        time.sleep(4)
 
 if __name__ == "__main__":
     run_test()
