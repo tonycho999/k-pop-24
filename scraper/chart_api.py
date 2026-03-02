@@ -11,7 +11,6 @@ class ChartEngine:
         self.tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
         
         # 2. Groq (요약 및 번역용)
-        # 키 로테이션 없이 1번 키 사용 (테스트용)
         self.groq = Groq(api_key=os.environ.get("GROQ_API_KEY1"))
         
         # 3. KOBIS (영화용)
@@ -111,14 +110,8 @@ class ChartEngine:
                 temperature=0.1
             )
             
-            # [에러 수정 포인트] 응답 객체 처리 방식 안전하게 변경
-            # 만약 chat.choices이 객체라면 .message로, 딕셔너리라면 ['message']로 접근
-            choice = chat.choices
-            if hasattr(choice, 'message'):
-                return choice.message.content
-            else:
-                # 혹시 dict 형태로 반환될 경우의 대비책
-                return choice['message']['content']
+            # [수정 완료] 객체 접근 방식으로 통일 (가장 안전함)
+            return chat.choices.message.content
                 
         except Exception as e:
             print(f"❌ Groq Generation Error: {e}")
