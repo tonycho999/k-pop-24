@@ -1,5 +1,6 @@
 import os
 import json
+import random
 import requests
 from datetime import datetime, timedelta
 from tavily import TavilyClient
@@ -11,17 +12,44 @@ class ChartEngine:
         tavily_key = os.environ.get("TAVILY_API_KEY")
         self.tavily = TavilyClient(api_key=tavily_key) if tavily_key else None
         
-        # 2. Groq
-        groq_key = os.environ.get("GROQ_API_KEY1")
-        self.groq = Groq(api_key=groq_key) if groq_key else None
+        # 2. Groq 키 8개 로드 (Rate Limit 방지용)
+        self.groq_keys = []
+        for i in range(1, 9):
+            key = os.environ.get(f"GROQ_API_KEY{i}")
+            if key:
+                self.groq_keys.append(key)
         
+        if not self.groq_keys:
+            print("⚠️ Warning: No GROQ_API_KEYS found.")
+
         # 3. KOBIS
         self.kobis_key = os.environ.get("KOBIS_API_KEY")
+
+    def _get_random_groq_client(self):
+        """키 8개 중 하나를 랜덤으로 뽑아 클라이언트를 생성"""
+        if not self.groq_keys:
+            return None
+        selected_key = random.choice(self.groq_keys)
+        return Groq(api_key=selected_key)
+
+    def _safe_get(self, obj, key):
+        """
+        [만능 추출기] 객체면 .attr로, 딕셔너리면 ['key']로 값을 꺼냄
+        """
+        try:
+            # 1. 딕셔너리인 경우
+            if isinstance(obj, dict):
+                return obj.get(key)
+            # 2. 객체인 경우
+            if hasattr(obj, key):
+                return getattr(obj, key)
+            return None
+        except:
+            return None
 
     def get_top10_chart(self, category):
         print(f"📊 Processing {category}...", flush=True)
 
-        # [분기 처리]
         if category == "k-movie":
             print(f"🎬 Fetching KOBIS Data...", flush=True)
             raw_context = self._get_kobis_data()
@@ -75,6 +103,10 @@ class ChartEngine:
             return None
 
     def _process_with_groq(self, category, context, source_type):
+        client = self._get_random_groq_client()
+        if not client:
+            return json.dumps({"top10": []})
+
         today = datetime.now().strftime('%Y-%m-%d')
         prompt = f"""
         Current Date: {today}
@@ -86,25 +118,43 @@ class ChartEngine:
         """
 
         try:
-            completion = self.groq.chat.completions.create(
+            completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model="llama-3.3-70b-versatile",
                 response_format={"type": "json_object"},
                 temperature=0.1
             )
 
-            # [핵심 수정] model_dump()를 사용하여 강제로 딕셔너리로 변환
-            # 로그에서 확인된 메서드이므로 무조건 동작합니다.
-            response_dict = completion.model_dump()
+            # ------------------------------------------------------------------
+            # [최종 수정] 만능 추출기 사용 (객체/딕셔너리 자동 감지)
+            # ------------------------------------------------------------------
             
-            # 이제 100% 딕셔너리이므로 키값으로 접근합니다.
-            content = response_dict['choices']['message']['content']
+            # 1. choices 가져오기
+            choices = self._safe_get(completion, 'choices')
             
+            # choices가 리스트인지 확인
+            if not choices or not isinstance(choices, list):
+                # 가끔 choices가 없는 경우 대비
+                print(f"⚠️ Invalid Groq response structure: {completion}")
+                return json.dumps({"top10": []})
+
+            # 2. 첫 번째 choice 가져오기
+            first_choice = choices
+
+            # 3. message 가져오기
+            message = self._safe_get(first_choice, 'message')
+            if not message:
+                return json.dumps({"top10": []})
+
+            # 4. content 가져오기
+            content = self._safe_get(message, 'content')
+            if not content:
+                return json.dumps({"top10": []})
+
             # 마크다운 제거
             content = content.replace("```json", "").replace("```", "").strip()
-            
             return content
-                
+
         except Exception as e:
-            print(f"❌ Groq Error: {e}", flush=True)
+            print(f"❌ Groq API Error: {e}", flush=True)
             return json.dumps({"top10": []})
