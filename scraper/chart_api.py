@@ -13,7 +13,7 @@ class ChartEngine:
             print("⚠️ Warning: TAVILY_API_KEY is missing.")
         self.tavily = TavilyClient(api_key=tavily_key)
         
-        # 2. Groq (요약 및 번역용) - 테스트용으로 1번 키 고정
+        # 2. Groq (요약 및 번역용)
         groq_key = os.environ.get("GROQ_API_KEY1")
         if not groq_key:
              print("⚠️ Warning: GROQ_API_KEY1 is missing.")
@@ -21,6 +21,41 @@ class ChartEngine:
         
         # 3. KOBIS (영화용)
         self.kobis_key = os.environ.get("KOBIS_API_KEY")
+
+    def _extract_content(self, completion):
+        """
+        [안전 파싱 함수] 제공해주신 참고 코드 기반 수정
+        Groq 응답이 객체든 딕셔너리든 안전하게 content만 추출
+        """
+        try:
+            # 1. response에서 choices 리스트 가져오기
+            if hasattr(completion, 'choices'):
+                choices = completion.choices
+            elif isinstance(completion, dict):
+                choices = completion.get('choices', [])
+            else:
+                return ""
+
+            # 2. 리스트가 비어있지 않은지 확인
+            if isinstance(choices, list) and len(choices) > 0:
+                first_choice = choices # [핵심] 리스트의 첫 번째 요소 선택
+                
+                # Case A: 객체 형태 (first_choice.message.content)
+                if hasattr(first_choice, 'message'):
+                    return str(first_choice.message.content)
+                
+                # Case B: 딕셔너리 형태 (first_choice['message']['content'])
+                if isinstance(first_choice, dict):
+                    message = first_choice.get('message', {})
+                    if isinstance(message, dict):
+                        return str(message.get('content', ''))
+                    return str(message)
+            
+            return ""
+
+        except Exception as e:
+            print(f"⚠️ Groq Parsing Error: {e}")
+            return ""
 
     def get_top10_chart(self, category):
         print(f"📊 Processing {category}...")
@@ -35,7 +70,6 @@ class ChartEngine:
             raw_context = self._search_tavily(category)
             source_type = "search"
 
-        # 데이터가 없으면 빈 리스트 반환
         if not raw_context:
             print(f"⚠️ No raw context found for {category}")
             return json.dumps({"top10": []})
@@ -46,7 +80,6 @@ class ChartEngine:
     def _get_kobis_data(self):
         """영진위 API에서 어제 날짜 박스오피스 가져오기"""
         if not self.kobis_key:
-            print("❌ KOBIS Key missing")
             return None
 
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
@@ -60,7 +93,6 @@ class ChartEngine:
             if not box_office_list:
                 return None
 
-            # AI가 읽기 편한 텍스트로 변환
             context = "OFFICIAL KOREAN BOX OFFICE DATA (YESTERDAY):\n"
             for movie in box_office_list:
                 context += f"- Rank {movie['rank']}: {movie['movieNm']} (Audiences: {movie['audiCnt']})\n"
@@ -71,7 +103,7 @@ class ChartEngine:
             return None
 
     def _search_tavily(self, category):
-        """Tavily로 최신 뉴스 검색 (2026년 데이터 강제)"""
+        """Tavily로 최신 뉴스 검색"""
         queries = {
             "k-pop": "Melon Chart Top 10 ranking today 2026",
             "k-drama": "Nielsen Korea Drama ratings ranking yesterday 2026",
@@ -84,7 +116,7 @@ class ChartEngine:
             response = self.tavily.search(
                 query=query,
                 topic="news",
-                days=2, # 최신 2일만 검색
+                days=2,
                 max_results=5
             )
             
@@ -92,10 +124,7 @@ class ChartEngine:
             for result in response.get('results', []):
                 context += f"- Title: {result['title']}\n  Content: {result['content']}\n\n"
             
-            if not context:
-                return None
-                
-            return context
+            return context if context else None
         except Exception as e:
             print(f"❌ Tavily Search Error: {e}")
             return None
@@ -129,8 +158,8 @@ class ChartEngine:
                 temperature=0.1
             )
             
-            # [🔥 중요 수정] 리스트 인덱스 명시
-            return chat.choices.message.content
+            # [수정됨] 안전 파싱 함수 사용
+            return self._extract_content(chat)
                 
         except Exception as e:
             print(f"❌ Groq Generation Error: {e}")
