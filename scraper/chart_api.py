@@ -7,62 +7,20 @@ from groq import Groq
 
 class ChartEngine:
     def __init__(self):
-        # 1. Tavily (검색 엔진)
+        # 1. Tavily
         tavily_key = os.environ.get("TAVILY_API_KEY")
         self.tavily = TavilyClient(api_key=tavily_key) if tavily_key else None
         
-        # 2. Groq (AI 엔진)
+        # 2. Groq
         groq_key = os.environ.get("GROQ_API_KEY1")
         self.groq = Groq(api_key=groq_key) if groq_key else None
         
-        # 3. KOBIS (영화 API)
+        # 3. KOBIS
         self.kobis_key = os.environ.get("KOBIS_API_KEY")
-
-    def _extract_safe_content(self, response):
-        """
-        [만능 파서] Groq 응답이 객체, 딕셔너리, 리스트 중 무엇으로 오든 content를 추출합니다.
-        """
-        try:
-            # Type 1: 표준 객체 (Object) 접근 방식
-            # response.choices.message.content
-            if hasattr(response, 'choices'):
-                choices = response.choices
-                if isinstance(choices, list) and len(choices) > 0:
-                    first = choices
-                    if hasattr(first, 'message'):
-                        return first.message.content
-            
-            # Type 2: 딕셔너리 (Dict) 접근 방식
-            # response['choices']['message']['content']
-            if isinstance(response, dict):
-                choices = response.get('choices', [])
-                if isinstance(choices, list) and len(choices) > 0:
-                    first = choices
-                    if isinstance(first, dict):
-                        message = first.get('message', {})
-                        return message.get('content', '')
-            
-            # Type 3: 리스트 (List) 직접 반환 케이스 (드물지만 대비)
-            if isinstance(response, list) and len(response) > 0:
-                # 리스트의 첫 번째가 객체인 경우
-                if hasattr(response, 'message'):
-                    return response.message.content
-                # 리스트의 첫 번째가 딕셔너리인 경우
-                if isinstance(response, dict):
-                    return response.get('message', {}).get('content', '')
-
-            # 여기까지 왔다면 알 수 없는 구조임 -> 디버깅용으로 원본 출력 시도
-            print(f"⚠️ Unknown response structure. Type: {type(response)}")
-            return str(response)
-
-        except Exception as e:
-            print(f"⚠️ Parsing Logic Error: {e}")
-            return ""
 
     def get_top10_chart(self, category):
         print(f"📊 Processing {category}...")
 
-        # [데이터 수집 분기]
         if category == "k-movie":
             print(f"🎬 Fetching KOBIS Data...")
             raw_context = self._get_kobis_data()
@@ -72,12 +30,10 @@ class ChartEngine:
             raw_context = self._search_tavily(category)
             source_type = "search"
 
-        # 데이터가 아예 없으면 조기 종료
         if not raw_context:
             print(f"⚠️ No raw data found for {category}")
             return json.dumps({"top10": []})
 
-        # Groq로 가공
         return self._process_with_groq(category, raw_context, source_type)
 
     def _get_kobis_data(self):
@@ -109,7 +65,6 @@ class ChartEngine:
         query = queries.get(category, f"South Korea {category} trends 2026")
         
         try:
-            # days=2로 설정하여 최신 뉴스만 확보
             response = self.tavily.search(query=query, topic="news", days=2, max_results=5)
             context = ""
             for result in response.get('results', []):
@@ -144,18 +99,20 @@ class ChartEngine:
                 temperature=0.1
             )
             
-            # [핵심] 만능 파서로 내용 추출 (여기서 에러가 나면 로그에 타입이 찍힘)
-            content = self._extract_safe_content(chat_completion)
+            # [최종 해결] 복잡한 검사 다 빼고, Groq 표준 문법으로 직통 접근
+            # 로그에 ChatCompletion 객체라고 떴으므로 아래 코드는 무조건 동작함
+            content = chat_completion.choices.message.content
             
-            if not content:
-                print(f"⚠️ Extracted content is empty for {category}")
-                return json.dumps({"top10": []})
-
-            # 마크다운 제거 (JSON 파싱 에러 방지)
+            # 마크다운 제거
             content = content.replace("```json", "").replace("```", "").strip()
+            
             return content
                 
         except Exception as e:
-            # 여기서도 에러가 나면 진짜 시스템 문제임
-            print(f"❌ Groq API Call Error: {e}")
-            return json.dumps({"top10": []})
+            # 만약 여기서도 에러가 나면 객체 구조 자체가 바뀐 것이므로 속성 전체 출력
+            print(f"❌ Groq Access Error: {e}")
+            try:
+                # 최후의 수단: 딕셔너리로 강제 변환해서 접근 시도
+                return chat_completion.model_dump()['choices']['message']['content']
+            except:
+                return json.dumps({"top10": []})
