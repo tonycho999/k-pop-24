@@ -1,62 +1,64 @@
-import os
-from groq import Groq
+import json
+import time
+from datetime import datetime
+from chart_api import ChartEngine
+from database import DatabaseManager 
 
-def inspect_structure():
-    print("🔍 Starting Groq Response Inspection...")
-    
-    api_key = os.environ.get("GROQ_API_KEY1")
-    if not api_key:
-        print("❌ GROQ_API_KEY1 is missing")
-        return
-
-    client = Groq(api_key=api_key)
+def run_automation():
+    print("🚀 Starting K-Trend Automation...", flush=True)
 
     try:
-        # 가장 단순한 요청
-        print("📡 Sending simple request to Groq...")
-        completion = client.chat.completions.create(
-            messages=[{"role": "user", "content": "hi"}],
-            model="llama-3.3-70b-versatile",
-        )
-
-        print("\n" + "="*50)
-        print("✅ [Inspection Result]")
-        print("="*50)
-
-        # 1. 최상위 객체 타입 확인
-        print(f"1. Type of 'completion': {type(completion)}")
-        
-        # 2. dir()로 사용 가능한 속성(Attribute) 확인
-        print(f"2. Attributes (dir): {dir(completion)}")
-
-        # 3. 'choices' 속성 확인
-        if hasattr(completion, 'choices'):
-            choices = completion.choices
-            print(f"3. Type of 'choices': {type(choices)}")
-            print(f"4. Content of 'choices': {choices}")
-            
-            if isinstance(choices, list) and len(choices) > 0:
-                first = choices
-                print(f"5. Type of 'choices': {type(first)}")
-                print(f"6. Attributes of 'choices': {dir(first)}")
-                
-                # message 속성 확인
-                if hasattr(first, 'message'):
-                    msg = first.message
-                    print(f"7. Type of 'choices.message': {type(msg)}")
-                    print(f"8. Content of 'choices.message': {msg}")
-                else:
-                    print("⚠️ 'choices' has no 'message' attribute!")
-        else:
-            print("⚠️ 'completion' has no 'choices' attribute!")
-            # 혹시 딕셔너리인지 확인
-            if isinstance(completion, dict):
-                print("💡 It is a Dictionary! Keys:", completion.keys())
-
-        print("="*50 + "\n")
-
+        engine = ChartEngine()
+        db = DatabaseManager()
     except Exception as e:
-        print(f"❌ Error during inspection: {e}")
+        print(f"❌ Initialization Failed: {e}", flush=True)
+        return
 
+    if not db.supabase:
+        print("❌ Supabase connection failed.", flush=True)
+        return
+
+    categories = ["k-pop", "k-drama", "k-movie", "k-entertain", "k-culture"]
+    
+    for cat in categories:
+        print(f"\n⚡ Processing: {cat}", flush=True)
+        
+        try:
+            json_str = engine.get_top10_chart(cat)
+            
+            if not json_str:
+                print(f"⚠️ Empty response for {cat}", flush=True)
+                continue
+
+            try:
+                parsed_json = json.loads(json_str)
+                data = parsed_json.get("top10", [])
+            except json.JSONDecodeError:
+                print(f"⚠️ JSON Decode Error. Raw: {json_str[:100]}...", flush=True)
+                continue
+            
+            if data:
+                db_data = []
+                for item in data:
+                    db_data.append({
+                        "category": cat,
+                        "rank": item.get('rank'),
+                        "title": item.get('title'),
+                        "meta_info": str(item.get('info', '')),
+                        "score": 100, 
+                        "updated_at": datetime.now().isoformat()
+                    })
+                
+                db.save_rankings(db_data)
+                
+            else:
+                print(f"⚠️ {cat} No data found.", flush=True)
+                
+        except Exception as e:
+            print(f"❌ Error processing {cat}: {e}", flush=True)
+
+        time.sleep(2)
+
+# [중요] 이 부분이 있어야 GitHub Actions에서 실행됩니다.
 if __name__ == "__main__":
-    inspect_structure()
+    run_automation()
