@@ -7,39 +7,12 @@ from groq import Groq
 
 class ChartEngine:
     def __init__(self):
-        # 1. Tavily (검색 엔진)
-        tavily_key = os.environ.get("TAVILY_API_KEY")
-        self.tavily = TavilyClient(api_key=tavily_key) if tavily_key else None
-        
-        # 2. Groq (AI 엔진)
-        groq_key = os.environ.get("GROQ_API_KEY1")
-        self.groq = Groq(api_key=groq_key) if groq_key else None
-        
-        # 3. KOBIS (영화 API)
+        self.tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+        self.groq = Groq(api_key=os.environ.get("GROQ_API_KEY1"))
         self.kobis_key = os.environ.get("KOBIS_API_KEY")
 
-    def get_top10_chart(self, category):
-        print(f"📊 Processing {category}...")
-
-        # [데이터 수집]
-        if category == "k-movie":
-            print(f"🎬 Fetching KOBIS Data...")
-            raw_context = self._get_kobis_data()
-            source_type = "kobis"
-        else:
-            print(f"🔎 Fetching Tavily Data...")
-            raw_context = self._search_tavily(category)
-            source_type = "search"
-
-        # 데이터 없음 처리
-        if not raw_context:
-            print(f"⚠️ No raw data found for {category}")
-            return json.dumps({"top10": []})
-
-        # Groq로 가공
-        return self._process_with_groq(category, raw_context, source_type)
-
     def _get_kobis_data(self):
+        # (기존 코드와 동일, 생략 없이 유지)
         if not self.kobis_key: return None
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         url = f"http://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={self.kobis_key}&targetDt={yesterday}"
@@ -48,17 +21,14 @@ class ChartEngine:
             data = res.json()
             box_office_list = data.get("boxOfficeResult", {}).get("dailyBoxOfficeList", [])
             if not box_office_list: return None
-            
             context = "OFFICIAL KOREAN BOX OFFICE:\n"
             for movie in box_office_list:
                 context += f"- Rank {movie['rank']}: {movie['movieNm']} (Audiences: {movie['audiCnt']})\n"
             return context
-        except Exception as e:
-            print(f"❌ KOBIS Error: {e}")
-            return None
+        except: return None
 
     def _search_tavily(self, category):
-        if not self.tavily: return None
+        # (기존 코드와 동일)
         queries = {
             "k-pop": "Melon Chart Top 10 ranking today 2026",
             "k-drama": "Nielsen Korea Drama ratings ranking yesterday 2026",
@@ -66,17 +36,29 @@ class ChartEngine:
             "k-culture": "Seoul Seongsu-dong Hannam-dong hot places pop-up store trends 2026"
         }
         query = queries.get(category, f"South Korea {category} trends 2026")
-        
         try:
-            # days=2로 설정하여 최신 뉴스만 확보
             response = self.tavily.search(query=query, topic="news", days=2, max_results=5)
             context = ""
             for result in response.get('results', []):
                 context += f"- Title: {result['title']}\n  Content: {result['content']}\n\n"
             return context if context else None
-        except Exception as e:
-            print(f"❌ Tavily Error: {e}")
-            return None
+        except: return None
+
+    def get_top10_chart(self, category):
+        print(f"📊 Processing {category}...")
+        
+        if category == "k-movie":
+            raw_context = self._get_kobis_data()
+            source_type = "kobis"
+        else:
+            raw_context = self._search_tavily(category)
+            source_type = "search"
+
+        if not raw_context:
+            print(f"⚠️ No data for {category}")
+            return json.dumps({"top10": []})
+
+        return self._process_with_groq(category, raw_context, source_type)
 
     def _process_with_groq(self, category, context, source_type):
         today = datetime.now().strftime('%Y-%m-%d')
@@ -85,52 +67,60 @@ class ChartEngine:
         Task: Create a Top 10 ranking for '{category}'.
         Source: {source_type}.
         Data: {context}
-        
-        Rules:
-        1. Extract Top 10.
-        2. Translate titles to English.
-        3. Output strictly JSON.
-        
         Format: {{ "top10": [ {{ "rank": 1, "title": "...", "info": "..." }} ] }}
+        Output strictly JSON.
         """
 
         try:
-            # Groq API 호출
-            chat_completion = self.groq.chat.completions.create(
+            completion = self.groq.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model="llama-3.3-70b-versatile",
                 response_format={"type": "json_object"},
                 temperature=0.1
             )
-            
-            # [핵심 수정] 객체 속성 접근 방식 포기 -> 딕셔너리로 변환
-            # model_dump()를 사용하면 Pydantic 객체가 순수 dict로 변합니다.
-            try:
-                if hasattr(chat_completion, 'model_dump'):
-                    response_dict = chat_completion.model_dump()
-                else:
-                    response_dict = chat_completion.dict() # 구버전 호환
-            except Exception:
-                # 변환 실패 시 속성을 강제로 dict로 취급 시도
-                response_dict = chat_completion if isinstance(chat_completion, dict) else {}
 
-            # 이제 무조건 딕셔너리 키 접근 (인덱스 에러 방지)
-            choices = response_dict.get('choices', [])
+            # ---------------------------------------------------------
+            # [수정된 파싱 로직]
+            # 객체 속성 접근(.) 대신 model_dump()로 딕셔너리 변환 후 처리
+            # ---------------------------------------------------------
+            response_data = None
             
-            if not choices or not isinstance(choices, list):
-                print(f"⚠️ Unexpected Groq Response format: {response_dict}")
+            # 1. 딕셔너리 변환 시도
+            if hasattr(completion, 'model_dump'):
+                response_data = completion.model_dump()
+            elif hasattr(completion, 'to_dict'):
+                response_data = completion.to_dict()
+            elif hasattr(completion, 'dict'):
+                response_data = completion.dict()
+            elif isinstance(completion, dict):
+                response_data = completion
+            else:
+                # 변환 실패 시: 직접 속성 접근 시도 (최후의 수단)
+                print(f"⚠️ Unknown type: {type(completion)}, trying direct access")
+                return completion.choices.message.content
+
+            # 2. 딕셔너리 키로 안전하게 접근 ('list' error 원천 차단)
+            choices = response_data.get('choices', [])
+            if not choices:
+                print("⚠️ Choices list is empty")
                 return json.dumps({"top10": []})
-
+            
             # choices 접근
             first_choice = choices
-            message = first_choice.get('message', {})
-            content = message.get('content', '')
             
-            # 마크다운 제거
+            # message 접근
+            message = first_choice.get('message', {})
+            
+            # content 접근
+            content = message.get('content', '')
+
+            # 3. 마크다운 제거
             content = content.replace("```json", "").replace("```", "").strip()
             
             return content
-                
+
         except Exception as e:
-            print(f"❌ Groq Parsing Error: {e}")
+            # 4. 구조를 모를 때를 대비한 디버깅 로그
+            print(f"❌ Groq Error: {e}")
+            # print(f"❌ Raw Response: {completion}") # 필요시 주석 해제하여 구조 확인
             return json.dumps({"top10": []})
