@@ -17,43 +17,49 @@ class ChartEngine:
 
     def _get_best_gemini_model(self):
         """
-        [스마트 모델 선택]
-        1. 사용 가능한 모델 리스트를 조회
-        2. 유료/무거운 모델(Pro, Ultra) 제외
-        3. 빠르고 최신 정보 반영이 좋은 'Flash' 계열 우선 선택
+        [스마트 모델 선택 수정판]
+        1. 2026년 현재 사용 가능한 모델 리스트 조회
+        2. 리스트에서 하나만 명확하게 선택 (String 변환)
+        3. 구형(1.5) 대신 신형(2.0/Flash)을 Fallback으로 설정
         """
         try:
             # generateContent 기능을 지원하는 모델 조회
             models = [m for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             
-            # 제외할 키워드 (유료/고비용)
-            excluded = ["pro", "ultra", "advanced", "vision"]
+            # 제외할 키워드 (유료/고비용/실험용)
+            excluded = ["pro", "ultra", "advanced", "vision", "exp"]
             
             # 1차 필터링: 제외 키워드가 없는 모델만 남김
             candidates = [m.name for m in models if not any(x in m.name.lower() for x in excluded)]
             
-            # 2차 필터링: 그 중에서 'flash'가 포함된 모델 우선 (속도/최신성)
+            # 2차 필터링: 그 중에서 'flash'가 포함된 모델 우선
             flash_models = [name for name in candidates if "flash" in name.lower()]
             
-            # 최신 버전이 위로 오도록 정렬 (알파벳 역순: 1.5 > 1.0)
+            # 정렬: 최신 버전이 위로 오도록 (3.0 > 2.0 > 1.5)
+            # 보통 문자열 역순 정렬하면 숫자가 높은게 위로 옴
             flash_models.sort(reverse=True)
             
-            if flash_models:
-                print(f"🤖 Auto-selected Gemini Model: {flash_models}")
-                return genai.GenerativeModel(flash_models)
+            selected_model = ""
             
-            # Flash가 없으면 필터링된 것 중 최신 선택
-            candidates.sort(reverse=True)
-            if candidates:
-                print(f"⚠️ Fallback Model: {candidates}")
-                return genai.GenerativeModel(candidates)
-                
-            # 정말 아무것도 없으면 하드코딩 (안전장치)
-            return genai.GenerativeModel('gemini-1.5-flash')
+            if flash_models:
+                # [중요] 리스트의 첫 번째 요소를 문자열로 선택
+                selected_model = flash_models
+                print(f"🤖 Auto-selected Gemini Model: {selected_model}")
+            elif candidates:
+                candidates.sort(reverse=True)
+                selected_model = candidates
+                print(f"⚠️ Fallback to candidate: {selected_model}")
+            else:
+                # 정말 아무것도 없으면 로그에 있는 확실한 모델 사용
+                selected_model = "models/gemini-2.0-flash"
+                print("⚠️ Fallback to hardcoded default")
+
+            return genai.GenerativeModel(selected_model)
             
         except Exception as e:
-            print(f"❌ Model Selection Error: {e}, using fallback.")
-            return genai.GenerativeModel('gemini-1.5-flash')
+            print(f"❌ Model Selection Logic Error: {e}")
+            # 로그에서 확인된 2026년 생존 모델로 안전장치 변경 (1.5 -> 2.0)
+            return genai.GenerativeModel('models/gemini-2.0-flash')
 
     def get_top10_chart(self, category):
         """카테고리에 따라 API(영화)와 Gemini검색(나머지)을 분기 처리"""
