@@ -7,20 +7,21 @@ from groq import Groq
 
 class ChartEngine:
     def __init__(self):
-        # 1. Tavily
+        # 1. Tavily (검색 엔진)
         tavily_key = os.environ.get("TAVILY_API_KEY")
         self.tavily = TavilyClient(api_key=tavily_key) if tavily_key else None
         
-        # 2. Groq
+        # 2. Groq (AI 엔진)
         groq_key = os.environ.get("GROQ_API_KEY1")
         self.groq = Groq(api_key=groq_key) if groq_key else None
         
-        # 3. KOBIS
+        # 3. KOBIS (영화 API)
         self.kobis_key = os.environ.get("KOBIS_API_KEY")
 
     def get_top10_chart(self, category):
         print(f"📊 Processing {category}...")
 
+        # [데이터 수집]
         if category == "k-movie":
             print(f"🎬 Fetching KOBIS Data...")
             raw_context = self._get_kobis_data()
@@ -30,10 +31,12 @@ class ChartEngine:
             raw_context = self._search_tavily(category)
             source_type = "search"
 
+        # 데이터 없음 처리
         if not raw_context:
             print(f"⚠️ No raw data found for {category}")
             return json.dumps({"top10": []})
 
+        # Groq로 가공
         return self._process_with_groq(category, raw_context, source_type)
 
     def _get_kobis_data(self):
@@ -65,6 +68,7 @@ class ChartEngine:
         query = queries.get(category, f"South Korea {category} trends 2026")
         
         try:
+            # days=2로 설정하여 최신 뉴스만 확보
             response = self.tavily.search(query=query, topic="news", days=2, max_results=5)
             context = ""
             for result in response.get('results', []):
@@ -99,9 +103,28 @@ class ChartEngine:
                 temperature=0.1
             )
             
-            # [최종 해결] 복잡한 검사 다 빼고, Groq 표준 문법으로 직통 접근
-            # 로그에 ChatCompletion 객체라고 떴으므로 아래 코드는 무조건 동작함
-            content = chat_completion.choices.message.content
+            # [핵심 수정] 객체 속성 접근 방식 포기 -> 딕셔너리로 변환
+            # model_dump()를 사용하면 Pydantic 객체가 순수 dict로 변합니다.
+            try:
+                if hasattr(chat_completion, 'model_dump'):
+                    response_dict = chat_completion.model_dump()
+                else:
+                    response_dict = chat_completion.dict() # 구버전 호환
+            except Exception:
+                # 변환 실패 시 속성을 강제로 dict로 취급 시도
+                response_dict = chat_completion if isinstance(chat_completion, dict) else {}
+
+            # 이제 무조건 딕셔너리 키 접근 (인덱스 에러 방지)
+            choices = response_dict.get('choices', [])
+            
+            if not choices or not isinstance(choices, list):
+                print(f"⚠️ Unexpected Groq Response format: {response_dict}")
+                return json.dumps({"top10": []})
+
+            # choices 접근
+            first_choice = choices
+            message = first_choice.get('message', {})
+            content = message.get('content', '')
             
             # 마크다운 제거
             content = content.replace("```json", "").replace("```", "").strip()
@@ -109,10 +132,5 @@ class ChartEngine:
             return content
                 
         except Exception as e:
-            # 만약 여기서도 에러가 나면 객체 구조 자체가 바뀐 것이므로 속성 전체 출력
-            print(f"❌ Groq Access Error: {e}")
-            try:
-                # 최후의 수단: 딕셔너리로 강제 변환해서 접근 시도
-                return chat_completion.model_dump()['choices']['message']['content']
-            except:
-                return json.dumps({"top10": []})
+            print(f"❌ Groq Parsing Error: {e}")
+            return json.dumps({"top10": []})
