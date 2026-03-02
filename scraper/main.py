@@ -1,36 +1,42 @@
-import os
 import json
 import time
 from datetime import datetime
 from chart_api import ChartEngine
-from supabase import create_client
+from database import DatabaseManager  # 사용자님이 만드신 파일 import
 
-url = os.environ.get("SUPABASE_URL")
-key = os.environ.get("SUPABASE_KEY")
-supabase = create_client(url, key)
+def run_automation():
+    print("🚀 Starting K-Trend Automation...")
 
-def run_test():
-    print("🚀 Starting Test Run...")
-    engine = ChartEngine()
+    # 1. 엔진 & DB 초기화
+    try:
+        engine = ChartEngine()
+        db = DatabaseManager()
+    except Exception as e:
+        print(f"❌ Initialization Failed: {e}")
+        return
+
+    # DB 연결 확인
+    if not db.supabase:
+        print("❌ Supabase connection failed. Check credentials.")
+        return
+
     categories = ["k-pop", "k-drama", "k-movie", "k-entertain", "k-culture"]
     
     for cat in categories:
         print(f"\n⚡ Processing: {cat}")
+        
         try:
+            # 1. 데이터 수집 및 번역 (ChartEngine)
             json_str = engine.get_top10_chart(cat)
             
-            # [디버깅] JSON이 비었거나 이상하면 로그 출력
-            if not json_str or json_str.strip() == "":
-                print(f"⚠️ Empty response from Groq for {cat}")
-                continue
-
+            # 2. JSON 파싱
             try:
                 data = json.loads(json_str).get("top10", [])
-            except json.JSONDecodeError as e:
-                # [핵심] 실패한 문자열을 보여줌
-                print(f"⚠️ JSON Decode Error! Raw string below:\n{json_str}")
+            except json.JSONDecodeError:
+                print(f"⚠️ JSON Decode Error for {cat}. Raw: {json_str[:50]}...")
                 continue
             
+            # 3. 데이터 가공 및 DB 저장 (DatabaseManager)
             if data:
                 db_data = []
                 for item in data:
@@ -39,20 +45,22 @@ def run_test():
                         "rank": item.get('rank'),
                         "title": item.get('title'),
                         "meta_info": str(item.get('info', '')),
-                        "score": 100,
+                        "score": 100, # 고정 점수
                         "updated_at": datetime.now().isoformat()
                     })
                 
-                supabase.table('live_rankings').delete().eq('category', cat).execute()
-                supabase.table('live_rankings').insert(db_data).execute()
-                print(f"✅ {cat} Saved ({len(db_data)} items).")
+                # DatabaseManager의 save_rankings 메서드 사용
+                # (내부에서 upsert 처리됨)
+                db.save_rankings(db_data)
+                
             else:
-                print(f"⚠️ {cat} No valid items parsed.")
+                print(f"⚠️ {cat} No valid data extracted.")
                 
         except Exception as e:
-            print(f"❌ System Error: {e}")
-        
+            print(f"❌ Error processing {cat}: {e}")
+
+        # Rate Limit 방지용 휴식
         time.sleep(2)
 
 if __name__ == "__main__":
-    run_test()
+    run_automation()
