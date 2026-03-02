@@ -1,7 +1,7 @@
-name: K-Trend Scraper (Tavily + Groq)
+name: K-Trend Scraper (Hybrid)
 
 on:
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch:
 
 jobs:
   run-scraper:
@@ -17,22 +17,20 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # tavily-python: 뉴스 검색용 (패키지명 주의!)
-          # groq: 데이터 요약 및 JSON 변환용
-          # supabase: DB 저장용
-          # requests: HTTP 요청용
           pip install supabase requests tavily-python groq
 
       - name: Run Scraper
         env:
-          # Supabase DB 설정
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           
-          # Tavily API (검색 엔진)
+          # Tavily (검색)
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           
-          # Groq API (AI 모델) - 키 8개 매핑 (로테이션 대응)
+          # Kobis (영화 API) - 이거 꼭 있어야 합니다!
+          KOBIS_API_KEY: ${{ secrets.KOBIS_API_KEY }}
+          
+          # Groq (AI)
           GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
           GROQ_API_KEY2: ${{ secrets.GROQ_API_KEY2 }}
           GROQ_API_KEY3: ${{ secrets.GROQ_API_KEY3 }}
