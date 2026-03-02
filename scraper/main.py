@@ -2,10 +2,10 @@ import json
 import time
 from datetime import datetime
 from chart_api import ChartEngine
-from database import DatabaseManager  # 사용자님이 만드신 파일 import
+from database import DatabaseManager 
 
 def run_automation():
-    print("🚀 Starting K-Trend Automation...")
+    print("🚀 Starting K-Trend Automation (Final Fix)...")
 
     # 1. 엔진 & DB 초기화
     try:
@@ -26,17 +26,22 @@ def run_automation():
         print(f"\n⚡ Processing: {cat}")
         
         try:
-            # 1. 데이터 수집 및 번역 (ChartEngine)
+            # 1. 데이터 수집 및 번역
             json_str = engine.get_top10_chart(cat)
             
             # 2. JSON 파싱
+            if not json_str or json_str.strip() == "":
+                print(f"⚠️ Empty response for {cat}")
+                continue
+
             try:
-                data = json.loads(json_str).get("top10", [])
+                parsed_json = json.loads(json_str)
+                data = parsed_json.get("top10", [])
             except json.JSONDecodeError:
-                print(f"⚠️ JSON Decode Error for {cat}. Raw: {json_str[:50]}...")
+                print(f"⚠️ JSON Decode Error. Raw: {json_str[:50]}...")
                 continue
             
-            # 3. 데이터 가공 및 DB 저장 (DatabaseManager)
+            # 3. DB 저장
             if data:
                 db_data = []
                 for item in data:
@@ -45,21 +50,19 @@ def run_automation():
                         "rank": item.get('rank'),
                         "title": item.get('title'),
                         "meta_info": str(item.get('info', '')),
-                        "score": 100, # 고정 점수
+                        "score": 100, 
                         "updated_at": datetime.now().isoformat()
                     })
                 
-                # DatabaseManager의 save_rankings 메서드 사용
-                # (내부에서 upsert 처리됨)
+                # DatabaseManager를 통해 저장 (upsert)
                 db.save_rankings(db_data)
                 
             else:
-                print(f"⚠️ {cat} No valid data extracted.")
+                print(f"⚠️ {cat} No data found.")
                 
         except Exception as e:
             print(f"❌ Error processing {cat}: {e}")
 
-        # Rate Limit 방지용 휴식
         time.sleep(2)
 
 if __name__ == "__main__":
