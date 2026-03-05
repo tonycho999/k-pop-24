@@ -18,7 +18,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install supabase requests beautifulsoup4 groq google-generativeai
+        run: pip install supabase requests beautifulsoup4 groq google-generativeai pytz
 
       - name: Run News Scraper
         env:
