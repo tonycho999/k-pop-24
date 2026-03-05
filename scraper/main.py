@@ -18,11 +18,12 @@ def main():
 
     # 타겟 카테고리 설정
     categories = {
+        "k-movie": "한국 영화 배우",
+        "k-pop": " K-POP 가수",
         "k-drama": "방영중 드라마 배우",
         "k-entertain": "예능 출연진",
-        "k-culture": "성수동 한남동 인플루언서 팝업"
-        # k-pop, k-movie 등 원하는 카테고리를 자유롭게 추가하세요.
-    }
+        "k-culture": "인플루언서 팝업"
+        }
 
     # 4. 카테고리별 순회하며 추출 -> 요약 -> DB 저장
     for category_key, search_keyword in categories.items():
