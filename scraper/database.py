@@ -25,7 +25,7 @@ class DatabaseManager:
 
         try:
             # Upsert: Primary Key(보통 category + rank 조합)가 같으면 업데이트, 없으면 생성
-            self.supabase.table('rankings').upsert(data).execute()
+            self.supabase.table('live_rankings').upsert(data).execute()
             print(f"   > [DB] Top 10 Rankings Saved/Updated ({len(data)} items).")
         except Exception as e:
             print(f"   > ⚠️ Ranking Save Error: {e}")
