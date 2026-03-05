@@ -2,8 +2,8 @@ name: Top10 Charts Update (6H)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '35 */6 * * *' # 6시간마다 실행 (0시, 6시, 12시, 18시)
+#  schedule:
+#    - cron: '35 */6 * * *' # 6시간마다 실행 (0시, 6시, 12시, 18시)
 
 jobs:
   run-chart-scraper:
