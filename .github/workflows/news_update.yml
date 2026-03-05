@@ -2,8 +2,8 @@ name: Hourly News Update (1H)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '11 * * * *' # 매시간 정각에 실행
+#  schedule:
+#    - cron: '11 * * * *' # 매시간 정각에 실행
 
 jobs:
   run-news-scraper:
