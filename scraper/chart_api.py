@@ -101,8 +101,8 @@ class ChartEngine:
             {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
             """
             
-            # [핵심] 최신 API 규격에 맞춘 올바른 검색 도구 이름 할당
-            tools = 'google_search' 
+            # [수정 포인트] 구글 라이브러리 규격에 맞게 리스트-딕셔너리 형태로 전달
+            tools = [{"google_search": {}}] 
         else:
             prompt = f"""
             Today is {today}.
