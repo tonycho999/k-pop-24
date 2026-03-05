@@ -3,3 +3,4 @@ tavily-python
 supabase
 requests
 google-generativeai
+beautifulsoup4
