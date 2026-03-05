@@ -1,56 +1,94 @@
 import os
 import json
 import requests
+from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+import urllib.parse
+from groq import Groq
 
-# 모델 매니저 호출 (AI 모델 동적 할당용)
 from model_manager import ModelManager 
 
 class ChartEngine:
     def __init__(self):
-        # 1. Groq 키 보존
+        # 1. KOBIS (영화 API)
+        self.kobis_key = os.environ.get("KOBIS_API_KEY")
+
+        # 2. IPRoyal 프록시 설정 (크롤링 방어막 우회용)
+        self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
+        self.proxy_port = os.environ.get("PROXY_PORT", "12323")
+        self.proxy_user = os.environ.get("PROXY_USER")
+        self.proxy_pass = os.environ.get("PROXY_PASS")
+        
+        if self.proxy_user and self.proxy_pass:
+            self.proxies = {
+                "http": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}",
+                "https": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}"
+            }
+            print("✅ IPRoyal Proxy credentials loaded securely.", flush=True)
+        else:
+            print("⚠️ IPRoyal Proxy credentials not found. Crawling might fail.", flush=True)
+            self.proxies = None
+
+        # 3. Groq 초기화
         self.groq_keys = []
         for i in range(1, 9):
             key = os.environ.get(f"GROQ_API_KEY{i}")
             if key:
                 self.groq_keys.append(key)
-        
+
         if self.groq_keys:
-            print(f"✅ Loaded {len(self.groq_keys)} Groq API Keys (Reserved).", flush=True)
-
-        # 2. KOBIS
-        self.kobis_key = os.environ.get("KOBIS_API_KEY")
-
-        # 3. Gemini 초기화 (REST API 방식으로 변경하여 라이브러리 버그 원천 차단)
-        gemini_key = os.environ.get("GEMINI_API_KEY")
-        if gemini_key:
-            self.gemini_key = gemini_key
+            print(f"✅ Loaded {len(self.groq_keys)} Groq API Keys.", flush=True)
+            self.groq_client = Groq(api_key=self.groq_keys[0])
             
-            manager = ModelManager(provider="gemini")
+            manager = ModelManager(client=self.groq_client, provider="groq")
             best_model_name = manager.get_best_model()
             
             if best_model_name:
-                print(f"✨ ChartEngine received model: {best_model_name}", flush=True)
                 self.model_name = best_model_name
+                print(f"✨ ChartEngine successfully received Groq model: {self.model_name}", flush=True)
             else:
-                self.model_name = "models/gemini-2.5-flash"
+                self.model_name = "llama-3.3-70b-versatile"
+                print(f"⚠️ Fallback Groq model applied: {self.model_name}", flush=True)
         else:
-            print("❌ CRITICAL: GEMINI_API_KEY is missing!", flush=True)
-            self.gemini_key = None
+            print("❌ CRITICAL: GROQ_API_KEY is missing!", flush=True)
+            self.groq_client = None
             self.model_name = None
 
     def get_top10_chart(self, category):
         print(f"\n📊 --- Processing {category} ---", flush=True)
 
+        # 각 카테고리별 전용 데이터 수집기로 데이터 추출 (AI 검색 완전 차단)
         if category == "k-movie":
             raw_context = self._get_kobis_data()
-            if not raw_context:
-                print(f"⚠️ [Skip] No KOBIS data found for k-movie.", flush=True)
-                return json.dumps({"top10": []})
-            return self._process_with_gemini(category, context=raw_context, source_type="kobis", use_search=False)
+            source_type = "Official KOBIS Data"
+            
+        elif category == "k-pop":
+            raw_context = self._scrape_kpop_data()
+            source_type = "Melon Chart Crawling"
+            
+        elif category == "k-drama":
+            raw_context = self._scrape_naver_search("방영중 드라마 시청률 순위")
+            source_type = "Naver Search: Drama Ratings"
+            
+        elif category == "k-entertain":
+            raw_context = self._scrape_naver_search("방영중 예능 시청률 순위")
+            source_type = "Naver Search: Entertain Ratings"
+            
+        elif category == "k-culture":
+            raw_context = self._scrape_naver_search("서울 핫플레이스 가볼만한곳 순위")
+            source_type = "Naver Search: Hot Places"
+            
         else:
-            # 영화 외 모든 카테고리는 제미나이가 자체 검색
-            return self._process_with_gemini(category, context=None, source_type="gemini_search", use_search=True)
+            raw_context = None
+            source_type = "Unknown"
+
+        # 데이터 수집 실패 시 빈 배열 반환
+        if not raw_context:
+            print(f"⚠️ [Skip] No data found for {category}.", flush=True)
+            return json.dumps({"top10": []})
+
+        # 수집된 원본 데이터를 Groq에게 넘겨 번역 및 JSON 포장
+        return self._process_with_groq(category, context=raw_context, source_type=source_type)
 
     def _get_kobis_data(self):
         if not self.kobis_key: return None
@@ -70,85 +108,132 @@ class ChartEngine:
             print(f"❌ KOBIS Error: {e}", flush=True)
             return None
 
-    def _process_with_gemini(self, category, context, source_type, use_search=False):
-        if not self.gemini_key or not self.model_name:
+    def _scrape_kpop_data(self):
+        """IPRoyal로 멜론 차트 크롤링"""
+        if not self.proxies: return None
+        url = "https://www.melon.com/chart/index.htm"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        
+        print("  > 🚀 Scraping Melon Chart using IPRoyal...", flush=True)
+        try:
+            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=30)
+            res.raise_for_status()
+            
+            soup = BeautifulSoup(res.text, 'html.parser')
+            songs = soup.select('div.wrap_song_info')
+            
+            if not songs:
+                return None
+                
+            context = "OFFICIAL MELON REAL-TIME TOP 10:\n"
+            count = 1
+            for song in songs:
+                title_elem = song.select_one('div.ellipsis.rank01 a')
+                artist_elem = song.select_one('div.ellipsis.rank02 > a')
+                if title_elem and artist_elem:
+                    context += f"- Rank {count}: {title_elem.text.strip()} by {artist_elem.text.strip()}\n"
+                    count += 1
+                if count > 10: break
+            return context
+        except Exception as e:
+            print(f"  > ❌ Melon Crawling Error: {e}", flush=True)
+            return None
+
+    def _scrape_naver_search(self, query):
+        """IPRoyal로 네이버 검색 결과를 긁어와서 텍스트만 추출"""
+        if not self.proxies: return None
+        
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://search.naver.com/search.naver?query={encoded_query}"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        
+        print(f"  > 🚀 Scraping Naver Search for '{query}' using IPRoyal...", flush=True)
+        try:
+            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=30)
+            res.raise_for_status()
+            
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            # 네이버 검색 결과의 메인 영역만 추출
+            main_pack = soup.select_one('#main_pack')
+            if not main_pack:
+                print("  > ⚠️ Failed to find #main_pack in Naver HTML.", flush=True)
+                return None
+            
+            # 쓸데없는 공백 제거하고 텍스트만 추출
+            raw_text = main_pack.get_text(separator=' ', strip=True)
+            
+            # 텍스트가 너무 길면 Groq 토큰 초과 방지를 위해 자르기 (앞부분에 핵심 순위가 몰려있음)
+            cleaned_text = ' '.join(raw_text.split())[:8000] 
+            
+            print(f"  > ✅ Scraped Naver text successfully ({len(cleaned_text)} chars).", flush=True)
+            return cleaned_text
+            
+        except Exception as e:
+            print(f"  > ❌ Naver Crawling Error: {e}", flush=True)
+            return None
+
+    def _process_with_groq(self, category, context, source_type):
+        """수집된 원본 텍스트를 Groq에게 넘겨 번역 및 JSON 파싱"""
+        if not self.groq_client or not self.model_name:
             return json.dumps({"top10": []})
 
         today = datetime.now().strftime('%Y-%m-%d')
         
-        if use_search:
-            search_query = {
-                "k-pop": "오늘 한국 멜론(Melon) 차트 실시간 TOP 10 순위",
-                "k-drama": "오늘 닐슨코리아 기준 한국 방영중 드라마 시청률 순위 TOP 10",
-                "k-entertain": "오늘 한국 화제성 1위~10위 예능 프로그램 순위",
-                "k-culture": "오늘 한국 서울 2030 성수동 한남동 핫플레이스 유행 트렌드 TOP 10"
-            }.get(category, f"오늘 한국 {category} 최신 인기 트렌드 TOP 10")
+        # 카테고리별 특수 규칙 부여 (가비지 데이터 필터링용)
+        special_rules = ""
+        if category == "k-drama":
+            special_rules = "- STRICTLY INCLUDE ONLY TV Dramas/Series. FILTER OUT News programs and Variety Shows."
+        elif category == "k-entertain":
+            special_rules = "- STRICTLY INCLUDE ONLY Variety Shows (예능). FILTER OUT News and Dramas."
+        elif category == "k-culture":
+            special_rules = "- Identify top 10 trending places, neighborhoods, or pop-ups from the text."
 
-            prompt = f"""
-            Today is {today}.
-            Task: Find the absolute latest Top 10 ranking for: "{search_query}".
-            
-            CRITICAL RULES:
-            1. You MUST use your Google Search capability to search the Korean web (e.g., Naver, Melon, Nielsen Korea). Do not return US/Global data (like Billboard, US Netflix, or US stocks).
-            2. Extract exactly 10 items based on CURRENT real-world data in South Korea.
-            3. Translate all Korean titles and descriptions naturally into English.
-            4. 'info' should be a concise 1-sentence English description (e.g., ratings, audience, or reason for trending).
-            5. Output STRICTLY as a valid JSON object without any markdown formatting.
-            
-            Required Format:
-            {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
-            """
-            # REST API 공식 규격에 맞춘 검색 도구 객체 전달
-            tools = [{"googleSearch": {}}] 
-        else:
-            prompt = f"""
-            Today is {today}.
-            Task: Create a Top 10 ranking chart for '{category}'.
-            
-            Source Data ({source_type}):
-            {context}
-            
-            Rules:
-            1. Extract exactly the Top 10 items from the source data.
-            2. Translate all Korean titles and descriptions naturally into English.
-            3. 'info' should be a concise 1-sentence English description (e.g., audience count).
-            4. Output STRICTLY as a valid JSON object without any markdown formatting.
-            
-            Required Format:
-            {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
-            """
-            tools = None
+        prompt = f"""
+        Today is {today}.
+        Task: Create a Top 10 ranking chart for '{category}' based ONLY on the provided source text.
+        
+        Source Data ({source_type}):
+        {context}
+        
+        Rules:
+        1. Extract exactly the Top 10 items from the source data provided above.
+        2. Do not invent or hallucinate data. If the text has less than 10, extract as many as you can find.
+        {special_rules}
+        3. Translate all Korean titles and names naturally into English.
+        4. 'info' should be a concise 1-sentence English description (e.g., ratings, artist, or reason for trending).
+        5. Output STRICTLY as a valid JSON object without any markdown code blocks (` ``` `).
+        
+        Required Format:
+        {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
+        """
 
         try:
-            print(f"  > Sending request to Gemini REST API (Search Mode: {use_search})...", flush=True)
+            print(f"  > Sending request to Groq API (Model: {self.model_name})...", flush=True)
             
-            # 구글 파이썬 라이브러리를 거치지 않고, 다이렉트로 구글 서버에 HTTP POST 요청
-            url = f"https://generativelanguage.googleapis.com/v1beta/{self.model_name}:generateContent?key={self.gemini_key}"
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}]
-            }
-            if tools:
-                payload["tools"] = tools
+            chat_completion = self.groq_client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a strict data formatting assistant. Output nothing but valid JSON."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                model=self.model_name,
+                temperature=0.1, 
+            )
 
-            headers = {"Content-Type": "application/json"}
-            res = requests.post(url, json=payload, headers=headers, timeout=30)
-            res_data = res.json()
-
-            # 응답 에러 체크
-            if "error" in res_data:
-                print(f"❌ Gemini REST API Error: {res_data['error']['message']}", flush=True)
-                return json.dumps({"top10": []})
-
-            # 정상 응답에서 텍스트 추출
-            content = res_data['candidates'][0]['content']['parts'][0]['text'].strip()
+            content = chat_completion.choices[0].message.content.strip()
             
-            # 마크다운 찌꺼기 방어
             if content.startswith("```"):
                 content = content.replace("```json", "").replace("```", "").strip()
             
-            print("  ✅ Gemini processing successful.", flush=True)
+            print("  ✅ Groq JSON processing successful.", flush=True)
             return content
 
         except Exception as e:
-            print(f"❌ Gemini HTTP Error: {e}", flush=True)
+            print(f"❌ Groq API Error: {e}", flush=True)
             return json.dumps({"top10": []})
