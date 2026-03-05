@@ -24,214 +24,184 @@ class ChartEngine:
                 "http": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}",
                 "https": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}"
             }
-            print("✅ IPRoyal Proxy credentials loaded securely.", flush=True)
         else:
-            print("⚠️ IPRoyal Proxy credentials not found. Crawling might fail.", flush=True)
             self.proxies = None
 
-        # 3. Groq 초기화
+        # 3. Groq AI 초기화
         self.groq_keys = []
         for i in range(1, 9):
             key = os.environ.get(f"GROQ_API_KEY{i}")
-            if key:
-                self.groq_keys.append(key)
+            if key: self.groq_keys.append(key)
 
         if self.groq_keys:
-            print(f"✅ Loaded {len(self.groq_keys)} Groq API Keys.", flush=True)
             self.groq_client = Groq(api_key=self.groq_keys[0])
-            
             manager = ModelManager(client=self.groq_client, provider="groq")
             best_model_name = manager.get_best_model()
-            
-            if best_model_name:
-                self.model_name = best_model_name
-                print(f"✨ ChartEngine successfully received Groq model: {self.model_name}", flush=True)
-            else:
-                self.model_name = "llama-3.3-70b-versatile"
-                print(f"⚠️ Fallback Groq model applied: {self.model_name}", flush=True)
+            self.model_name = best_model_name if best_model_name else "llama-3.3-70b-versatile"
         else:
-            print("❌ CRITICAL: GROQ_API_KEY is missing!", flush=True)
             self.groq_client = None
             self.model_name = None
 
     def get_top10_chart(self, category):
-        print(f"\n📊 --- Processing {category} ---", flush=True)
+        print(f"\n📊 --- Processing {category} (ABSOLUTE LATEST) ---", flush=True)
 
-        # 각 카테고리별 전용 데이터 수집기로 데이터 추출 (AI 검색 완전 차단)
         if category == "k-movie":
             raw_context = self._get_kobis_data()
-            source_type = "Official KOBIS Data"
+            source_type = "Official KOBIS Daily Box Office"
             
         elif category == "k-pop":
-            raw_context = self._scrape_kpop_data()
-            source_type = "Melon Chart Crawling"
+            # 무조건 '실시간(Real-time)' 차트를 긁어오기 위해 벅스 실시간 차트 사용
+            raw_context = self._scrape_bugs_realtime()
+            source_type = "Bugs Music REAL-TIME Chart"
             
         elif category == "k-drama":
-            raw_context = self._scrape_naver_search("방영중 드라마 시청률 순위")
-            source_type = "Naver Search: Drama Ratings"
+            raw_context = self._scrape_naver_ratings("현재 방영중 드라마 시청률 순위")
+            source_type = "Naver Latest Drama Ratings Table"
             
         elif category == "k-entertain":
-            raw_context = self._scrape_naver_search("방영중 예능 시청률 순위")
-            source_type = "Naver Search: Entertain Ratings"
+            raw_context = self._scrape_naver_ratings("현재 방영중 예능 시청률 순위")
+            source_type = "Naver Latest Entertain Ratings Table"
             
         elif category == "k-culture":
-            raw_context = self._scrape_naver_search("서울 핫플레이스 가볼만한곳 순위")
-            source_type = "Naver Search: Hot Places"
+            raw_context = self._scrape_naver_blogs("요즘 가장 뜨는 핫플레이스")
+            source_type = "Naver Latest Trending Places"
             
         else:
             raw_context = None
             source_type = "Unknown"
 
-        # 데이터 수집 실패 시 빈 배열 반환
         if not raw_context:
-            print(f"⚠️ [Skip] No data found for {category}.", flush=True)
+            print(f"⚠️ [Skip] Valid real-time data not found for {category}.", flush=True)
             return json.dumps({"top10": []})
 
-        # 수집된 원본 데이터를 Groq에게 넘겨 번역 및 JSON 포장
         return self._process_with_groq(category, context=raw_context, source_type=source_type)
 
     def _get_kobis_data(self):
+        """영화는 KOBIS 특성상 '어제' 정산 데이터가 가장 최신입니다."""
         if not self.kobis_key: return None
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         url = f"http://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={self.kobis_key}&targetDt={yesterday}"
         try:
             res = requests.get(url, timeout=15)
-            data = res.json()
-            box_office_list = data.get("boxOfficeResult", {}).get("dailyBoxOfficeList", [])
+            box_office_list = res.json().get("boxOfficeResult", {}).get("dailyBoxOfficeList", [])
             if not box_office_list: return None
-            
-            context = "OFFICIAL KOREAN BOX OFFICE:\n"
+            context = ""
             for movie in box_office_list:
                 context += f"- Rank {movie['rank']}: {movie['movieNm']} (Audiences: {movie['audiCnt']})\n"
             return context
-        except Exception as e:
-            print(f"❌ KOBIS Error: {e}", flush=True)
+        except Exception:
             return None
 
-    def _scrape_kpop_data(self):
-        """IPRoyal로 멜론 차트 크롤링"""
+    def _scrape_bugs_realtime(self):
+        """방어막 우회가 깔끔한 벅스(Bugs)의 '실시간' 차트 강제 추출"""
         if not self.proxies: return None
-        url = "https://www.melon.com/chart/index.htm"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        url = "https://music.bugs.co.kr/chart"
+        headers = {"User-Agent": "Mozilla/5.0"}
         
-        print("  > 🚀 Scraping Melon Chart using IPRoyal...", flush=True)
         try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=30)
-            res.raise_for_status()
-            
+            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
             soup = BeautifulSoup(res.text, 'html.parser')
-            songs = soup.select('div.wrap_song_info')
             
-            if not songs:
-                return None
-                
-            context = "OFFICIAL MELON REAL-TIME TOP 10:\n"
-            count = 1
-            for song in songs:
-                title_elem = song.select_one('div.ellipsis.rank01 a')
-                artist_elem = song.select_one('div.ellipsis.rank02 > a')
-                if title_elem and artist_elem:
-                    context += f"- Rank {count}: {title_elem.text.strip()} by {artist_elem.text.strip()}\n"
-                    count += 1
-                if count > 10: break
+            titles = soup.select('p.title a')
+            artists = soup.select('p.artist a:nth-of-type(1)')
+            
+            if not titles or not artists: return None
+            
+            context = ""
+            for i in range(min(10, len(titles))):
+                context += f"- Rank {i+1}: {titles[i].text.strip()} by {artists[i].text.strip()}\n"
             return context
-        except Exception as e:
-            print(f"  > ❌ Melon Crawling Error: {e}", flush=True)
+        except Exception:
             return None
 
-    def _scrape_naver_search(self, query):
-        """IPRoyal로 네이버 검색 결과를 긁어와서 텍스트만 추출"""
+    def _scrape_naver_ratings(self, query):
+        """네이버 검색 결과에서 '표(Table)' 안의 최신 시청률 데이터만 핀셋 추출"""
         if not self.proxies: return None
+        url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
+        headers = {"User-Agent": "Mozilla/5.0"}
         
-        encoded_query = urllib.parse.quote(query)
-        url = f"https://search.naver.com/search.naver?query={encoded_query}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        
-        print(f"  > 🚀 Scraping Naver Search for '{query}' using IPRoyal...", flush=True)
         try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=30)
-            res.raise_for_status()
-            
+            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 네이버 검색 결과의 메인 영역만 추출
-            main_pack = soup.select_one('#main_pack')
-            if not main_pack:
-                print("  > ⚠️ Failed to find #main_pack in Naver HTML.", flush=True)
-                return None
+            tables = soup.select('table')
+            rating_text = ""
             
-            # 쓸데없는 공백 제거하고 텍스트만 추출
-            raw_text = main_pack.get_text(separator=' ', strip=True)
+            for table in tables:
+                # 테이블 내용 중 시청률(%) 기호가 있으면 타겟으로 간주
+                if '%' in table.text or '시청률' in table.text:
+                    rows = table.select('tr')
+                    for i, row in enumerate(rows):
+                        if i == 0: continue # 헤더(제목) 행은 건너뜀
+                        cols = row.select('td')
+                        if len(cols) >= 2:
+                            title = cols[0].text.strip()
+                            rating = cols[1].text.strip()
+                            rating_text += f"- Title: {title}, Rating: {rating}\n"
+                    break # 가장 상단의 최신 표 1개만 가져오고 멈춤
+                    
+            return rating_text if rating_text else None
+        except Exception:
+            return None
+
+    def _scrape_naver_blogs(self, query):
+        if not self.proxies: return None
+        url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        try:
+            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
+            soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 텍스트가 너무 길면 Groq 토큰 초과 방지를 위해 자르기 (앞부분에 핵심 순위가 몰려있음)
-            cleaned_text = ' '.join(raw_text.split())[:8000] 
+            titles = soup.select('a.title_link')
+            if not titles: return None
             
-            print(f"  > ✅ Scraped Naver text successfully ({len(cleaned_text)} chars).", flush=True)
-            return cleaned_text
-            
-        except Exception as e:
-            print(f"  > ❌ Naver Crawling Error: {e}", flush=True)
+            context = ""
+            for i in range(min(20, len(titles))):
+                context += f"- Title: {titles[i].text.strip()}\n"
+            return context
+        except Exception:
             return None
 
     def _process_with_groq(self, category, context, source_type):
-        """수집된 원본 텍스트를 Groq에게 넘겨 번역 및 JSON 파싱"""
         if not self.groq_client or not self.model_name:
             return json.dumps({"top10": []})
 
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # 카테고리별 특수 규칙 부여 (가비지 데이터 필터링용)
-        special_rules = ""
-        if category == "k-drama":
-            special_rules = "- STRICTLY INCLUDE ONLY TV Dramas/Series. FILTER OUT News programs and Variety Shows."
-        elif category == "k-entertain":
-            special_rules = "- STRICTLY INCLUDE ONLY Variety Shows (예능). FILTER OUT News and Dramas."
-        elif category == "k-culture":
-            special_rules = "- Identify top 10 trending places, neighborhoods, or pop-ups from the text."
-
         prompt = f"""
-        Today is {today}.
-        Task: Create a Top 10 ranking chart for '{category}' based ONLY on the provided source text.
+        Current Time: {today}.
+        Task: Create a Top 10 ranking chart for '{category}' based ABSOLUTELY ONLY on the provided source text.
         
         Source Data ({source_type}):
         {context}
         
-        Rules:
-        1. Extract exactly the Top 10 items from the source data provided above.
-        2. Do not invent or hallucinate data. If the text has less than 10, extract as many as you can find.
-        {special_rules}
-        3. Translate all Korean titles and names naturally into English.
-        4. 'info' should be a concise 1-sentence English description (e.g., ratings, artist, or reason for trending).
-        5. Output STRICTLY as a valid JSON object without any markdown code blocks (` ``` `).
+        CRITICAL RULES:
+        1. DO NOT HALLUCINATE OR INVENT DATA. Use ONLY the data provided above.
+        2. If the Source Data does not contain valid names or ratings, return an empty array: {{ "top10": [] }}
+        3. Extract up to 10 items.
+        4. Translate all Korean titles naturally into English.
+        5. 'info' should be a concise 1-sentence description (e.g., exact ratings like '15.2%', or the artist name).
+        6. Output STRICTLY as a valid JSON object without markdown code blocks.
         
         Required Format:
         {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
         """
 
         try:
-            print(f"  > Sending request to Groq API (Model: {self.model_name})...", flush=True)
-            
+            print("  > Sending factual real-time data to Groq API...", flush=True)
             chat_completion = self.groq_client.chat.completions.create(
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a strict data formatting assistant. Output nothing but valid JSON."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
+                    {"role": "system", "content": "You are a strict data parser. You only parse data from the prompt. Output nothing but JSON."},
+                    {"role": "user", "content": prompt}
                 ],
                 model=self.model_name,
-                temperature=0.1, 
+                temperature=0.0, # 상상력 100% 차단. 무조건 텍스트에 있는 팩트만 출력
             )
 
             content = chat_completion.choices[0].message.content.strip()
-            
             if content.startswith("```"):
                 content = content.replace("```json", "").replace("```", "").strip()
-            
-            print("  ✅ Groq JSON processing successful.", flush=True)
             return content
 
         except Exception as e:
