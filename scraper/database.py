@@ -24,8 +24,11 @@ class DatabaseManager:
             return
 
         try:
-            # Upsert: Primary Key(보통 category + rank 조합)가 같으면 업데이트, 없으면 생성
-            self.supabase.table('live_rankings').upsert(data).execute()
+            # [핵심 수정] on_conflict를 명시하여 중복 시 에러 대신 덮어쓰기(업데이트) 유도
+            self.supabase.table('live_rankings').upsert(
+                data,
+                on_conflict='category,rank'
+            ).execute()
             print(f"   > [DB] Top 10 Rankings Saved/Updated ({len(data)} items).")
         except Exception as e:
             print(f"   > ⚠️ Ranking Save Error: {e}")
@@ -45,11 +48,9 @@ class DatabaseManager:
             print(f"   > [DB] Live News Saved: {len(news_list)} items.")
 
             # 2. 자동 청소 (Cleanup): 카테고리별 50개 제한
-            # 방금 업데이트된 카테고리 목록 추출 (중복 제거)
             categories = set([item['category'] for item in news_list])
 
             for cat in categories:
-                # 해당 카테고리의 모든 기사 ID를 최신순(내림차순)으로 가져옴
                 res = self.supabase.table('live_news') \
                     .select('id') \
                     .eq('category', cat) \
@@ -83,22 +84,18 @@ class DatabaseManager:
 
         try:
             # 1. 아카이브에 기록 저장
-            # (단일 딕셔너리가 들어오면 리스트로 감싸지 않아도 insert는 동작하지만, 안전하게 처리)
             self.supabase.table('search_archive').insert(article_data).execute()
             
             # 2. 데이터 수명 관리 (7일 지난 데이터 삭제)
-            # 현재 시간에서 7일을 뺀 시각 계산
             seven_days_ago = datetime.datetime.now() - datetime.timedelta(days=7)
             limit_date_str = seven_days_ago.strftime("%Y-%m-%d %H:%M:%S")
 
-            # created_at이 7일 전보다 오래된 데이터 삭제 요청
-            # lt = less than (보다 작음 -> 더 오래됨)
             self.supabase.table('search_archive') \
                 .delete() \
                 .lt('created_at', limit_date_str) \
                 .execute()
                 
-            # print("   > 🧹 [Archive] Auto-cleaned data older than 7 days.") # 로그가 너무 많으면 주석 처리
+            # print("   > 🧹 [Archive] Auto-cleaned data older than 7 days.")
 
         except Exception as e:
             print(f"   > ⚠️ Archive Save Error: {e}")
