@@ -1,101 +1,98 @@
 import os
-import datetime
-from supabase import create_client
+from datetime import datetime, timedelta
+from supabase import create_client, Client
 
-class DatabaseManager:
+class Database:
     def __init__(self):
-        # 환경 변수에서 Supabase 접속 정보 로드
-        self.supa_url = os.environ.get("SUPABASE_URL")
-        self.supa_key = os.environ.get("SUPABASE_KEY")
-        
-        # 클라이언트 연결
-        if self.supa_url and self.supa_key:
-            self.supabase = create_client(self.supa_url, self.supa_key)
+        url: str = os.environ.get("SUPABASE_URL")
+        key: str = os.environ.get("SUPABASE_KEY")
+        if not url or not key:
+            print("❌ Supabase URL or Key is missing!")
+            self.client = None
         else:
-            self.supabase = None
-            print("⚠️ Supabase credentials not found.")
+            self.client: Client = create_client(url, key)
+            print("✅ Supabase connection established.")
 
-    def save_rankings(self, data):
-        """
-        [Phase 1] Top 10 차트 저장
-        - Upsert 방식을 사용하여 기존의 (Category, Rank) 데이터를 최신 정보로 덮어씁니다.
-        """
-        if not self.supabase or not data:
-            return
-
+    # ==========================================
+    # 1. Groq API 순번 관리 (system_status 테이블)
+    # ==========================================
+    def get_groq_index(self) -> int:
+        """system_status 테이블에서 run_count 값을 가져와 몇 번째 API를 쓸지 결정"""
+        if not self.client: return 0
         try:
-            # [핵심 수정] on_conflict를 명시하여 중복 시 에러 대신 덮어쓰기(업데이트) 유도
-            self.supabase.table('live_rankings').upsert(
-                data,
-                on_conflict='category,rank'
-            ).execute()
-            print(f"   > [DB] Top 10 Rankings Saved/Updated ({len(data)} items).")
+            # id=1 인 row의 run_count 값을 가져옴
+            res = self.client.table("system_status").select("run_count").eq("id", 1).execute()
+            if res.data and len(res.data) > 0:
+                return res.data[0]["run_count"]
+            else:
+                # 데이터가 아예 없으면 기본값 0 세팅 후 생성
+                self.client.table("system_status").insert({"id": 1, "run_count": 0}).execute()
+                return 0
         except Exception as e:
-            print(f"   > ⚠️ Ranking Save Error: {e}")
+            print(f"⚠️ Error reading system_status: {e}")
+            return 0
 
-    def save_live_news(self, news_list):
-        """
-        [Phase 2] 라이브 뉴스 저장 및 자동 청소
-        - 새로운 뉴스를 저장합니다.
-        - 카테고리별로 최신 50개만 남기고, 나머지는 자동으로 삭제하여 용량을 관리합니다.
-        """
-        if not self.supabase or not news_list:
-            return
-
+    def update_groq_index(self, new_index: int):
+        """Groq API가 에러 났을 때 다음 번호로 업데이트"""
+        if not self.client: return
         try:
-            # 1. 새로운 뉴스 저장 (Upsert)
-            self.supabase.table('live_news').upsert(news_list).execute()
-            print(f"   > [DB] Live News Saved: {len(news_list)} items.")
-
-            # 2. 자동 청소 (Cleanup): 카테고리별 50개 제한
-            categories = set([item['category'] for item in news_list])
-
-            for cat in categories:
-                res = self.supabase.table('live_news') \
-                    .select('id') \
-                    .eq('category', cat) \
-                    .order('created_at', desc=True) \
-                    .execute()
-
-                all_articles = res.data if res.data else []
-
-                # 50개가 넘으면, 51번째부터 끝까지(오래된 것들) 삭제 대상
-                if len(all_articles) > 50:
-                    ids_to_remove = [item['id'] for item in all_articles[50:]]
-                    
-                    if ids_to_remove:
-                        self.supabase.table('live_news') \
-                            .delete() \
-                            .in_('id', ids_to_remove) \
-                            .execute()
-                        print(f"   > 🧹 [Cleanup] Removed {len(ids_to_remove)} old articles from '{cat}' (Max 50).")
-
+            self.client.table("system_status").update({"run_count": new_index}).eq("id", 1).execute()
+            print(f"🔄 Groq API index updated to {new_index} in DB.")
         except Exception as e:
-            print(f"   > ⚠️ Live News Save Error: {e}")
+            print(f"⚠️ Error updating system_status: {e}")
 
-    def save_to_archive(self, article_data):
-        """
-        [Phase 3] 아카이브 저장 및 데이터 수명 관리 (Retention Policy)
-        - 순위 변동 추적을 위해 모든 기사 내역을 저장합니다.
-        - 단, DB 용량 관리를 위해 7일이 지난 데이터는 자동으로 삭제합니다.
-        """
-        if not self.supabase or not article_data:
-            return
-
+    # ==========================================
+    # 2. 오래된 기사 삭제 (search_archive 테이블)
+    # ==========================================
+    def cleanup_old_archives(self):
+        """1주일(7일)이 지난 기사를 search_archive에서 삭제"""
+        if not self.client: return
         try:
-            # 1. 아카이브에 기록 저장
-            self.supabase.table('search_archive').insert(article_data).execute()
+            one_week_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
+            res = self.client.table("search_archive").delete().lt("created_at", one_week_ago).execute()
+            print(f"🧹 Cleaned up old articles from search_archive (Older than 7 days).")
+        except Exception as e:
+            print(f"⚠️ Error cleaning up search_archive: {e}")
+
+    # ==========================================
+    # 3. 새로운 기사 저장 (live_news & search_archive)
+    # ==========================================
+    def save_news_results(self, category: str, results: list):
+        if not self.client or not results: return
+        
+        live_news_data = []
+        archive_data = []
+        now = datetime.utcnow().isoformat()
+
+        for res in results:
+            # 공통 매핑 데이터 (스크린샷 컬럼명 기준)
+            base_row = {
+                "category": category,
+                "keyword": res.get("name", ""),
+                "title": res.get("title", ""),
+                "summary": res.get("summary", ""),
+                "link": res.get("link", ""),
+                "image_url": "", # 네이버 본문 긁기라 이미지는 공란 처리
+                "score": res.get("rank", 0),
+                "likes": 0,
+                "created_at": now
+            }
             
-            # 2. 데이터 수명 관리 (7일 지난 데이터 삭제)
-            seven_days_ago = datetime.datetime.now() - datetime.timedelta(days=7)
-            limit_date_str = seven_days_ago.strftime("%Y-%m-%d %H:%M:%S")
+            live_news_data.append(base_row)
+            
+            # search_archive 테이블 전용 추가 컬럼
+            archive_row = base_row.copy()
+            archive_row["query"] = res.get("name", "")
+            archive_row["raw_result"] = str(res)
+            archive_data.append(archive_row)
 
-            self.supabase.table('search_archive') \
-                .delete() \
-                .lt('created_at', limit_date_str) \
-                .execute()
-                
-            # print("   > 🧹 [Archive] Auto-cleaned data older than 7 days.")
-
+        try:
+            # 1. live_news는 최신성을 위해 해당 카테고리 기존 데이터 싹 지우고 새로 덮어쓰기
+            self.client.table("live_news").delete().eq("category", category).execute()
+            self.client.table("live_news").insert(live_news_data).execute()
+            
+            # 2. search_archive는 아카이브(누적)이므로 그냥 계속 Insert
+            self.client.table("search_archive").insert(archive_data).execute()
+            print(f"✅ Saved {len(results)} items to DB for '{category}'.")
         except Exception as e:
-            print(f"   > ⚠️ Archive Save Error: {e}")
+            print(f"❌ DB Save Error: {e}")
