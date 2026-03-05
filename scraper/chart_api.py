@@ -1,54 +1,50 @@
 import os
 import json
-import random
-import time
 import requests
 from datetime import datetime, timedelta
-from tavily import TavilyClient
-from groq import Groq
+import google.generativeai as genai
 
 class ChartEngine:
     def __init__(self):
-        # 1. Tavily
-        tavily_key = os.environ.get("TAVILY_API_KEY")
-        self.tavily = TavilyClient(api_key=tavily_key) if tavily_key else None
-        
-        # 2. Groq 키 로드 (8개)
+        # 1. Groq 키 로드 (향후 번역용으로 보존)
         self.groq_keys = []
         for i in range(1, 9):
             key = os.environ.get(f"GROQ_API_KEY{i}")
             if key:
                 self.groq_keys.append(key)
         
-        # 키를 무작위로 섞어서 사용 순서 결정 (매번 다른 순서로 시작)
         if self.groq_keys:
-            random.shuffle(self.groq_keys)
-            print(f"✅ Loaded {len(self.groq_keys)} Groq API Keys.", flush=True)
-        else:
-            print("❌ CRITICAL: No GROQ_API_KEYs found!", flush=True)
+            print(f"✅ Loaded {len(self.groq_keys)} Groq API Keys (Reserved for future use).", flush=True)
 
-        # 3. KOBIS
+        # 2. KOBIS (영화 전용 데이터)
         self.kobis_key = os.environ.get("KOBIS_API_KEY")
+
+        # 3. Gemini 초기화 (메인 검색/분석 AI)
+        gemini_key = os.environ.get("GEMINI_API_KEY")
+        if gemini_key:
+            genai.configure(api_key=gemini_key)
+            self.model = genai.GenerativeModel("gemini-1.5-flash")
+            print("✅ Gemini API Initialized.", flush=True)
+        else:
+            print("❌ CRITICAL: GEMINI_API_KEY is missing!", flush=True)
+            self.model = None
 
     def get_top10_chart(self, category):
         print(f"\n📊 --- Processing {category} ---", flush=True)
 
-        # 1. 데이터 수집
         if category == "k-movie":
+            # 영화는 KOBIS 공식 데이터 수집 후 제미나이로 번역/가공
             raw_context = self._get_kobis_data()
-            source_type = "kobis"
+            if not raw_context:
+                print(f"⚠️ [Skip] No KOBIS data found for k-movie.", flush=True)
+                return json.dumps({"top10": []})
+            return self._process_with_gemini(category, context=raw_context, source_type="kobis", use_search=False)
         else:
-            raw_context = self._search_tavily(category)
-            source_type = "search"
-
-        if not raw_context:
-            print(f"⚠️ [Skip] No data found for {category}.", flush=True)
-            return json.dumps({"top10": []})
-
-        # 2. Groq 처리 (재시도 로직 포함)
-        return self._process_with_retry(category, raw_context, source_type)
+            # 영화 외 나머지는 제미나이가 '직접' 구글 검색하도록 위임
+            return self._process_with_gemini(category, context=None, source_type="gemini_search", use_search=True)
 
     def _get_kobis_data(self):
+        """KOBIS 박스오피스 API (영화 데이터 전용)"""
         if not self.kobis_key: return None
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         url = f"http://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={self.kobis_key}&targetDt={yesterday}"
@@ -66,77 +62,76 @@ class ChartEngine:
             print(f"❌ KOBIS Error: {e}", flush=True)
             return None
 
-    def _search_tavily(self, category):
-        if not self.tavily: return None
-        queries = {
-            "k-pop": "Melon Chart Top 10 ranking today 2026",
-            "k-drama": "Nielsen Korea Drama ratings ranking yesterday 2026",
-            "k-entertain": "Nielsen Korea Variety Show ratings ranking yesterday 2026",
-            "k-culture": "Seoul Seongsu-dong Hannam-dong hot places pop-up store trends 2026"
-        }
-        query = queries.get(category, f"South Korea {category} trends 2026")
-        
-        try:
-            response = self.tavily.search(query=query, topic="news", days=2, max_results=5)
-            context = ""
-            for result in response.get('results', []):
-                context += f"- Title: {result['title']}\n  Content: {result['content']}\n\n"
-            return context if context else None
-        except Exception as e:
-            print(f"❌ Tavily Error: {e}", flush=True)
-            return None
+    def _process_with_gemini(self, category, context, source_type, use_search=False):
+        """제미나이를 이용한 데이터 수집 및 파싱"""
+        if not self.model:
+            return json.dumps({"top10": []})
 
-    def _process_with_retry(self, category, context, source_type):
-        """
-        키가 막히면(429) 다음 키로 넘어가며 시도합니다.
-        """
         today = datetime.now().strftime('%Y-%m-%d')
-        prompt = f"""
-        Current Date: {today}
-        Task: Create a Top 10 ranking for '{category}'.
-        Source: {source_type}.
-        Data: {context}
-        Format: {{ "top10": [ {{ "rank": 1, "title": "...", "info": "..." }} ] }}
-        Output strictly JSON.
-        """
+        
+        if use_search:
+            # 제미나이가 정확히 구글 검색을 하도록 명확한 키워드 제공
+            search_query = {
+                "k-pop": "최신 한국 멜론 차트 TOP 10 순위",
+                "k-drama": "최신 한국 인기 드라마 시청률 순위",
+                "k-entertain": "최신 한국 예능 프로그램 화제성 순위",
+                "k-culture": "최신 서울 성수동 한남동 핫플레이스 유행 트렌드"
+            }.get(category, f"한국 {category} 최신 인기 트렌드")
 
-        # 등록된 키 개수만큼 시도
-        for i, key in enumerate(self.groq_keys):
-            try:
-                # 클라이언트 생성 (현재 순번의 키 사용)
-                client = Groq(api_key=key)
-                
-                print(f"  > Attempt {i+1}/{len(self.groq_keys)} with Key ending in ...{key[-4:]}", flush=True)
-                
-                completion = client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
-                    model="llama-3.3-70b-versatile",
-                    response_format={"type": "json_object"},
-                    temperature=0.1
-                )
+            prompt = f"""
+            Today is {today}.
+            Task: Using Google Search, find the latest Top 10 ranking for: "{search_query}".
+            
+            Rules:
+            1. You MUST use Google Search to get the most up-to-date and accurate information.
+            2. Extract exactly the Top 10 items based on your search results.
+            3. Translate all Korean titles and descriptions naturally into English.
+            4. 'info' should be a concise 1-sentence English description.
+            5. Output STRICTLY as a JSON object without any markdown blocks (` ```json `).
+            
+            Required Format:
+            {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
+            """
+            # 제미나이의 자체 구글 검색 기능 활성화 플래그
+            tools = 'google_search_retrieval'
+        else:
+            prompt = f"""
+            Today is {today}.
+            Task: Create a Top 10 ranking chart for '{category}'.
+            
+            Source Data ({source_type}):
+            {context}
+            
+            Rules:
+            1. Extract exactly the Top 10 items from the source data.
+            2. Translate all Korean titles and descriptions naturally into English.
+            3. 'info' should be a concise 1-sentence English description (e.g., audience count).
+            4. Output STRICTLY as a JSON object without any markdown blocks (` ```json `).
+            
+            Required Format:
+            {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
+            """
+            tools = None
 
-                # [성공 시 파싱] 
-                # 로그 확인 결과: completion은 객체, choices는 리스트, choices는 객체입니다.
-                # 따라서 아래 코드가 정답입니다.
-                content = completion.choices.message.content
-                
-                # 마크다운 제거
+        try:
+            print(f"  > Sending request to Gemini (Google Search Mode: {use_search})...", flush=True)
+            
+            # 구글 검색(Grounding)과 JSON 모드를 동시에 쓸 때 발생하는 충돌 방지를 위해,
+            # 포맷팅은 프롬프트로 강제하고 Python에서 마크다운 찌꺼기를 지우는 방식을 사용합니다.
+            response = self.model.generate_content(
+                prompt,
+                tools=tools
+            )
+            
+            content = response.text.strip()
+            
+            # 마크다운 찌꺼기 완벽 제거
+            if content.startswith("```"):
                 content = content.replace("```json", "").replace("```", "").strip()
-                
-                print("  ✅ Groq Success!", flush=True)
-                return content
+            
+            print("  ✅ Gemini processing successful.", flush=True)
+            return content
 
-            except Exception as e:
-                # 429 에러(Rate Limit)인 경우만 다음 키 시도
-                error_msg = str(e)
-                if "429" in error_msg or "Rate limit" in error_msg:
-                    print(f"  ⚠️ Rate Limit reached for this key. Switching...", flush=True)
-                    continue # 다음 키로 loop
-                else:
-                    # 그 외 치명적 에러는 즉시 중단
-                    print(f"❌ Groq Fatal Error: {e}", flush=True)
-                    return json.dumps({"top10": []})
-
-        # 모든 키를 다 써도 안 되면
-        print("❌ All Groq keys exhausted.", flush=True)
-        return json.dumps({"top10": []})
+        except Exception as e:
+            print(f"❌ Gemini API Error: {e}", flush=True)
+            return json.dumps({"top10": []})
