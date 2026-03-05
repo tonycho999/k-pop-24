@@ -13,86 +13,73 @@ class Database:
             self.client: Client = create_client(url, key)
             print("✅ Supabase connection established.")
 
-    # ==========================================
-    # 1. Groq API 순번 관리 (system_status 테이블)
-    # ==========================================
     def get_groq_index(self) -> int:
-        """system_status 테이블에서 run_count 값을 가져와 몇 번째 API를 쓸지 결정"""
         if not self.client: return 0
         try:
-            # id=1 인 row의 run_count 값을 가져옴
             res = self.client.table("system_status").select("run_count").eq("id", 1).execute()
-            if res.data and len(res.data) > 0:
-                return res.data[0]["run_count"]
-            else:
-                # 데이터가 아예 없으면 기본값 0 세팅 후 생성
-                self.client.table("system_status").insert({"id": 1, "run_count": 0}).execute()
-                return 0
-        except Exception as e:
-            print(f"⚠️ Error reading system_status: {e}")
+            if res.data and len(res.data) > 0: return res.data[0]["run_count"]
+            self.client.table("system_status").insert({"id": 1, "run_count": 0}).execute()
             return 0
+        except: return 0
 
     def update_groq_index(self, new_index: int):
-        """Groq API가 에러 났을 때 다음 번호로 업데이트"""
         if not self.client: return
-        try:
-            self.client.table("system_status").update({"run_count": new_index}).eq("id", 1).execute()
-            print(f"🔄 Groq API index updated to {new_index} in DB.")
-        except Exception as e:
-            print(f"⚠️ Error updating system_status: {e}")
+        try: self.client.table("system_status").update({"run_count": new_index}).eq("id", 1).execute()
+        except: pass
 
     # ==========================================
-    # 2. 오래된 기사 삭제 (search_archive 테이블)
+    # [핵심] 현재 DB에 살아있는 인물 명단 (중복 방지)
     # ==========================================
-    def cleanup_old_archives(self):
-        """1주일(7일)이 지난 기사를 search_archive에서 삭제"""
-        if not self.client: return
+    def get_active_names(self, category: str) -> list:
+        if not self.client: return []
         try:
-            one_week_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
-            res = self.client.table("search_archive").delete().lt("created_at", one_week_ago).execute()
-            print(f"🧹 Cleaned up old articles from search_archive (Older than 7 days).")
+            res = self.client.table("live_news").select("keyword").eq("category", category).execute()
+            if res.data:
+                return [row["keyword"] for row in res.data]
+            return []
         except Exception as e:
-            print(f"⚠️ Error cleaning up search_archive: {e}")
+            print(f"⚠️ Error fetching active names: {e}")
+            return []
 
-    # ==========================================
-    # 3. 새로운 기사 저장 (live_news & search_archive)
-    # ==========================================
     def save_news_results(self, category: str, results: list):
         if not self.client or not results: return
         
         live_news_data = []
-        archive_data = []
         now = datetime.utcnow().isoformat()
 
         for res in results:
-            # 공통 매핑 데이터 (스크린샷 컬럼명 기준)
-            base_row = {
+            live_news_data.append({
                 "category": category,
                 "keyword": res.get("name", ""),
                 "title": res.get("title", ""),
                 "summary": res.get("summary", ""),
                 "link": res.get("link", ""),
-                "image_url": "", # 네이버 본문 긁기라 이미지는 공란 처리
-                "score": res.get("rank", 0),
+                "image_url": "", 
+                "score": res.get("score", 50), # AI가 부여한 화제성 평점 (기본값 50)
                 "likes": 0,
                 "created_at": now
-            }
-            
-            live_news_data.append(base_row)
-            
-            # search_archive 테이블 전용 추가 컬럼
-            archive_row = base_row.copy()
-            archive_row["query"] = res.get("name", "")
-            archive_row["raw_result"] = str(res)
-            archive_data.append(archive_row)
+            })
 
         try:
-            # 1. live_news는 최신성을 위해 해당 카테고리 기존 데이터 싹 지우고 새로 덮어쓰기
-            self.client.table("live_news").delete().eq("category", category).execute()
+            # 새로운 10개 기사 무조건 추가
             self.client.table("live_news").insert(live_news_data).execute()
+            print(f"✅ Saved {len(results)} new articles to '{category}'.")
             
-            # 2. search_archive는 아카이브(누적)이므로 그냥 계속 Insert
-            self.client.table("search_archive").insert(archive_data).execute()
-            print(f"✅ Saved {len(results)} items to DB for '{category}'.")
+            # [핵심] 50개 초과 시 '가장 오래된' 기사 삭제 (시간순 정리)
+            self._enforce_max_50_limit(category)
         except Exception as e:
             print(f"❌ DB Save Error: {e}")
+
+    def _enforce_max_50_limit(self, category: str):
+        """카테고리당 최신 기사 50개만 남기고, 오래된 것은 삭제"""
+        try:
+            # 시간 내림차순(최신순)으로 정렬하여 데이터 조회
+            res = self.client.table("live_news").select("id").eq("category", category).order("created_at", desc=True).execute()
+            if res.data and len(res.data) > 50:
+                # 50번째 이후의 오래된 기사들의 ID 추출
+                ids_to_delete = [item["id"] for item in res.data[50:]]
+                # 해당 ID들 일괄 삭제
+                self.client.table("live_news").delete().in_("id", ids_to_delete).execute()
+                print(f"🧹 Cleaned up {len(ids_to_delete)} old articles. Maintained exactly 50 for '{category}'.")
+        except Exception as e:
+            print(f"⚠️ Error enforcing max 50 limit: {e}")
