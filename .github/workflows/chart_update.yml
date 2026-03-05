@@ -1,0 +1,36 @@
+name: Top10 Charts Update (6H)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '35 */6 * * *' # 6시간마다 실행 (0시, 6시, 12시, 18시)
+
+jobs:
+  run-chart-scraper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install supabase requests beautifulsoup4 groq google-generativeai
+
+      - name: Run Chart Scraper
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          KOBIS_API_KEY: ${{ secrets.KOBIS_API_KEY }}
+          PROXY_HOST: ${{ secrets.PROXY_HOST }}
+          PROXY_PORT: ${{ secrets.PROXY_PORT }}
+          PROXY_USER: ${{ secrets.PROXY_USER }}
+          PROXY_PASS: ${{ secrets.PROXY_PASS }}
+          GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
+          # ... (나머지 Groq 키들 생략) ...
+        run: |
+          cd scraper
+          python -u main.py chart  # 👈 'chart' 모드로 실행
