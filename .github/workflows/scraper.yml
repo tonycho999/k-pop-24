@@ -2,6 +2,8 @@ name: K-Trend Scraper (Hybrid)
 
 on:
   workflow_dispatch:
+  # schedule:
+  #   - cron: '0 0 * * *' # 필요시 스케줄 활성화
 
 jobs:
   run-scraper:
@@ -17,22 +19,25 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # Tavily 부활!
-          pip install supabase requests tavily-python groq google-generativeai
+          # Tavily 폐기, BeautifulSoup4 추가 (IPRoyal 크롤링용)
+          pip install supabase requests beautifulsoup4 groq google-generativeai
 
       - name: Run Scraper
         env:
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           
-          # Tavily (검색) - 부활
-          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-          
           # Kobis (영화 API)
           KOBIS_API_KEY: ${{ secrets.KOBIS_API_KEY }}
           
           # Gemini (AI) - 핵심 처리
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          
+          # IPRoyal Web Unblocker (크롤링 방어막 우회)
+          PROXY_HOST: ${{ secrets.PROXY_HOST }}
+          PROXY_PORT: ${{ secrets.PROXY_PORT }}
+          PROXY_USER: ${{ secrets.PROXY_USER }}
+          PROXY_PASS: ${{ secrets.PROXY_PASS }}
           
           # Groq (AI) - 보존
           GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
