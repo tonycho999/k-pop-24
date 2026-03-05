@@ -1,0 +1,34 @@
+name: Hourly News Update (1H)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 * * * *' # 매시간 정각에 실행
+
+jobs:
+  run-news-scraper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install supabase requests beautifulsoup4 groq google-generativeai
+
+      - name: Run News Scraper
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # 🚨 주의: 네이버 API 키가 추가되어야 합니다!
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
+          # ... (나머지 Groq 키들 생략) ...
+        run: |
+          cd scraper
+          python -u main.py news  # 👈 'news' 모드로 실행
