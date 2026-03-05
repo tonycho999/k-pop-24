@@ -2,11 +2,11 @@ import os
 import time
 import json
 import requests
+import re
 from bs4 import BeautifulSoup
 from collections import Counter
 from groq import Groq
 from database import Database
-from datetime import datetime
 
 class NaverTrendEngine:
     def __init__(self, db: Database):
@@ -20,7 +20,10 @@ class NaverTrendEngine:
             if key: self.groq_keys.append(key)
 
     def _call_groq_with_fallback(self, prompt, temperature=0.2):
-        if not self.groq_keys: return None
+        if not self.groq_keys: 
+            print("❌ No Groq keys available!")
+            return None
+            
         total_keys = len(self.groq_keys)
         start_index = self.db.get_groq_index() % total_keys
         
@@ -36,19 +39,51 @@ class NaverTrendEngine:
                 )
                 if offset > 0: self.db.update_groq_index(current_index)
                 return chat_completion.choices[0].message.content.strip()
-            except Exception:
+            except Exception as e:
+                print(f"  ⚠️ Groq Error (Key #{current_index+1}): {e}")
                 time.sleep(1)
         return None
 
+    # ==========================================
+    # ★ 대표님 코드 이식: 강력한 네이버 본문 추출기
+    # ==========================================
+    def _scrape_article_full(self, url):
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            res = requests.get(url, headers=headers, timeout=10)
+            res.encoding = 'utf-8'
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            # 대표님의 완벽한 다중 셀렉터 적용 (연예, 스포츠, 일반 뉴스 모두 커버)
+            content_area = soup.select_one('#dic_area, #newsct_article, #artc_body, #newsEndContents, [itemprop="articleBody"]')
+            
+            if content_area:
+                raw_text = content_area.get_text(separator='\n', strip=True)
+                lines = raw_text.split('\n')
+                blacklist = ['구독되었습니다', 'Copyright', '무단 전재', '재배포 금지', '기자의 다른 기사', '섹션 정보']
+                clean_lines = []
+                
+                for line in lines:
+                    line = line.strip()
+                    if len(line) < 20: continue 
+                    if any(bad in line for bad in blacklist): continue 
+                    clean_lines.append(line)
+                    
+                return " ".join(clean_lines)
+            return "" # 못 찾으면 깔끔하게 포기
+        except:
+            return ""
+
     def get_target_10_people(self, category_keyword, exclude_names):
-        """중복(exclude_names) 제외하고 새로운 타겟 10명만 추출"""
         if not self.naver_client_id: return []
+            
         url = "https://openapi.naver.com/v1/search/news.json"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": category_keyword, "display": 100, "sort": "date"}
         
         try:
             res = requests.get(url, headers=headers, params=params, timeout=15)
+            res.raise_for_status()
             news_items = res.json().get("items", [])
             
             combined_text = ""
@@ -69,15 +104,14 @@ class NaverTrendEngine:
             name_counts = Counter(extracted_names)
             sorted_all_names = [name for name, count in name_counts.most_common()]
             
-            # DB에 이미 있는 50명 제외
             filtered_names = [name for name in sorted_all_names if name not in exclude_names]
             return filtered_names[:10]
 
         except Exception as e:
+            print(f"❌ Error extracting people: {e}")
             return []
 
     def process_person(self, person_name, time_context):
-        """기사 분석 및 평점(Score) 부여"""
         url = "[https://openapi.naver.com/v1/search/news.json](https://openapi.naver.com/v1/search/news.json)"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": person_name, "display": 10, "sort": "date"}
@@ -88,14 +122,23 @@ class NaverTrendEngine:
             
             article_texts = []
             first_link = ""
+            
             for item in items:
                 link = item['link']
-                if link.startswith("[https://n.news.naver.com](https://n.news.naver.com)"):
-                    if not first_link: first_link = link
-                    res_body = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-                    soup = BeautifulSoup(res_body.text, 'html.parser')
-                    dic_area = soup.select_one('#dic_area')
-                    if dic_area: article_texts.append(dic_area.text.strip())
+                if not first_link: first_link = link
+                
+                # 1. 일단 대표님 로직으로 본문 전체 크롤링 시도
+                full_text = self._scrape_article_full(link)
+                
+                if full_text and len(full_text) > 100:
+                    # 크롤링 성공 시 본문 텍스트 채택
+                    article_texts.append(f"[본문수집 성공] {full_text}")
+                else:
+                    # 2. 크롤링 실패 시, 버리지 않고 API 요약문(description)으로 안전하게 땜빵
+                    desc = BeautifulSoup(item['description'], 'html.parser').text
+                    article_texts.append(f"[API요약 땜빵] {desc}")
+                
+                # 기사 3개 분량 수집하면 스톱
                 if len(article_texts) >= 3: break
                 
             if not article_texts: return None
@@ -106,19 +149,19 @@ class NaverTrendEngine:
             Persona: You are a sharp Entertainment News Chief Editor.
             Time Context: {time_context} (Reflect this time of day in your tone naturally).
             
-            Articles about '{person_name}': {combined_articles[:10000]}
+            News about '{person_name}': {combined_articles[:10000]}
             
             Task:
             1. Create a catchy headline: "제목 [ {person_name} ] (Headline)"
-            2. Write a 3-sentence engaging summary.
-            3. Evaluate the 'Hotness Score' (평점) from 1 to 100 based on how impactful or scandalous this news is (100 = massive breaking news/scandal, 50 = normal update).
+            2. Write a 3-sentence engaging summary in Korean based on the news above.
+            3. Evaluate the 'Hotness Score' (평점) from 1 to 100 based on how impactful or scandalous this news is.
             4. Output STRICTLY as JSON.
             
             Format:
             {{ "title": "...", "summary": "...", "score": 85 }}
             """
             
-            print(f"  > Analyzing impact & generating article for: {person_name}")
+            print(f"  > Writing article for: {person_name}")
             result_text = self._call_groq_with_fallback(prompt, temperature=0.5)
             if not result_text: return None
             
@@ -128,12 +171,10 @@ class NaverTrendEngine:
             summary_data = json.loads(result_text)
             summary_data['name'] = person_name
             summary_data['link'] = first_link 
-            
-            # AI가 점수를 안 줬을 경우를 대비한 안전장치
-            if 'score' not in summary_data or not isinstance(summary_data['score'], int):
-                summary_data['score'] = 50 
+            if 'score' not in summary_data: summary_data['score'] = 50 
                 
             return summary_data
             
         except Exception as e:
+            print(f"❌ Error processing {person_name}: {e}")
             return None
