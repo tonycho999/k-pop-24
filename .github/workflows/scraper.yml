@@ -17,21 +17,24 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # Tavily 삭제, Groq 부활, Gemini 유지
-          pip install supabase requests groq google-generativeai
+          # Tavily 부활!
+          pip install supabase requests tavily-python groq google-generativeai
 
       - name: Run Scraper
         env:
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           
-          # Kobis (영화 API) - 필수 데이터
+          # Tavily (검색) - 부활
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          
+          # Kobis (영화 API)
           KOBIS_API_KEY: ${{ secrets.KOBIS_API_KEY }}
           
-          # Gemini (AI) - 현재 메인 파싱/요약 담당
+          # Gemini (AI) - 핵심 처리
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           
-          # Groq (AI) - 향후 번역 등 서브 작업용 부활
+          # Groq (AI) - 보존
           GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
           GROQ_API_KEY2: ${{ secrets.GROQ_API_KEY2 }}
           GROQ_API_KEY3: ${{ secrets.GROQ_API_KEY3 }}
@@ -43,5 +46,4 @@ jobs:
           
         run: |
           cd scraper
-          # 로그 버퍼링 방지를 위해 -u 옵션 추가
           python -u main.py
