@@ -1,63 +1,59 @@
-import json
 import time
-from datetime import datetime
-from chart_api import ChartEngine
-from database import DatabaseManager 
+from database import Database
+from naver_api import NaverTrendEngine
 
-def run_automation():
-    print("🚀 Starting K-Trend Automation...", flush=True)
+def main():
+    print("========================================")
+    print("🚀 Starting K-Trend 30-Person Deep Analysis System")
+    print("========================================")
 
-    try:
-        engine = ChartEngine()
-        db = DatabaseManager()
-    except Exception as e:
-        print(f"❌ Initialization Failed: {e}", flush=True)
-        return
-
-    if not db.supabase:
-        print("❌ Supabase connection failed.", flush=True)
-        return
-
-    categories = ["k-pop", "k-drama", "k-movie", "k-entertain", "k-culture"]
+    # 1. DB 초기화
+    db = Database()
     
-    for cat in categories:
-        print(f"\n⚡ Processing: {cat}", flush=True)
+    # 2. 1주일 지난 오래된 아카이브 삭제 실행
+    db.cleanup_old_archives()
+
+    # 3. 분석 엔진 초기화 (DB 객체 전달하여 Groq 순번 관리)
+    engine = NaverTrendEngine(db=db)
+
+    # 타겟 카테고리 설정
+    categories = {
+        "k-drama": "방영중 드라마 배우",
+        "k-entertain": "예능 출연진",
+        "k-culture": "성수동 한남동 인플루언서 팝업"
+        # k-pop, k-movie 등 원하는 카테고리를 자유롭게 추가하세요.
+    }
+
+    # 4. 카테고리별 순회하며 추출 -> 요약 -> DB 저장
+    for category_key, search_keyword in categories.items():
+        print(f"\n\n▶️ Starting Category: {category_key} (Keyword: {search_keyword})")
         
-        try:
-            json_str = engine.get_top10_chart(cat)
+        # 30명 명단 뽑기
+        top_30_names = engine.get_top_30_people(search_keyword)
+        
+        if not top_30_names:
+            print(f"⚠️ Skipped {category_key} due to extraction failure.")
+            continue
             
-            if not json_str:
-                print(f"⚠️ Empty response for {cat}", flush=True)
-                continue
-
-            try:
-                parsed_json = json.loads(json_str)
-                data = parsed_json.get("top10", [])
-            except json.JSONDecodeError:
-                print(f"⚠️ JSON Decode Error. Raw: {json_str[:100]}...", flush=True)
-                continue
+        category_results = []
+        
+        # 각 인물별 심층 기사 요약
+        for idx, person in enumerate(top_30_names):
+            rank = idx + 1
+            result_data = engine.process_person(person, rank)
             
-            if data:
-                db_data = []
-                for item in data:
-                    db_data.append({
-                        "category": cat,
-                        "rank": item.get('rank'),
-                        "title": item.get('title'),
-                        "meta_info": str(item.get('info', '')),
-                        "score": 100, 
-                        "updated_at": datetime.now().isoformat()
-                    })
-                
-                db.save_rankings(db_data)
-                print(f"✅ {cat} Saved successfully.", flush=True)
-            else:
-                print(f"⚠️ {cat} No data found.", flush=True)
-                
-        except Exception as e:
-            print(f"❌ Error processing {cat}: {e}", flush=True)
-
-        time.sleep(2)
+            if result_data:
+                category_results.append(result_data)
+                print(f"  ✅ [Rank {rank}] Completed: {result_data['title']}")
+            
+            # 네이버 API Rate Limit 방지를 위해 살짝 휴식
+            time.sleep(1)
+            
+        # 완성된 해당 카테고리 30인 리스트를 통째로 DB에 쏴줌
+        if category_results:
+            db.save_news_results(category=category_key, results=category_results)
+        
+    print("\n🎉 All Processing Completed Successfully!")
 
 if __name__ == "__main__":
-    run_automation()
+    main()
