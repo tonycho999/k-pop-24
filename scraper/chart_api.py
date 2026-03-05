@@ -2,14 +2,13 @@ import os
 import json
 import requests
 from datetime import datetime, timedelta
-import google.generativeai as genai
 
 # 모델 매니저 호출 (AI 모델 동적 할당용)
 from model_manager import ModelManager 
 
 class ChartEngine:
     def __init__(self):
-        # 1. Groq 키 보존 (향후 다른 용도로 사용)
+        # 1. Groq 키 보존
         self.groq_keys = []
         for i in range(1, 9):
             key = os.environ.get(f"GROQ_API_KEY{i}")
@@ -19,26 +18,26 @@ class ChartEngine:
         if self.groq_keys:
             print(f"✅ Loaded {len(self.groq_keys)} Groq API Keys (Reserved).", flush=True)
 
-        # 2. KOBIS (영화 박스오피스 전용)
+        # 2. KOBIS
         self.kobis_key = os.environ.get("KOBIS_API_KEY")
 
-        # 3. Gemini 초기화 (자체 검색 기능 사용)
+        # 3. Gemini 초기화 (REST API 방식으로 변경하여 라이브러리 버그 원천 차단)
         gemini_key = os.environ.get("GEMINI_API_KEY")
         if gemini_key:
-            genai.configure(api_key=gemini_key)
+            self.gemini_key = gemini_key
             
             manager = ModelManager(provider="gemini")
             best_model_name = manager.get_best_model()
             
             if best_model_name:
                 print(f"✨ ChartEngine received model: {best_model_name}", flush=True)
-                self.model = genai.GenerativeModel(best_model_name)
+                self.model_name = best_model_name
             else:
-                print("❌ CRITICAL: ModelManager failed to provide a model.", flush=True)
-                self.model = None
+                self.model_name = "models/gemini-2.5-flash"
         else:
             print("❌ CRITICAL: GEMINI_API_KEY is missing!", flush=True)
-            self.model = None
+            self.gemini_key = None
+            self.model_name = None
 
     def get_top10_chart(self, category):
         print(f"\n📊 --- Processing {category} ---", flush=True)
@@ -50,7 +49,7 @@ class ChartEngine:
                 return json.dumps({"top10": []})
             return self._process_with_gemini(category, context=raw_context, source_type="kobis", use_search=False)
         else:
-            # 영화 외 모든 카테고리는 제미나이가 자체적으로 검색 수행
+            # 영화 외 모든 카테고리는 제미나이가 자체 검색
             return self._process_with_gemini(category, context=None, source_type="gemini_search", use_search=True)
 
     def _get_kobis_data(self):
@@ -72,13 +71,12 @@ class ChartEngine:
             return None
 
     def _process_with_gemini(self, category, context, source_type, use_search=False):
-        if not self.model:
+        if not self.gemini_key or not self.model_name:
             return json.dumps({"top10": []})
 
         today = datetime.now().strftime('%Y-%m-%d')
         
         if use_search:
-            # 제미나이가 정확히 한국 데이터를 긁어오도록 한국어로 꽉 찬 검색어 지시
             search_query = {
                 "k-pop": "오늘 한국 멜론(Melon) 차트 실시간 TOP 10 순위",
                 "k-drama": "오늘 닐슨코리아 기준 한국 방영중 드라마 시청률 순위 TOP 10",
@@ -88,10 +86,10 @@ class ChartEngine:
 
             prompt = f"""
             Today is {today}.
-            Task: Use your Google Search tool to find the absolute latest Top 10 ranking for: "{search_query}".
+            Task: Find the absolute latest Top 10 ranking for: "{search_query}".
             
             CRITICAL RULES:
-            1. You MUST search the Korean web (e.g., Naver, Melon, Nielsen Korea). Do not return US/Global data (like Billboard, US Netflix, or US stocks).
+            1. You MUST use your Google Search capability to search the Korean web (e.g., Naver, Melon, Nielsen Korea). Do not return US/Global data (like Billboard, US Netflix, or US stocks).
             2. Extract exactly 10 items based on CURRENT real-world data in South Korea.
             3. Translate all Korean titles and descriptions naturally into English.
             4. 'info' should be a concise 1-sentence English description (e.g., ratings, audience, or reason for trending).
@@ -100,9 +98,8 @@ class ChartEngine:
             Required Format:
             {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
             """
-            
-            # [수정 포인트] 구글 라이브러리 규격에 맞게 리스트-딕셔너리 형태로 전달
-            tools = [{"google_search": {}}] 
+            # REST API 공식 규격에 맞춘 검색 도구 객체 전달
+            tools = [{"googleSearch": {}}] 
         else:
             prompt = f"""
             Today is {today}.
@@ -123,16 +120,29 @@ class ChartEngine:
             tools = None
 
         try:
-            print(f"  > Sending request to Gemini (Search Mode: {use_search})...", flush=True)
+            print(f"  > Sending request to Gemini REST API (Search Mode: {use_search})...", flush=True)
             
+            # 구글 파이썬 라이브러리를 거치지 않고, 다이렉트로 구글 서버에 HTTP POST 요청
+            url = f"https://generativelanguage.googleapis.com/v1beta/{self.model_name}:generateContent?key={self.gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
             if tools:
-                response = self.model.generate_content(prompt, tools=tools)
-            else:
-                response = self.model.generate_content(prompt)
+                payload["tools"] = tools
+
+            headers = {"Content-Type": "application/json"}
+            res = requests.post(url, json=payload, headers=headers, timeout=30)
+            res_data = res.json()
+
+            # 응답 에러 체크
+            if "error" in res_data:
+                print(f"❌ Gemini REST API Error: {res_data['error']['message']}", flush=True)
+                return json.dumps({"top10": []})
+
+            # 정상 응답에서 텍스트 추출
+            content = res_data['candidates'][0]['content']['parts'][0]['text'].strip()
             
-            content = response.text.strip()
-            
-            # JSON 외의 쓰레기 마크다운 찌꺼기 방어
+            # 마크다운 찌꺼기 방어
             if content.startswith("```"):
                 content = content.replace("```json", "").replace("```", "").strip()
             
@@ -140,5 +150,5 @@ class ChartEngine:
             return content
 
         except Exception as e:
-            print(f"❌ Gemini API Error: {e}", flush=True)
+            print(f"❌ Gemini HTTP Error: {e}", flush=True)
             return json.dumps({"top10": []})
