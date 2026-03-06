@@ -17,6 +17,24 @@ class NaverTrendEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
+        # 💡 구글 이미지 검색 API 키 셋업
+        self.google_api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
+        self.google_cx = os.environ.get("GOOGLE_SEARCH_CX")
+        
+        # 프록시 셋업
+        self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
+        self.proxy_port = os.environ.get("PROXY_PORT", "12323")
+        self.proxy_user = os.environ.get("PROXY_USER")
+        self.proxy_pass = os.environ.get("PROXY_PASS")
+        
+        if self.proxy_user and self.proxy_pass:
+            self.proxies = {
+                "http": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}",
+                "https": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}"
+            }
+        else:
+            self.proxies = None
+        
         self.groq_keys = []
         for i in range(1, 9):
             key = os.environ.get(f"GROQ_API_KEY{i}")
@@ -59,13 +77,47 @@ class NaverTrendEngine:
         print("❌ All Groq API Keys failed.")
         return None
 
+    # 💡 [핵심 추가] 구글에서 무조건 이미지를 강제로 퍼오는 함수
+    def _get_google_image(self, query):
+        if not self.google_api_key or not self.google_cx:
+            return ""
+            
+        url = "https://customsearch.googleapis.com/customsearch/v1"
+        params = {
+            "key": self.google_api_key,
+            "cx": self.google_cx,
+            "q": query,
+            "searchType": "image",
+            "num": 1 # 딱 1장만 가져옴
+        }
+        
+        try:
+            res = requests.get(url, params=params, timeout=10)
+            data = res.json()
+            if "items" in data and len(data["items"]) > 0:
+                print("  📸 [이미지 성공] 구글에서 이미지를 퍼왔습니다!")
+                return data["items"][0]["link"]
+        except Exception as e:
+            print(f"  ⚠️ Google Image Search Error: {e}")
+        return ""
+
     def _scrape_article_full(self, url):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
             }
-            res = requests.get(url, headers=headers, timeout=10)
+            
+            res = None
+            if self.proxies:
+                try:
+                    res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                except:
+                    pass
+            
+            if not res or res.status_code != 200:
+                res = requests.get(url, headers=headers, verify=False, timeout=10)
+                
             res.encoding = 'utf-8'
             soup = BeautifulSoup(res.text, 'html.parser')
             
@@ -158,7 +210,7 @@ class NaverTrendEngine:
             return []
 
     def process_person(self, person_name, time_context):
-        url = "https://openapi.naver.com/v1/search/news.json"
+        url = "[https://openapi.naver.com/v1/search/news.json](https://openapi.naver.com/v1/search/news.json)"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": person_name, "display": 15, "sort": "date"}
         
@@ -198,6 +250,11 @@ class NaverTrendEngine:
             if not article_texts:
                 print(f"  ⚠️ No recent articles (<24h) found for: {person_name}")
                 return None
+
+            # 💡 [핵심] 네이버에서 3개나 뒤졌는데 이미지가 없으면 구글에서 강제로 퍼옵니다!
+            if not first_image:
+                print(f"  ⚠️ 네이버 이미지 실패. 구글 이미지 검색으로 넘어갑니다: {person_name}")
+                first_image = self._get_google_image(f"{person_name} 연예인")
                 
             combined_articles = "\n\n".join(article_texts)
             
