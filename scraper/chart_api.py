@@ -6,8 +6,10 @@ import pytz
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import urllib.parse
-import google.generativeai as genai
 
+# 💡 구글 신형 SDK 규격 적용
+from google import genai
+from google.genai import types
 from model_manager import ModelManager 
 
 class ChartEngine:
@@ -28,15 +30,14 @@ class ChartEngine:
         else:
             self.proxies = None
 
-        # 💡 Gemini API 키 로드 및 ModelManager 연동
         self.gemini_keys = []
         for i in range(1, 9):
             key = os.environ.get(f"GEMINI_API_KEY{i}")
             if key: self.gemini_keys.append(key)
 
         if self.gemini_keys:
-            genai.configure(api_key=self.gemini_keys[0])
-            manager = ModelManager(provider="gemini")
+            temp_client = genai.Client(api_key=self.gemini_keys[0])
+            manager = ModelManager(client=temp_client, provider="gemini")
             self.model_name = manager.get_best_model()
             if not self.model_name:
                 self.model_name = "gemini-2.5-flash"
@@ -199,13 +200,12 @@ class ChartEngine:
             
             try:
                 print(f"  > Sending data to Gemini API (Key #{key_index + 1})...", flush=True)
-                genai.configure(api_key=current_key)
-                # 💡 ModelManager가 찾아준 최적의 모델 사용
-                model = genai.GenerativeModel(self.model_name)
-                
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
+                # 💡 구글 신형 SDK 규격 호출
+                client = genai.Client(api_key=current_key)
+                response = client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
                         temperature=0.0,
                         response_mime_type="application/json",
                     )
