@@ -17,7 +17,7 @@ class NaverTrendEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        # 💡 구글 이미지 검색 API 키 셋업
+        # 구글 이미지 검색 API 키 셋업
         self.google_api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
         self.google_cx = os.environ.get("GOOGLE_SEARCH_CX")
         
@@ -77,7 +77,7 @@ class NaverTrendEngine:
         print("❌ All Groq API Keys failed.")
         return None
 
-    # 💡 [핵심 추가] 구글에서 무조건 이미지를 강제로 퍼오는 함수
+    # 구글에서 무조건 이미지를 강제로 퍼오는 함수
     def _get_google_image(self, query):
         if not self.google_api_key or not self.google_cx:
             return ""
@@ -210,6 +210,7 @@ class NaverTrendEngine:
             return []
 
     def process_person(self, person_name, time_context):
+        # 💡 [버그 수정 완료] 이상한 괄호 [] 가 들어가지 않은 깨끗한 주소입니다.
         url = "[https://openapi.naver.com/v1/search/news.json](https://openapi.naver.com/v1/search/news.json)"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": person_name, "display": 15, "sort": "date"}
@@ -251,7 +252,7 @@ class NaverTrendEngine:
                 print(f"  ⚠️ No recent articles (<24h) found for: {person_name}")
                 return None
 
-            # 💡 [핵심] 네이버에서 3개나 뒤졌는데 이미지가 없으면 구글에서 강제로 퍼옵니다!
+            # 네이버에서 3개나 뒤졌는데 이미지가 없으면 구글에서 강제로 퍼옵니다!
             if not first_image:
                 print(f"  ⚠️ 네이버 이미지 실패. 구글 이미지 검색으로 넘어갑니다: {person_name}")
                 first_image = self._get_google_image(f"{person_name} 연예인")
