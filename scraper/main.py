@@ -52,7 +52,8 @@ def run_hourly_news(db):
         # 💡 [핵심 2] 예외 처리 (Breaking News)
         # 압도적 1위의 언급량이 폭발했다면, 5시간 중복 룰을 무시하고 예외적으로 작성 허용!
         breaking_targets = []
-        raw_top = engine.get_target_10_people(search_keyword, exclude_names=[])
+        # 💡 [수정] get_target_10_people -> get_target_people 로 이름 변경
+        raw_top = engine.get_target_people(search_keyword, exclude_names=[])
         if raw_top:
             top_1 = raw_top[0]
             if top_1 in active_names:
@@ -62,8 +63,9 @@ def run_hourly_news(db):
         # 속보 대상자는 중복 제외(exclude) 명단에서 특별히 풀어줌
         strict_exclude = [n for n in active_names if n not in breaking_targets]
         
-        # 엄격하게 필터링된 타겟 10명 뽑기
-        target_names = engine.get_target_10_people(search_keyword, exclude_names=strict_exclude)
+        # 엄격하게 필터링된 타겟 뽑기
+        # 💡 [수정] get_target_10_people -> get_target_people 로 이름 변경
+        target_names = engine.get_target_people(search_keyword, exclude_names=strict_exclude)
         
         if not target_names:
             print(f"⚠️ No new targets found for {category_key}. Skipping.")
@@ -84,7 +86,7 @@ def run_hourly_news(db):
                 
                 # 💡 [핵심 3] 하위권 인물 정보 부족 대비책 (AI 환각 방지)
                 # 뉴스 퀄리티(점수)가 65점 미만이면 DB를 망치지 않게 과감히 스킵!
-                if score < 40:
+                if score < 65:
                     print(f"  ⏭️ [Weak News Skip] '{person}' 님은 기사 내용이 부족하여 제외합니다. (Score: {score}점)")
                     continue
                 
