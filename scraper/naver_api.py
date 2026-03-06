@@ -22,29 +22,44 @@ class NaverTrendEngine:
             key = os.environ.get(f"GROQ_API_KEY{i}")
             if key: self.groq_keys.append(key)
 
+    # 💡 [핵심] 수정된 부분: 매번 호출 시 키 교체 및 실패 시 즉각 릴레이
     def _call_groq_with_fallback(self, prompt, temperature=0.2):
         if not self.groq_keys: 
             print("❌ No Groq keys available!")
             return None
             
         total_keys = len(self.groq_keys)
-        start_index = self.db.get_groq_index() % total_keys
+        current_run_count = self.db.get_groq_index()
         
         for offset in range(total_keys):
-            current_index = (start_index + offset) % total_keys
-            current_key = self.groq_keys[current_index]
+            key_index = current_run_count % total_keys
+            current_key = self.groq_keys[key_index]
+            
             try:
                 client = Groq(api_key=current_key)
                 chat_completion = client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[
+                        {"role": "system", "content": "You are a strict data parser. Output nothing but JSON."},
+                        {"role": "user", "content": prompt}
+                    ],
                     model="llama-3.3-70b-versatile", 
                     temperature=temperature
                 )
-                if offset > 0: self.db.update_groq_index(current_index)
+                
+                # 성공 시 무조건 DB 카운트를 1 올려서 다음번엔 다음 키를 쓰도록 로테이션
+                current_run_count += 1
+                self.db.update_groq_index(current_run_count)
+                
                 return chat_completion.choices[0].message.content.strip()
+                
             except Exception as e:
-                print(f"  ⚠️ Groq Error (Key #{current_index+1}): {e}")
+                # 에러 발생 시(한도 초과 등) 카운트를 올리고 1초 대기 후 다음 키로 재도전
+                print(f"  ⚠️ Groq Error (Key #{key_index+1}): {e}. Switching to next key...")
+                current_run_count += 1
+                self.db.update_groq_index(current_run_count)
                 time.sleep(1)
+                
+        print("❌ All Groq API Keys failed.")
         return None
 
     def _scrape_article_full(self, url):
@@ -122,7 +137,7 @@ class NaverTrendEngine:
             return []
 
     def process_person(self, person_name, time_context):
-        url = "https://openapi.naver.com/v1/search/news.json"
+        url = "[https://openapi.naver.com/v1/search/news.json](https://openapi.naver.com/v1/search/news.json)"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": person_name, "display": 15, "sort": "date"}
         
