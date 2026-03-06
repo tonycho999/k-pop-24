@@ -28,7 +28,13 @@ jobs:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
           GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
-          # ... (나머지 Groq 키들 생략) ...
+          GROQ_API_KEY2: ${{ secrets.GROQ_API_KEY2 }}
+          GROQ_API_KEY3: ${{ secrets.GROQ_API_KEY3 }}
+          GROQ_API_KEY4: ${{ secrets.GROQ_API_KEY4 }}
+          GROQ_API_KEY5: ${{ secrets.GROQ_API_KEY5 }}
+          GROQ_API_KEY6: ${{ secrets.GROQ_API_KEY6 }}
+          GROQ_API_KEY7: ${{ secrets.GROQ_API_KEY7 }}
+          GROQ_API_KEY8: ${{ secrets.GROQ_API_KEY8 }}
         run: |
           cd scraper
           python -u main.py news  # 👈 'news' 모드로 실행
