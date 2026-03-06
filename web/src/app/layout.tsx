@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
-import Footer from '@/components/Footer'; // 💡 [추가] Footer 컴포넌트 불러오기
+import Footer from '@/components/Footer';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
     siteName: 'K-ENTER 24',
     images: [
       {
-        url: '/og-image.png', // public 폴더에 대표 이미지 하나 넣어주시면 좋습니다.
+        url: '/og-image.png', // 💡 public 폴더의 og-image.png 적용 완료
         width: 1200,
         height: 630,
       },
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
     type: 'website',
   },
   icons: {
-    icon: '/favicon.ico',
+    icon: '/favicon.png', // 💡 기존 .ico 파일명에서 .png로 수정 완료
   },
 };
 
@@ -46,11 +46,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        {/* 💡 [추가] 콘텐츠 영역이 화면 전체 높이를 차지하도록 하여 Footer를 맨 아래로 밀어냅니다 */}
         <main className="min-h-screen">
           {children}
         </main>
-        {/* 💡 [추가] 모든 페이지 하단에 Footer 고정 */}
         <Footer />
       </body>
     </html >
