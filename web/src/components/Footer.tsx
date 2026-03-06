@@ -8,7 +8,7 @@ export default function Footer() {
       <div className="container mx-auto px-4 max-w-7xl">
         <div className="flex flex-col md:flex-row justify-between items-center">
           
-          {/* 1. Logo & Copyright */}
+          {/* Logo & Copyright */}
           <div className="mb-4 md:mb-0 text-center md:text-left">
             <p className="text-lg font-bold text-white tracking-wider mb-1">
               K-ENTER<span className="text-blue-500">24</span>
@@ -18,7 +18,7 @@ export default function Footer() {
             </p>
           </div>
 
-          {/* 2. Legal Links */}
+          {/* Legal Links */}
           <div className="flex space-x-6 text-sm">
             <Link href="/terms" className="hover:text-white transition-colors">
               Terms of Service
@@ -26,7 +26,8 @@ export default function Footer() {
             <Link href="/privacy" className="hover:text-white transition-colors">
               Privacy Policy
             </Link>
-            <a href="mailto:contact@yourdomain.com" className="hover:text-white transition-colors">
+            {/* 💡 대표님 이메일 적용 완료 */}
+            <a href="mailto:admin@k-enter24.com" className="hover:text-white transition-colors">
               Contact
             </a>
           </div>
