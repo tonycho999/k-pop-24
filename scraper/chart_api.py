@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import pytz
+import time # 추가됨 (릴레이 시 1초 대기용)
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import urllib.parse
@@ -10,7 +11,10 @@ from groq import Groq
 from model_manager import ModelManager 
 
 class ChartEngine:
-    def __init__(self):
+    # 💡 DB 객체를 받아오도록 인자(db) 추가
+    def __init__(self, db):
+        self.db = db
+        
         # 1. KOBIS (영화 API)
         self.kobis_key = os.environ.get("KOBIS_API_KEY")
 
@@ -165,7 +169,7 @@ class ChartEngine:
             return None
 
     def _process_with_groq(self, category, context, source_type):
-        if not self.groq_client or not self.model_name:
+        if not self.groq_keys or not self.model_name:
             return json.dumps({"top10": []})
 
         # 한국 시간 KST 명시
@@ -192,22 +196,41 @@ class ChartEngine:
         {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
         """
 
-        try:
-            print(f"  > Sending factual real-time data to Groq API (KST: {now_kst})...", flush=True)
-            chat_completion = self.groq_client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": "You are a strict data parser. You only parse data from the prompt. Output nothing but JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                model=self.model_name,
-                temperature=0.0, 
-            )
+        # 💡 [핵심] Groq 무한 릴레이 & 로테이션 로직 (절대 다른 로직 수정 안 함)
+        total_keys = len(self.groq_keys)
+        current_run_count = self.db.get_groq_index()
+        
+        for offset in range(total_keys):
+            key_index = current_run_count % total_keys
+            current_key = self.groq_keys[key_index]
+            
+            try:
+                print(f"  > Sending factual real-time data to Groq API (Key #{key_index + 1}, KST: {now_kst})...", flush=True)
+                client = Groq(api_key=current_key)
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": "You are a strict data parser. You only parse data from the prompt. Output nothing but JSON."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    model=self.model_name,
+                    temperature=0.0, 
+                )
+                
+                # 성공 시 DB 카운트 1 올리고 리턴
+                current_run_count += 1
+                self.db.update_groq_index(current_run_count)
 
-            content = chat_completion.choices[0].message.content.strip()
-            if content.startswith("```"):
-                content = content.replace("```json", "").replace("```", "").strip()
-            return content
+                content = chat_completion.choices[0].message.content.strip()
+                if content.startswith("```"):
+                    content = content.replace("```json", "").replace("```", "").strip()
+                return content
 
-        except Exception as e:
-            print(f"❌ Groq API Error: {e}", flush=True)
-            return json.dumps({"top10": []})
+            except Exception as e:
+                # 에러 발생 시 카운트 1 올리고 다음 키로 즉시 재도전
+                print(f"  ⚠️ Groq Error on Key #{key_index + 1}: {e}. Switching to next key...", flush=True)
+                current_run_count += 1
+                self.db.update_groq_index(current_run_count)
+                time.sleep(1)
+                
+        print("❌ All Groq API Keys failed.", flush=True)
+        return json.dumps({"top10": []})
