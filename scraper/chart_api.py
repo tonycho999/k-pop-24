@@ -62,8 +62,8 @@ class ChartEngine:
             source_type = "Naver Latest Entertain Ratings"
             
         elif category == "k-culture":
-            raw_context = self._scrape_naver_blogs("요즘 가장 뜨는 핫플레이스")
-            source_type = "Naver Latest Trending Places"
+            raw_context = self._scrape_naver_blogs("국내 핫플레이스 가볼만한곳")
+            source_type = "Naver Latest Trending Places in Korea"
             
         else:
             raw_context = None
@@ -162,7 +162,8 @@ class ChartEngine:
             return None
 
     def _scrape_naver_blogs(self, query):
-        url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
+        # 💡 [수정 완료] p:1w(1주일) -> p:1d(1일, 오늘) 로 변경하여 오늘 기사/글만 검색
+        url = f"https://search.naver.com/search.naver?where=view&query={urllib.parse.quote(query)}&nso=so%3Add%2Cp%3A1d"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         
         try:
@@ -178,18 +179,11 @@ class ChartEngine:
 
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            titles = soup.select('a.title_link')
+            titles = soup.select('a.title_link, .api_txt_lines, .link_tit')
             if titles:
                 context = ""
                 for i in range(min(20, len(titles))):
                     context += f"- Title: {titles[i].text.strip()}\n"
-                return context
-                
-            fallback_titles = soup.select('.api_txt_lines, .link_tit, .title')
-            if fallback_titles:
-                context = ""
-                for i in range(min(20, len(fallback_titles))):
-                    context += f"- Title: {fallback_titles[i].text.strip()}\n"
                 return context
             
             main_pack = soup.select_one('#main_pack')
@@ -206,9 +200,8 @@ class ChartEngine:
 
         today = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # 💡 [버그 해결] 프롬프트 조건 완화: 텍스트가 엉망이어도 빈칸 치지 말고 무조건 뽑아내도록 명령
         prompt = f"""
-        Current Time: {today}.
+        Current Date & Time: {today}.
         Task: Create a Top 10 ranking chart for '{category}' based ABSOLUTELY ONLY on the provided source text.
         
         Source Data ({source_type}):
@@ -216,10 +209,12 @@ class ChartEngine:
         
         CRITICAL RULES:
         1. DO NOT HALLUCINATE. Use ONLY the data provided above.
-        2. Extract up to 10 items. Even if the text is messy or not formatted perfectly, logically deduce the top items (e.g., highly mentioned places, shows, or ratings). ONLY return empty [] if there is absolutely zero relevant data.
-        3. Translate all Korean titles naturally into English.
-        4. 'info' should be a concise 1-sentence description.
-        5. Output STRICTLY as a valid JSON object without markdown code blocks.
+        2. EXCLUDE OUTDATED DATA: Ignore old dramas/shows that ended in previous years (e.g., "Queen of Tears"). Ignore items in "Related Searches" (연관검색어).
+        3. For K-Culture: Exclude any foreign locations (e.g., Bangkok, Tokyo). ONLY include places in South Korea.
+        4. Extract up to 10 items. If the text is completely irrelevant garbage, return an empty array: {{ "top10": [] }}
+        5. Translate all Korean titles naturally into English.
+        6. 'info' should be a concise 1-sentence description.
+        7. Output STRICTLY as a valid JSON object without markdown code blocks.
         
         Required Format:
         {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
