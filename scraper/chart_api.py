@@ -30,13 +30,11 @@ class ChartEngine:
         else:
             self.proxies = None
 
-        self.gemini_keys = []
-        for i in range(1, 9):
-            key = os.environ.get(f"GEMINI_API_KEY{i}")
-            if key: self.gemini_keys.append(key)
+        # 💡 [핵심 수정] 8개를 찾는 배열 로직을 지우고, 단 1개의 키만 불러옵니다.
+        self.gemini_key = os.environ.get("GEMINI_API_KEY")
 
-        if self.gemini_keys:
-            temp_client = genai.Client(api_key=self.gemini_keys[0])
+        if self.gemini_key:
+            temp_client = genai.Client(api_key=self.gemini_key)
             manager = ModelManager(client=temp_client, provider="gemini")
             self.model_name = manager.get_best_model()
             if not self.model_name:
@@ -166,7 +164,8 @@ class ChartEngine:
         except: return None
 
     def _process_with_gemini(self, category, context, source_type):
-        if not self.gemini_keys or not self.model_name:
+        # 💡 [핵심 수정] 단일 키 조건으로 간소화
+        if not self.gemini_key or not self.model_name:
             return json.dumps({"top10": []})
 
         today = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -191,36 +190,21 @@ class ChartEngine:
         {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
         """
 
-        total_keys = len(self.gemini_keys)
-        current_run_count = self.db.get_groq_index()
-        
-        for offset in range(total_keys):
-            key_index = current_run_count % total_keys
-            current_key = self.gemini_keys[key_index]
-            
-            try:
-                print(f"  > Sending data to Gemini API (Key #{key_index + 1})...", flush=True)
-                # 💡 구글 신형 SDK 규격 호출
-                client = genai.Client(api_key=current_key)
-                response = client.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.0,
-                        response_mime_type="application/json",
-                    )
+        try:
+            print(f"  > Sending data to Gemini API...", flush=True)
+            # 💡 [핵심 수정] 복잡한 루프 없이 바로 1개의 키로 직행
+            client = genai.Client(api_key=self.gemini_key)
+            response = client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    response_mime_type="application/json",
                 )
+            )
 
-                current_run_count += 1
-                self.db.update_groq_index(current_run_count)
+            return response.text.strip()
 
-                return response.text.strip()
-
-            except Exception as e:
-                print(f"  ⚠️ Gemini Error on Key #{key_index + 1}: {e}. Switching to next key...", flush=True)
-                current_run_count += 1
-                self.db.update_groq_index(current_run_count)
-                time.sleep(1) 
-                
-        print("❌ All Gemini API Keys failed.", flush=True)
-        return json.dumps({"top10": []})
+        except Exception as e:
+            print(f"  ⚠️ Gemini Error: {e}", flush=True)
+            return json.dumps({"top10": []})
