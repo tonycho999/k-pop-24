@@ -59,7 +59,6 @@ class NaverTrendEngine:
         print("❌ All Groq API Keys failed.")
         return None
 
-    # 💡 [핵심] 이미지 추출 방식 전면 개편
     def _scrape_article_full(self, url):
         try:
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -69,21 +68,32 @@ class NaverTrendEngine:
             
             image_url = ""
             
-            # 1순위: 가장 확실한 '카카오톡 썸네일(og:image)'에서 이미지 주소 추출
-            og_img = soup.select_one('meta[property="og:image"]')
-            if og_img and og_img.get('content') and str(og_img.get('content')).startswith("https://"):
-                image_url = og_img.get('content')
+            # 💡 [핵심] 대표님 코드 유지, 단 og:image 검색망만 넓힘 (property와 name 모두 검사)
+            og_img = soup.find('meta', property='og:image') or soup.find('meta', attrs={'name': 'og:image'})
+            if og_img and og_img.get('content'):
+                src = str(og_img.get('content')).strip()
+                # http:// 나 // 로 시작하는 것도 모두 https:// 로 강제 교정하여 저장
+                if src.startswith("//"): src = "https:" + src
+                elif src.startswith("http://"): src = src.replace("http://", "https://")
+                
+                if src.startswith("https://"):
+                    image_url = src
             
             content_area = soup.select_one('#dic_area, #newsct_article, #artc_body, #newsEndContents, [itemprop="articleBody"]')
             
             if content_area:
-                # 2순위: 만약 og:image가 없다면, 본문 내의 '모든' 이미지를 뒤져서 첫 번째 유효한 https:// 찾기
+                # 💡 [핵심] og:image가 없으면 본문을 다 뒤져서 진짜 기사 사진 찾기 (로고, 아이콘 버림)
                 if not image_url:
                     for img_tag in content_area.find_all('img'):
                         src = img_tag.get('data-src') or img_tag.get('src')
-                        if src and str(src).startswith("https://"):
-                            image_url = src
-                            break # 유효한 진짜 이미지를 찾으면 즉시 중단
+                        if src:
+                            src = str(src).strip()
+                            if src.startswith("//"): src = "https:" + src
+                            elif src.startswith("http://"): src = src.replace("http://", "https://")
+                            
+                            if src.startswith("https://") and "logo" not in src.lower() and "icon" not in src.lower():
+                                image_url = src
+                                break # 유효한 진짜 이미지를 찾으면 즉시 중단
 
                 raw_text = content_area.get_text(separator='\n', strip=True)
                 lines = raw_text.split('\n')
@@ -97,7 +107,7 @@ class NaverTrendEngine:
                     clean_lines.append(line)
                     
                 return " ".join(clean_lines), image_url
-            return "", image_url # 텍스트를 못 찾아도 og:image가 있으면 이미지라도 반환
+            return "", image_url 
         except:
             return "", ""
 
@@ -149,7 +159,7 @@ class NaverTrendEngine:
             return []
 
     def process_person(self, person_name, time_context):
-        url = "https://openapi.naver.com/v1/search/news.json"
+        url = "[https://openapi.naver.com/v1/search/news.json](https://openapi.naver.com/v1/search/news.json)"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": person_name, "display": 15, "sort": "date"}
         
