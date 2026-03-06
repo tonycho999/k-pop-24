@@ -119,7 +119,6 @@ class ChartEngine:
         except Exception:
             return None
 
-    # 💡 [핵심] 네이버 시청률: 기존 태그 파싱 시도 후 실패하면 화면 전체 텍스트 긁기
     def _scrape_naver_ratings(self, query):
         url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -137,7 +136,6 @@ class ChartEngine:
 
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 1차 시도: 기존 방식 (table 태그 찾기)
             tables = soup.select('table')
             rating_text = ""
             for table in tables:
@@ -155,7 +153,6 @@ class ChartEngine:
             if rating_text:
                 return rating_text
             
-            # 2차 시도: 네이버가 표 디자인을 바꿨다면 메인 영역 전체 텍스트를 AI에게 던짐
             main_pack = soup.select_one('#main_pack')
             if main_pack:
                 return main_pack.get_text(separator=' | ', strip=True)[:8000]
@@ -164,7 +161,6 @@ class ChartEngine:
         except Exception:
             return None
 
-    # 💡 [핵심] 네이버 블로그: 기존 태그 파싱 시도 후 실패하면 화면 전체 텍스트 긁기
     def _scrape_naver_blogs(self, query):
         url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -182,7 +178,6 @@ class ChartEngine:
 
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 1차 시도: 기존 방식 (a.title_link 태그 찾기)
             titles = soup.select('a.title_link')
             if titles:
                 context = ""
@@ -190,7 +185,6 @@ class ChartEngine:
                     context += f"- Title: {titles[i].text.strip()}\n"
                 return context
                 
-            # 2차 시도: 네이버가 태그 이름을 바꿨을 경우 범용 클래스 검색
             fallback_titles = soup.select('.api_txt_lines, .link_tit, .title')
             if fallback_titles:
                 context = ""
@@ -198,7 +192,6 @@ class ChartEngine:
                     context += f"- Title: {fallback_titles[i].text.strip()}\n"
                 return context
             
-            # 3차 시도: 그래도 없으면 메인 영역 텍스트 전체 던지기
             main_pack = soup.select_one('#main_pack')
             if main_pack:
                 return main_pack.get_text(separator=' | ', strip=True)[:8000]
@@ -213,6 +206,7 @@ class ChartEngine:
 
         today = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
+        # 💡 [버그 해결] 프롬프트 조건 완화: 텍스트가 엉망이어도 빈칸 치지 말고 무조건 뽑아내도록 명령
         prompt = f"""
         Current Time: {today}.
         Task: Create a Top 10 ranking chart for '{category}' based ABSOLUTELY ONLY on the provided source text.
@@ -221,12 +215,11 @@ class ChartEngine:
         {context}
         
         CRITICAL RULES:
-        1. DO NOT HALLUCINATE OR INVENT DATA. Use ONLY the data provided above.
-        2. If the Source Data does not contain valid names or ratings, return an empty array: {{ "top10": [] }}
-        3. Extract up to 10 items.
-        4. Translate all Korean titles naturally into English.
-        5. 'info' should be a concise 1-sentence description (e.g., exact ratings like '15.2%', or the artist name).
-        6. Output STRICTLY as a valid JSON object without markdown code blocks.
+        1. DO NOT HALLUCINATE. Use ONLY the data provided above.
+        2. Extract up to 10 items. Even if the text is messy or not formatted perfectly, logically deduce the top items (e.g., highly mentioned places, shows, or ratings). ONLY return empty [] if there is absolutely zero relevant data.
+        3. Translate all Korean titles naturally into English.
+        4. 'info' should be a concise 1-sentence description.
+        5. Output STRICTLY as a valid JSON object without markdown code blocks.
         
         Required Format:
         {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
