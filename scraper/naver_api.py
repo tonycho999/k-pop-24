@@ -8,7 +8,10 @@ from bs4 import BeautifulSoup
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-import google.generativeai as genai
+
+# 💡 [핵심] 구글 신형 SDK 규격 적용
+from google import genai
+from google.genai import types
 
 from database import Database
 from model_manager import ModelManager
@@ -19,11 +22,9 @@ class NaverTrendEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        # 구글 이미지 검색 API 키
         self.google_api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
         self.google_cx = os.environ.get("GOOGLE_SEARCH_CX")
         
-        # 프록시 셋업
         self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
         self.proxy_port = os.environ.get("PROXY_PORT", "12323")
         self.proxy_user = os.environ.get("PROXY_USER")
@@ -37,16 +38,14 @@ class NaverTrendEngine:
         else:
             self.proxies = None
         
-        # 💡 Gemini API 키 로드 및 ModelManager 연동
         self.gemini_keys = []
         for i in range(1, 9):
             key = os.environ.get(f"GEMINI_API_KEY{i}")
             if key: self.gemini_keys.append(key)
 
         if self.gemini_keys:
-            # 모델 리스트를 불러오기 위해 첫 번째 키로 임시 인증
-            genai.configure(api_key=self.gemini_keys[0])
-            manager = ModelManager(provider="gemini")
+            temp_client = genai.Client(api_key=self.gemini_keys[0])
+            manager = ModelManager(client=temp_client, provider="gemini")
             self.model_name = manager.get_best_model()
             if not self.model_name:
                 self.model_name = "gemini-2.5-flash"
@@ -66,13 +65,12 @@ class NaverTrendEngine:
             current_key = self.gemini_keys[key_index]
             
             try:
-                genai.configure(api_key=current_key)
-                # 💡 ModelManager가 찾아준 최적의 모델 사용
-                model = genai.GenerativeModel(self.model_name)
-                
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
+                # 💡 구글 신형 SDK 규격 호출
+                client = genai.Client(api_key=current_key)
+                response = client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
                         temperature=temperature,
                         response_mime_type="application/json",
                     )
@@ -120,7 +118,6 @@ class NaverTrendEngine:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            
             res = None
             if self.proxies:
                 try:
@@ -134,7 +131,6 @@ class NaverTrendEngine:
             soup = BeautifulSoup(res.text, 'html.parser')
             
             image_url = ""
-            
             og_img = soup.select_one('meta[property="og:image"], meta[name="og:image"]')
             if og_img and og_img.get('content'):
                 image_url = str(og_img.get('content')).strip()
