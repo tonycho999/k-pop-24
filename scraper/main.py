@@ -51,6 +51,9 @@ def run_hourly_news(db):
     
     print(f"🌍 Global Active Names in DB: {len(global_active_names)} people")
 
+    # 💡 [새로 추가] 이번 업데이트에서 이미 사용된 사진 URL을 기억하는 바구니
+    global_used_images = set()
+
     for category_key, search_keyword in categories.items():
         print(f"\n\n▶️ Starting News Category: {category_key}")
         
@@ -79,7 +82,8 @@ def run_hourly_news(db):
             if is_breaking:
                 current_context = "[긴급/속보] " + time_context
 
-            result_data = engine.process_person(person, current_context)
+            # 💡 [수정] 엔진에게 기사를 쓸 때 '사용된 사진 바구니(global_used_images)'를 같이 쥐여줍니다!
+            result_data = engine.process_person(person, current_context, used_image_urls=global_used_images)
             if result_data:
                 score = result_data.get('score', 0)
                 
