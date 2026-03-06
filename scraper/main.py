@@ -66,13 +66,13 @@ def run_hourly_news(db):
             db.save_news_results(category=category_key, results=category_results)
 
 
-def run_top10_charts():
+def run_top10_charts(db):
     """6시간 간격: 실시간 Top 10 차트 갱신"""
     print("========================================")
     print("📊 [MODE: CHART] Starting 6-Hour Top 10 Charts Update")
     print("========================================")
     
-    chart_engine = ChartEngine()
+    chart_engine = ChartEngine(db=db)
     categories = ["k-movie", "k-pop", "k-drama", "k-entertain", "k-culture"]
     
     for category in categories:
@@ -92,11 +92,11 @@ def main():
     if mode == "news":
         run_hourly_news(db)
     elif mode == "chart":
-        run_top10_charts()
+        run_top10_charts(db)
     else:
         # 명령어가 없으면 (로컬 테스트 등) 둘 다 실행
         run_hourly_news(db)
-        run_top10_charts()
+        run_top10_charts(db)
 
     print("\n🎉 All Requested Tasks Completed Successfully!")
 
