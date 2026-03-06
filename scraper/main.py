@@ -34,11 +34,11 @@ def run_hourly_news(db):
     print(f"⏰ Current Time Context: {time_context}")
 
     categories = {
-        "k-movie": "요즘 뜨는 한국 영화 배우",
-        "k-pop": "요즘 가장 핫한 K-POP 아이돌 가수",
-        "k-drama": "방영중 드라마 배우",
+        "k-movie": "한국 영화 배우",
+        "k-pop": "K-POP 아이돌 가수",
+        "k-drama": "드라마 배우",
         "k-entertain": "예능 출연진",
-        "k-culture": "성수동 한남동 인플루언서"
+        "k-culture": "인플루언서"
     }
 
     for category_key, search_keyword in categories.items():
