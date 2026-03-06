@@ -27,9 +27,6 @@ class Database:
         try: self.client.table("system_status").update({"run_count": new_index}).eq("id", 1).execute()
         except: pass
 
-    # ==========================================
-    # [핵심] 현재 DB에 살아있는 인물 명단 (중복 방지)
-    # ==========================================
     def get_active_names(self, category: str) -> list:
         if not self.client: return []
         try:
@@ -54,48 +51,60 @@ class Database:
                 "title": res.get("title", ""),
                 "summary": res.get("summary", ""),
                 "link": res.get("link", ""),
-                # 💡 [치명적 버그 수정] 빈칸이었던 image_url을 드디어 제대로 받아서 넣습니다!
                 "image_url": res.get("image_url", ""), 
-                "score": res.get("score", 50), # AI가 부여한 화제성 평점 (기본값 50)
+                "score": res.get("score", 50),
                 "likes": 0,
                 "created_at": now
             })
 
         try:
-            # 새로운 10개 기사 무조건 추가
+            # 1. 메인 뉴스 테이블(live_news)에 추가
             self.client.table("live_news").insert(live_news_data).execute()
-            print(f"✅ Saved {len(results)} new articles to '{category}'.")
             
-            # [핵심] 50개 초과 시 '가장 오래된' 기사 삭제 (시간순 정리)
+            # 2. search_archive (기록보관소) 에도 똑같이 복사해서 저장
+            self.client.table("search_archive").insert(live_news_data).execute()
+            
+            print(f"✅ Saved {len(results)} new articles to '{category}' (live_news & search_archive).")
+            
+            # 3. live_news는 최신 50개 제한 유지
             self._enforce_max_50_limit(category)
+            
+            # 💡 4. [추가 완료] search_archive는 7일이 지난 데이터 자동 삭제
+            self._cleanup_7days_archive()
+            
         except Exception as e:
             print(f"❌ DB Save Error: {e}")
 
     def _enforce_max_50_limit(self, category: str):
-        """카테고리당 최신 기사 50개만 남기고, 오래된 것은 삭제"""
+        """live_news 테이블: 카테고리당 최신 기사 50개만 남기고 삭제"""
         try:
-            # 시간 내림차순(최신순)으로 정렬하여 데이터 조회
             res = self.client.table("live_news").select("id").eq("category", category).order("created_at", desc=True).execute()
             if res.data and len(res.data) > 50:
-                # 50번째 이후의 오래된 기사들의 ID 추출
                 ids_to_delete = [item["id"] for item in res.data[50:]]
-                # 해당 ID들 일괄 삭제
                 self.client.table("live_news").delete().in_("id", ids_to_delete).execute()
                 print(f"🧹 Cleaned up {len(ids_to_delete)} old articles. Maintained exactly 50 for '{category}'.")
         except Exception as e:
             print(f"⚠️ Error enforcing max 50 limit: {e}")
 
-    # 💡 [새로 추가된 함수] 차트 데이터를 DB에 저장 (오래된 차트는 지우고 새 차트로 덮어쓰기)
+    # 💡 [새로 추가된 함수] search_archive 일주일(7일) 경과 데이터 삭제
+    def _cleanup_7days_archive(self):
+        """search_archive 테이블: 현재 시간 기준 7일 전 데이터 삭제"""
+        try:
+            seven_days_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
+            
+            # created_at이 7일 전 시간보다 과거(lt)인 데이터 일괄 삭제
+            self.client.table("search_archive").delete().lt("created_at", seven_days_ago).execute()
+        except Exception as e:
+            print(f"⚠️ Error cleaning up 7-day old search_archive: {e}")
+
     def save_chart_results(self, category: str, results: list):
         if not self.client or not results: return
         
-        # 1. 차트는 '최신 10개'만 유지하므로 기존 해당 카테고리의 차트를 지웁니다.
         try:
             self.client.table("live_rankings").delete().eq("category", category).execute()
         except Exception:
-            pass # 기존 데이터가 없어도 무시
+            pass 
 
-        # 2. 새로운 차트 10개 삽입
         chart_data = []
         now = datetime.utcnow().isoformat()
         
@@ -104,7 +113,7 @@ class Database:
                 "category": category,
                 "rank": item.get("rank"),
                 "title": item.get("title", ""),
-                "info": item.get("info", ""),
+                "meta_info": item.get("info", ""), 
                 "updated_at": now
             })
 
