@@ -9,7 +9,6 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
-# 💡 [핵심] 구글 신형 SDK 규격 적용
 from google import genai
 from google.genai import types
 
@@ -38,13 +37,11 @@ class NaverTrendEngine:
         else:
             self.proxies = None
         
-        self.gemini_keys = []
-        for i in range(1, 9):
-            key = os.environ.get(f"GEMINI_API_KEY{i}")
-            if key: self.gemini_keys.append(key)
+        # 💡 [수정] 단 1개의 제미나이 키만 불러옵니다
+        self.gemini_key = os.environ.get("GEMINI_API_KEY")
 
-        if self.gemini_keys:
-            temp_client = genai.Client(api_key=self.gemini_keys[0])
+        if self.gemini_key:
+            temp_client = genai.Client(api_key=self.gemini_key)
             manager = ModelManager(client=temp_client, provider="gemini")
             self.model_name = manager.get_best_model()
             if not self.model_name:
@@ -53,42 +50,26 @@ class NaverTrendEngine:
             self.model_name = None
 
     def _call_gemini_with_fallback(self, prompt, temperature=0.2):
-        if not self.gemini_keys or not self.model_name: 
-            print("❌ No Gemini keys or model available!")
+        if not self.gemini_key or not self.model_name: 
+            print("❌ No Gemini key or model available!")
             return None
             
-        total_keys = len(self.gemini_keys)
-        current_run_count = self.db.get_groq_index()
-        
-        for offset in range(total_keys):
-            key_index = current_run_count % total_keys
-            current_key = self.gemini_keys[key_index]
-            
-            try:
-                # 💡 구글 신형 SDK 규격 호출
-                client = genai.Client(api_key=current_key)
-                response = client.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=temperature,
-                        response_mime_type="application/json",
-                    )
+        try:
+            # 💡 [수정] 복잡한 루프 없이 바로 1개의 키로 호출
+            client = genai.Client(api_key=self.gemini_key)
+            response = client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=temperature,
+                    response_mime_type="application/json",
                 )
-                
-                current_run_count += 1
-                self.db.update_groq_index(current_run_count)
-                
-                return response.text.strip()
-                
-            except Exception as e:
-                print(f"  ⚠️ Gemini Error (Key #{key_index+1}): {e}. Switching to next key...")
-                current_run_count += 1
-                self.db.update_groq_index(current_run_count)
-                time.sleep(1)
-                
-        print("❌ All Gemini API Keys failed.")
-        return None
+            )
+            return response.text.strip()
+            
+        except Exception as e:
+            print(f"  ⚠️ Gemini Error: {e}")
+            return None
 
     def _get_google_image(self, query):
         if not self.google_api_key or not self.google_cx:
