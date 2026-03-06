@@ -69,6 +69,9 @@ class Database:
             # 3. live_news는 최신 50개 제한 유지
             self._enforce_max_50_limit(category)
             
+            # 💡 [추가 완료] live_news는 24시간 지난 데이터 가차없이 삭제
+            self._cleanup_24hours_live_news()
+            
             # 💡 4. [추가 완료] search_archive는 7일이 지난 데이터 자동 삭제
             self._cleanup_7days_archive()
             
@@ -85,6 +88,15 @@ class Database:
                 print(f"🧹 Cleaned up {len(ids_to_delete)} old articles. Maintained exactly 50 for '{category}'.")
         except Exception as e:
             print(f"⚠️ Error enforcing max 50 limit: {e}")
+
+    # 💡 [새로 추가된 함수] live_news 24시간(하루) 경과 데이터 무조건 삭제
+    def _cleanup_24hours_live_news(self):
+        """live_news 테이블: 현재 시간 기준 24시간 전 데이터 가차없이 삭제"""
+        try:
+            twenty_four_hours_ago = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+            self.client.table("live_news").delete().lt("created_at", twenty_four_hours_ago).execute()
+        except Exception as e:
+            print(f"⚠️ Error cleaning up 24-hour old live_news: {e}")
 
     # 💡 [새로 추가된 함수] search_archive 일주일(7일) 경과 데이터 삭제
     def _cleanup_7days_archive(self):
