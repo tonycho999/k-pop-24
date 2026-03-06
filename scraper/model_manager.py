@@ -58,18 +58,19 @@ class ModelManager:
             return "llama-3.3-70b-versatile"
 
     def _get_best_gemini_model(self):
-        """Gemini 실시간 리스트에서 동적으로 최신/최적 모델 1개 선택 (하드코딩 배제)"""
+        """Gemini 실시간 리스트에서 동적으로 최신/최적 모델 1개 선택 (구글 신형 SDK 적용)"""
         try:
-            import google.generativeai as genai
+            if not self.client:
+                return "gemini-2.5-flash"
             
-            models = [m for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            models = self.client.models.list()
             excluded_keywords = ["pro", "ultra", "advanced", "vision"] 
             
             candidates = []
             for m in models:
-                name = m.name.lower()
+                name = m.name.lower().replace("models/", "")
                 if not any(ex in name for ex in excluded_keywords):
-                    candidates.append(m.name)
+                    candidates.append(name)
 
             flash_models = [m for m in candidates if "flash" in m]
 
@@ -85,9 +86,8 @@ class ModelManager:
                 print(f"⚠️ [GeminiManager] Fallback to candidate from list: {selected}")
                 return selected
 
-            # API 응답 자체가 비어있을 경우의 최후 보루
-            return "models/gemini-2.5-flash"
+            return "gemini-2.5-flash"
 
         except Exception as e:
             print(f"❌ [GeminiManager] Error fetching models: {e}")
-            return "models/gemini-2.5-flash"
+            return "gemini-2.5-flash"
