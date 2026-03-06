@@ -124,7 +124,6 @@ class NaverTrendEngine:
             return "", image_url 
         except: return "", ""
 
-    # 💡 [핵심 반영] 10명이 아닌 15명을 넉넉히 가져오도록 변경 & 역사적 인물 제외 룰 추가
     def get_target_people(self, category_keyword, exclude_names):
         if not self.naver_client_id: return []
         url = "https://openapi.naver.com/v1/search/news.json"
@@ -145,7 +144,6 @@ class NaverTrendEngine:
 
             if not combined_text: return []
             
-            # 💡 [핵심 수정] 여기서 제미나이에게 역사적 인물과 배역을 제외하라고 강력하게 명령!
             prompt = f"""
             Extract ONLY REAL, LIVING KOREAN ENTERTAINERS (actors, singers, idols, celebrities) from the text: {combined_text[:12000]}
             
@@ -164,14 +162,17 @@ class NaverTrendEngine:
             sorted_all_names = [name for name, count in name_counts.most_common()]
             filtered_names = [name for name in sorted_all_names if name not in exclude_names]
             
-            # 15명을 리턴하여 카테고리 쏠림 대비 여유분 확보
             return filtered_names[:15]
 
         except Exception as e:
             print(f"❌ Error extracting people: {e}")
             return []
 
-    def process_person(self, person_name, time_context):
+    # 💡 [핵심 수정] used_image_urls 파라미터 추가하여 중복 사진 감지
+    def process_person(self, person_name, time_context, used_image_urls=None):
+        if used_image_urls is None:
+            used_image_urls = set()
+            
         url = "https://openapi.naver.com/v1/search/news.json"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": person_name, "display": 15, "sort": "date"}
@@ -202,13 +203,23 @@ class NaverTrendEngine:
                 if len(article_texts) >= 3: break
                 
             if not article_texts: return None
+
+            # 💡 [이미지 중복 검열 로직] 이미 사용된 사진이면 가차없이 비움!
+            if first_image and first_image in used_image_urls:
+                print(f"  ⚠️ [이미지 중복 감지] '{person_name}' 기사의 사진이 이미 사용되었습니다. 단독 사진으로 대체합니다.")
+                first_image = ""
+
+            # 비워졌거나 원래 없으면 구글에서 새로 고화질 검색
             if not first_image:
-                print(f"  ⚠️ 네이버 이미지 실패. 구글 검색 작동: {person_name}")
-                first_image = self._get_google_image(f"{person_name} 연예인")
+                print(f"  🔍 구글 이미지 검색 작동 (단독 프로필 탐색): {person_name}")
+                first_image = self._get_google_image(f"{person_name} 프로필 고화질")
+                
+            # 확정된 사진을 바구니에 저장하여 다음 턴에서 중복 방지
+            if first_image:
+                used_image_urls.add(first_image)
                 
             combined_articles = "\n\n".join(article_texts)
             
-            # 💡 자유로운 길이, 제목 포맷 강제, 스캔들 고득점 부여
             prompt = f"""
             Persona: You are a sharp Entertainment News Chief Editor.
             Current Time in Korea: {now_kst}
