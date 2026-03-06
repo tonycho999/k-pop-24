@@ -22,7 +22,6 @@ class NaverTrendEngine:
             key = os.environ.get(f"GROQ_API_KEY{i}")
             if key: self.groq_keys.append(key)
 
-    # 💡 [핵심] 수정된 부분: 매번 호출 시 키 교체 및 실패 시 즉각 릴레이
     def _call_groq_with_fallback(self, prompt, temperature=0.2):
         if not self.groq_keys: 
             print("❌ No Groq keys available!")
@@ -46,14 +45,12 @@ class NaverTrendEngine:
                     temperature=temperature
                 )
                 
-                # 성공 시 무조건 DB 카운트를 1 올려서 다음번엔 다음 키를 쓰도록 로테이션
                 current_run_count += 1
                 self.db.update_groq_index(current_run_count)
                 
                 return chat_completion.choices[0].message.content.strip()
                 
             except Exception as e:
-                # 에러 발생 시(한도 초과 등) 카운트를 올리고 1초 대기 후 다음 키로 재도전
                 print(f"  ⚠️ Groq Error (Key #{key_index+1}): {e}. Switching to next key...")
                 current_run_count += 1
                 self.db.update_groq_index(current_run_count)
@@ -62,6 +59,7 @@ class NaverTrendEngine:
         print("❌ All Groq API Keys failed.")
         return None
 
+    # 💡 [핵심] 이미지 추출 방식 전면 개편
     def _scrape_article_full(self, url):
         try:
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -69,16 +67,23 @@ class NaverTrendEngine:
             res.encoding = 'utf-8'
             soup = BeautifulSoup(res.text, 'html.parser')
             
+            image_url = ""
+            
+            # 1순위: 가장 확실한 '카카오톡 썸네일(og:image)'에서 이미지 주소 추출
+            og_img = soup.select_one('meta[property="og:image"]')
+            if og_img and og_img.get('content') and str(og_img.get('content')).startswith("https://"):
+                image_url = og_img.get('content')
+            
             content_area = soup.select_one('#dic_area, #newsct_article, #artc_body, #newsEndContents, [itemprop="articleBody"]')
             
-            image_url = ""
             if content_area:
-                # 💡 [추가] 본문에서 'https://'로 시작하는 이미지 추출
-                img_tag = content_area.select_one('img')
-                if img_tag:
-                    src = img_tag.get('data-src') or img_tag.get('src')
-                    if src and str(src).startswith("https://"):
-                        image_url = src
+                # 2순위: 만약 og:image가 없다면, 본문 내의 '모든' 이미지를 뒤져서 첫 번째 유효한 https:// 찾기
+                if not image_url:
+                    for img_tag in content_area.find_all('img'):
+                        src = img_tag.get('data-src') or img_tag.get('src')
+                        if src and str(src).startswith("https://"):
+                            image_url = src
+                            break # 유효한 진짜 이미지를 찾으면 즉시 중단
 
                 raw_text = content_area.get_text(separator='\n', strip=True)
                 lines = raw_text.split('\n')
@@ -91,9 +96,8 @@ class NaverTrendEngine:
                     if any(bad in line for bad in blacklist): continue 
                     clean_lines.append(line)
                     
-                # 💡 [변경] 텍스트와 이미지를 함께 반환
                 return " ".join(clean_lines), image_url
-            return "", ""
+            return "", image_url # 텍스트를 못 찾아도 og:image가 있으면 이미지라도 반환
         except:
             return "", ""
 
@@ -113,7 +117,6 @@ class NaverTrendEngine:
             combined_text = ""
             
             for item in news_items:
-                # ★ 1차 방어: 24시간 이내 기사만 수집 (오래된 기사 차단)
                 pub_date = parsedate_to_datetime(item['pubDate'])
                 if now_utc - pub_date > timedelta(hours=24):
                     continue
@@ -146,7 +149,7 @@ class NaverTrendEngine:
             return []
 
     def process_person(self, person_name, time_context):
-        url = "https://openapi.naver.com/v1/search/news.json"
+        url = "[https://openapi.naver.com/v1/search/news.json](https://openapi.naver.com/v1/search/news.json)"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": person_name, "display": 15, "sort": "date"}
         
@@ -163,7 +166,6 @@ class NaverTrendEngine:
             first_image = ""
             
             for item in items:
-                # ★ 2차 방어: 인물 개별 기사에서도 24시간 초과 기사는 버림
                 pub_date = parsedate_to_datetime(item['pubDate'])
                 if now_utc - pub_date > timedelta(hours=24):
                     continue
@@ -171,10 +173,8 @@ class NaverTrendEngine:
                 link = item['link']
                 if not first_link: first_link = link
                 
-                # 💡 [변경] 텍스트와 이미지 두 개를 모두 받음
                 full_text, img_url = self._scrape_article_full(link)
                 
-                # 💡 [추가] 처음 발견된 유효한 이미지 주소 저장
                 if img_url and not first_image:
                     first_image = img_url
                 
@@ -192,7 +192,6 @@ class NaverTrendEngine:
                 
             combined_articles = "\n\n".join(article_texts)
             
-            # ★ 3차: 한국 시간 주입 및 '영문 번역' 지시 프롬프트
             prompt = f"""
             Persona: You are a sharp Entertainment News Chief Editor.
             Current Time in Korea: {now_kst}
@@ -221,7 +220,6 @@ class NaverTrendEngine:
             summary_data = json.loads(result_text)
             summary_data['name'] = person_name
             summary_data['link'] = first_link 
-            # 💡 [추가] 추출한 이미지를 결과 데이터에 포함
             summary_data['image_url'] = first_image
             if 'score' not in summary_data: summary_data['score'] = 50 
                 
