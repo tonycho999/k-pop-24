@@ -124,7 +124,7 @@ class NaverTrendEngine:
             return "", image_url 
         except: return "", ""
 
-    # 💡 [핵심 반영] 10명이 아닌 15명을 넉넉히 가져오도록 변경
+    # 💡 [핵심 반영] 10명이 아닌 15명을 넉넉히 가져오도록 변경 & 역사적 인물 제외 룰 추가
     def get_target_people(self, category_keyword, exclude_names):
         if not self.naver_client_id: return []
         url = "https://openapi.naver.com/v1/search/news.json"
@@ -144,7 +144,18 @@ class NaverTrendEngine:
                 combined_text += f"- {title}: {desc}\n"
 
             if not combined_text: return []
-            prompt = f"Extract ONLY HUMAN NAMES (Korean celebrities/figures) from the text: {combined_text[:12000]}\nRules: Extract up to 50 names. Output strictly as JSON array of strings like: [\"Name1\", \"Name2\"]"
+            
+            # 💡 [핵심 수정] 여기서 제미나이에게 역사적 인물과 배역을 제외하라고 강력하게 명령!
+            prompt = f"""
+            Extract ONLY REAL, LIVING KOREAN ENTERTAINERS (actors, singers, idols, celebrities) from the text: {combined_text[:12000]}
+            
+            CRITICAL RULES:
+            1. EXCLUDE all historical figures (e.g., 단종, 한명회, 이순신).
+            2. EXCLUDE fictional character names from movies or dramas.
+            3. EXCLUDE politicians, athletes, or non-entertainment figures.
+            4. Extract up to 50 names. Output strictly as a JSON array of strings like: ["Name1", "Name2"]
+            """
+            
             result_text = self._call_gemini_with_fallback(prompt, temperature=0.1)
             if not result_text: return []
             
@@ -197,7 +208,7 @@ class NaverTrendEngine:
                 
             combined_articles = "\n\n".join(article_texts)
             
-            # 💡 [핵심 수정] 자유로운 길이, 제목 포맷 강제, 스캔들 고득점 부여
+            # 💡 자유로운 길이, 제목 포맷 강제, 스캔들 고득점 부여
             prompt = f"""
             Persona: You are a sharp Entertainment News Chief Editor.
             Current Time in Korea: {now_kst}
