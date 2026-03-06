@@ -71,7 +71,15 @@ class NaverTrendEngine:
             
             content_area = soup.select_one('#dic_area, #newsct_article, #artc_body, #newsEndContents, [itemprop="articleBody"]')
             
+            image_url = ""
             if content_area:
+                # 💡 [추가] 본문에서 'https://'로 시작하는 이미지 추출
+                img_tag = content_area.select_one('img')
+                if img_tag:
+                    src = img_tag.get('data-src') or img_tag.get('src')
+                    if src and str(src).startswith("https://"):
+                        image_url = src
+
                 raw_text = content_area.get_text(separator='\n', strip=True)
                 lines = raw_text.split('\n')
                 blacklist = ['구독되었습니다', 'Copyright', '무단 전재', '재배포 금지', '기자의 다른 기사', '섹션 정보']
@@ -83,10 +91,11 @@ class NaverTrendEngine:
                     if any(bad in line for bad in blacklist): continue 
                     clean_lines.append(line)
                     
-                return " ".join(clean_lines)
-            return ""
+                # 💡 [변경] 텍스트와 이미지를 함께 반환
+                return " ".join(clean_lines), image_url
+            return "", ""
         except:
-            return ""
+            return "", ""
 
     def get_target_10_people(self, category_keyword, exclude_names):
         if not self.naver_client_id: return []
@@ -151,6 +160,7 @@ class NaverTrendEngine:
             
             article_texts = []
             first_link = ""
+            first_image = ""
             
             for item in items:
                 # ★ 2차 방어: 인물 개별 기사에서도 24시간 초과 기사는 버림
@@ -161,7 +171,12 @@ class NaverTrendEngine:
                 link = item['link']
                 if not first_link: first_link = link
                 
-                full_text = self._scrape_article_full(link)
+                # 💡 [변경] 텍스트와 이미지 두 개를 모두 받음
+                full_text, img_url = self._scrape_article_full(link)
+                
+                # 💡 [추가] 처음 발견된 유효한 이미지 주소 저장
+                if img_url and not first_image:
+                    first_image = img_url
                 
                 if full_text and len(full_text) > 100:
                     article_texts.append(f"[본문수집 성공] {full_text}")
@@ -206,6 +221,8 @@ class NaverTrendEngine:
             summary_data = json.loads(result_text)
             summary_data['name'] = person_name
             summary_data['link'] = first_link 
+            # 💡 [추가] 추출한 이미지를 결과 데이터에 포함
+            summary_data['image_url'] = first_image
             if 'score' not in summary_data: summary_data['score'] = 50 
                 
             return summary_data
