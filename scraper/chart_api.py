@@ -11,14 +11,11 @@ from groq import Groq
 from model_manager import ModelManager 
 
 class ChartEngine:
-    # 💡 Groq 키 로테이션을 위해 db 인자 추가
     def __init__(self, db):
         self.db = db
         
-        # 1. KOBIS (영화 API)
         self.kobis_key = os.environ.get("KOBIS_API_KEY")
 
-        # 2. IPRoyal 프록시 설정 (크롤링 방어막 우회용)
         self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
         self.proxy_port = os.environ.get("PROXY_PORT", "12323")
         self.proxy_user = os.environ.get("PROXY_USER")
@@ -32,14 +29,12 @@ class ChartEngine:
         else:
             self.proxies = None
 
-        # 3. Groq AI 초기화 (키 리스트 수집)
         self.groq_keys = []
         for i in range(1, 9):
             key = os.environ.get(f"GROQ_API_KEY{i}")
             if key: self.groq_keys.append(key)
 
         if self.groq_keys:
-            # 첫 번째 키로 임시 클라이언트를 만들어 모델명만 알아옵니다.
             temp_client = Groq(api_key=self.groq_keys[0])
             manager = ModelManager(client=temp_client, provider="groq")
             best_model_name = manager.get_best_model()
@@ -60,11 +55,11 @@ class ChartEngine:
             
         elif category == "k-drama":
             raw_context = self._scrape_naver_ratings("현재 방영중 드라마 시청률 순위")
-            source_type = "Naver Latest Drama Ratings Table"
+            source_type = "Naver Latest Drama Ratings"
             
         elif category == "k-entertain":
             raw_context = self._scrape_naver_ratings("현재 방영중 예능 시청률 순위")
-            source_type = "Naver Latest Entertain Ratings Table"
+            source_type = "Naver Latest Entertain Ratings"
             
         elif category == "k-culture":
             raw_context = self._scrape_naver_blogs("요즘 가장 뜨는 핫플레이스")
@@ -81,7 +76,6 @@ class ChartEngine:
         return self._process_with_groq(category, context=raw_context, source_type=source_type)
 
     def _get_kobis_data(self):
-        """영화는 KOBIS 특성상 '어제' 정산 데이터가 가장 최신입니다."""
         if not self.kobis_key: return None
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         url = f"http://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={self.kobis_key}&targetDt={yesterday}"
@@ -96,7 +90,6 @@ class ChartEngine:
         except Exception:
             return None
 
-    # 💡 [우회 로직 적용] 프록시 실패 시 다이렉트 통신
     def _scrape_bugs_realtime(self):
         url = "https://music.bugs.co.kr/chart"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -109,13 +102,11 @@ class ChartEngine:
                 except:
                     pass
             
-            # 프록시가 없거나, 접속 실패했거나, 봇 차단(200 아님) 당했으면 다이렉트로 재시도!
             if not res or res.status_code != 200:
                 res = requests.get(url, headers=headers, verify=False, timeout=10)
 
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 파싱 로직은 대표님 코드 100% 그대로 유지
             titles = soup.select('p.title a')
             artists = soup.select('p.artist a:nth-of-type(1)')
             
@@ -128,7 +119,7 @@ class ChartEngine:
         except Exception:
             return None
 
-    # 💡 [우회 로직 적용] 프록시 실패 시 다이렉트 통신
+    # 💡 [핵심] 네이버 시청률: 기존 태그 파싱 시도 후 실패하면 화면 전체 텍스트 긁기
     def _scrape_naver_ratings(self, query):
         url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -146,10 +137,9 @@ class ChartEngine:
 
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 파싱 로직은 대표님 코드 100% 그대로 유지
+            # 1차 시도: 기존 방식 (table 태그 찾기)
             tables = soup.select('table')
             rating_text = ""
-            
             for table in tables:
                 if '%' in table.text or '시청률' in table.text:
                     rows = table.select('tr')
@@ -162,11 +152,19 @@ class ChartEngine:
                             rating_text += f"- Title: {title}, Rating: {rating}\n"
                     break 
                     
-            return rating_text if rating_text else None
+            if rating_text:
+                return rating_text
+            
+            # 2차 시도: 네이버가 표 디자인을 바꿨다면 메인 영역 전체 텍스트를 AI에게 던짐
+            main_pack = soup.select_one('#main_pack')
+            if main_pack:
+                return main_pack.get_text(separator=' | ', strip=True)[:8000]
+                
+            return None
         except Exception:
             return None
 
-    # 💡 [우회 로직 적용] 프록시 실패 시 다이렉트 통신
+    # 💡 [핵심] 네이버 블로그: 기존 태그 파싱 시도 후 실패하면 화면 전체 텍스트 긁기
     def _scrape_naver_blogs(self, query):
         url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -184,14 +182,28 @@ class ChartEngine:
 
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 파싱 로직은 대표님 코드 100% 그대로 유지
+            # 1차 시도: 기존 방식 (a.title_link 태그 찾기)
             titles = soup.select('a.title_link')
-            if not titles: return None
+            if titles:
+                context = ""
+                for i in range(min(20, len(titles))):
+                    context += f"- Title: {titles[i].text.strip()}\n"
+                return context
+                
+            # 2차 시도: 네이버가 태그 이름을 바꿨을 경우 범용 클래스 검색
+            fallback_titles = soup.select('.api_txt_lines, .link_tit, .title')
+            if fallback_titles:
+                context = ""
+                for i in range(min(20, len(fallback_titles))):
+                    context += f"- Title: {fallback_titles[i].text.strip()}\n"
+                return context
             
-            context = ""
-            for i in range(min(20, len(titles))):
-                context += f"- Title: {titles[i].text.strip()}\n"
-            return context
+            # 3차 시도: 그래도 없으면 메인 영역 텍스트 전체 던지기
+            main_pack = soup.select_one('#main_pack')
+            if main_pack:
+                return main_pack.get_text(separator=' | ', strip=True)[:8000]
+                
+            return None
         except Exception:
             return None
 
