@@ -37,7 +37,6 @@ class NaverTrendEngine:
         else:
             self.proxies = None
         
-        # 💡 [수정] 단 1개의 제미나이 키만 불러옵니다
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
 
         if self.gemini_key:
@@ -51,11 +50,9 @@ class NaverTrendEngine:
 
     def _call_gemini_with_fallback(self, prompt, temperature=0.2):
         if not self.gemini_key or not self.model_name: 
-            print("❌ No Gemini key or model available!")
             return None
             
         try:
-            # 💡 [수정] 복잡한 루프 없이 바로 1개의 키로 호출
             client = genai.Client(api_key=self.gemini_key)
             response = client.models.generate_content(
                 model=self.model_name,
@@ -72,18 +69,9 @@ class NaverTrendEngine:
             return None
 
     def _get_google_image(self, query):
-        if not self.google_api_key or not self.google_cx:
-            return ""
-            
+        if not self.google_api_key or not self.google_cx: return ""
         url = "https://customsearch.googleapis.com/customsearch/v1"
-        params = {
-            "key": self.google_api_key,
-            "cx": self.google_cx,
-            "q": query,
-            "searchType": "image",
-            "num": 1 
-        }
-        
+        params = {"key": self.google_api_key, "cx": self.google_cx, "q": query, "searchType": "image", "num": 1}
         try:
             res = requests.get(url, params=params, timeout=10)
             data = res.json()
@@ -96,15 +84,11 @@ class NaverTrendEngine:
 
     def _scrape_article_full(self, url):
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             res = None
             if self.proxies:
-                try:
-                    res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                try: res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
                 except: pass
-            
             if not res or res.status_code != 200:
                 res = requests.get(url, headers=headers, verify=False, timeout=10)
                 
@@ -127,13 +111,10 @@ class NaverTrendEngine:
                                 break
             
             if image_url:
-                if image_url.startswith("//"):
-                    image_url = "https:" + image_url
-                elif image_url.startswith("http://"):
-                    image_url = image_url.replace("http://", "https://")
+                if image_url.startswith("//"): image_url = "https:" + image_url
+                elif image_url.startswith("http://"): image_url = image_url.replace("http://", "https://")
 
             content_area = soup.select_one('#dic_area, #newsct_article, #artc_body, #newsEndContents')
-            
             if content_area:
                 raw_text = content_area.get_text(separator='\n', strip=True)
                 lines = raw_text.split('\n')
@@ -141,47 +122,39 @@ class NaverTrendEngine:
                 clean_lines = [line.strip() for line in lines if len(line.strip()) >= 20 and not any(bad in line for bad in blacklist)]
                 return " ".join(clean_lines), image_url
             return "", image_url 
-        except:
-            return "", ""
+        except: return "", ""
 
-    def get_target_10_people(self, category_keyword, exclude_names):
+    # 💡 [핵심 반영] 10명이 아닌 15명을 넉넉히 가져오도록 변경
+    def get_target_people(self, category_keyword, exclude_names):
         if not self.naver_client_id: return []
-            
         url = "https://openapi.naver.com/v1/search/news.json"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": category_keyword, "display": 100, "sort": "date"}
-        
         try:
             res = requests.get(url, headers=headers, params=params, timeout=15)
             res.raise_for_status()
             news_items = res.json().get("items", [])
-            
             now_utc = datetime.now(timezone.utc)
             combined_text = ""
-            
             for item in news_items:
                 pub_date = parsedate_to_datetime(item['pubDate'])
-                if now_utc - pub_date > timedelta(hours=24):
-                    continue
-                    
+                if now_utc - pub_date > timedelta(hours=24): continue
                 title = BeautifulSoup(item['title'], 'html.parser').text
                 desc = BeautifulSoup(item['description'], 'html.parser').text
                 combined_text += f"- {title}: {desc}\n"
 
-            if not combined_text:
-                return []
-
+            if not combined_text: return []
             prompt = f"Extract ONLY HUMAN NAMES (Korean celebrities/figures) from the text: {combined_text[:12000]}\nRules: Extract up to 50 names. Output strictly as JSON array of strings like: [\"Name1\", \"Name2\"]"
-            
             result_text = self._call_gemini_with_fallback(prompt, temperature=0.1)
             if not result_text: return []
             
             extracted_names = json.loads(result_text)
             name_counts = Counter(extracted_names)
             sorted_all_names = [name for name, count in name_counts.most_common()]
-            
             filtered_names = [name for name in sorted_all_names if name not in exclude_names]
-            return filtered_names[:10]
+            
+            # 15명을 리턴하여 카테고리 쏠림 대비 여유분 확보
+            return filtered_names[:15]
 
         except Exception as e:
             print(f"❌ Error extracting people: {e}")
@@ -191,33 +164,26 @@ class NaverTrendEngine:
         url = "https://openapi.naver.com/v1/search/news.json"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": person_name, "display": 15, "sort": "date"}
-        
         try:
             res = requests.get(url, headers=headers, params=params, timeout=10)
             items = res.json().get("items", [])
-            
             now_utc = datetime.now(timezone.utc)
             korea_tz = pytz.timezone('Asia/Seoul')
             now_kst = datetime.now(korea_tz).strftime('%Y-%m-%d %H:%M:%S KST')
             
             article_texts = []
-            first_link = ""
-            first_image = ""
+            first_link, first_image = "", ""
             
             for item in items:
                 pub_date = parsedate_to_datetime(item['pubDate'])
                 if now_utc - pub_date > timedelta(hours=24): continue
-                    
                 link = item['link']
                 if not first_link: first_link = link
                 
                 full_text, img_url = self._scrape_article_full(link)
+                if img_url and not first_image: first_image = img_url
                 
-                if img_url and not first_image:
-                    first_image = img_url
-                
-                if full_text and len(full_text) > 100:
-                    article_texts.append(f"[본문수집 성공] {full_text}")
+                if full_text and len(full_text) > 100: article_texts.append(f"[본문수집 성공] {full_text}")
                 else:
                     desc = BeautifulSoup(item['description'], 'html.parser').text
                     article_texts.append(f"[API요약 땜빵] {desc}")
@@ -225,13 +191,13 @@ class NaverTrendEngine:
                 if len(article_texts) >= 3: break
                 
             if not article_texts: return None
-
             if not first_image:
                 print(f"  ⚠️ 네이버 이미지 실패. 구글 검색 작동: {person_name}")
                 first_image = self._get_google_image(f"{person_name} 연예인")
                 
             combined_articles = "\n\n".join(article_texts)
             
+            # 💡 [핵심 수정] 자유로운 길이, 제목 포맷 강제, 스캔들 고득점 부여
             prompt = f"""
             Persona: You are a sharp Entertainment News Chief Editor.
             Current Time in Korea: {now_kst}
@@ -239,13 +205,18 @@ class NaverTrendEngine:
             Recent News about '{person_name}': {combined_articles[:10000]}
             
             Task:
-            1. Write a 3-sentence engaging summary based on the news above.
-            2. Create a catchy headline.
-            3. TRANSLATE BOTH the headline and the summary into ENGLISH.
-            4. Evaluate the 'Hotness Score' from 1 to 100.
+            1. Summary: Write an engaging English summary based on the depth of the news. The length can be anywhere from 1 to 10 sentences. STRICT RULE: DO NOT exceed 10 sentences.
+            2. Headline: Create a catchy English headline. STRICT RULE: It MUST start with the person's name in brackets. Example: "[{person_name}] The English Headline Here".
+            3. Hotness Score (1-100): Evaluate the trend. STRICT RULE: DO NOT penalize scandals, dating news, DUI, or controversies. These are HIGH-TRAFFIC viral issues and MUST receive HIGH scores (80-100).
+            4. Category Routing: Determine the actual 'category' based on the NEWS CONTENT:
+               - Movie (box office, filming) -> 'k-movie'
+               - Drama (ratings, episodes) -> 'k-drama'
+               - Music, albums, idol groups, or concerts -> 'k-pop'
+               - PERSONAL LIFE (marriage, parenting, dating, scandal, DUI, controversy) or VARIETY SHOWS -> 'k-entertain'
+               - Influencers or general culture -> 'k-culture'
             
             Format: Output ONLY valid JSON matching this structure:
-            {{ "title": "English Headline", "summary": "English summary...", "score": 85 }}
+            {{ "category": "k-entertain", "title": "[{person_name}] English Headline...", "summary": "English summary...", "score": 95 }}
             """
             
             print(f"  > Writing & Translating article for: {person_name}")
@@ -259,7 +230,6 @@ class NaverTrendEngine:
             if 'score' not in summary_data: summary_data['score'] = 50 
                 
             return summary_data
-            
         except Exception as e:
             print(f"❌ Error processing {person_name}: {e}")
             return None
