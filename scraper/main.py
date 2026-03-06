@@ -79,7 +79,20 @@ def run_top10_charts(db):
         result_json_str = chart_engine.get_top10_chart(category)
         print(f"\n✅ Result for {category}:\n{result_json_str}")
         
-        # (필요시 차트 결과를 live_rankings 테이블 등에 저장하는 로직 추가 가능)
+        # 💡 [여기 수정됨] 뽑아온 JSON 문자열을 파이썬 딕셔너리로 변환 후 DB에 저장!
+        if result_json_str:
+            try:
+                data = json.loads(result_json_str)
+                top10_list = data.get("top10", [])
+                
+                if top10_list:
+                    # 데이터베이스 클래스의 차트 저장 함수 호출 
+                    db.save_chart_results(category=category, results=top10_list)
+                    print(f"  💾 [DB 저장 성공] {category} 차트 {len(top10_list)}개 업데이트 완료!")
+                else:
+                    print(f"  ⚠️ [DB 저장 스킵] {category} 차트 데이터가 비어있습니다.")
+            except Exception as e:
+                print(f"  ❌ [DB 저장 에러] {category} 데이터 파싱 또는 저장 실패: {e}")
         
         time.sleep(2) # 각 사이트 크롤링 봇 차단 방지용 딜레이
 
