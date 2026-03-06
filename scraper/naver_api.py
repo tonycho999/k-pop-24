@@ -8,8 +8,10 @@ from bs4 import BeautifulSoup
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from groq import Groq
+import google.generativeai as genai
+
 from database import Database
+from model_manager import ModelManager
 
 class NaverTrendEngine:
     def __init__(self, db: Database):
@@ -17,7 +19,7 @@ class NaverTrendEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        # 구글 이미지 검색 API 키 셋업
+        # 구글 이미지 검색 API 키
         self.google_api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
         self.google_cx = os.environ.get("GOOGLE_SEARCH_CX")
         
@@ -35,49 +37,61 @@ class NaverTrendEngine:
         else:
             self.proxies = None
         
-        self.groq_keys = []
+        # 💡 Gemini API 키 로드 및 ModelManager 연동
+        self.gemini_keys = []
         for i in range(1, 9):
-            key = os.environ.get(f"GROQ_API_KEY{i}")
-            if key: self.groq_keys.append(key)
+            key = os.environ.get(f"GEMINI_API_KEY{i}")
+            if key: self.gemini_keys.append(key)
 
-    def _call_groq_with_fallback(self, prompt, temperature=0.2):
-        if not self.groq_keys: 
-            print("❌ No Groq keys available!")
+        if self.gemini_keys:
+            # 모델 리스트를 불러오기 위해 첫 번째 키로 임시 인증
+            genai.configure(api_key=self.gemini_keys[0])
+            manager = ModelManager(provider="gemini")
+            self.model_name = manager.get_best_model()
+            if not self.model_name:
+                self.model_name = "gemini-2.5-flash"
+        else:
+            self.model_name = None
+
+    def _call_gemini_with_fallback(self, prompt, temperature=0.2):
+        if not self.gemini_keys or not self.model_name: 
+            print("❌ No Gemini keys or model available!")
             return None
             
-        total_keys = len(self.groq_keys)
+        total_keys = len(self.gemini_keys)
         current_run_count = self.db.get_groq_index()
         
         for offset in range(total_keys):
             key_index = current_run_count % total_keys
-            current_key = self.groq_keys[key_index]
+            current_key = self.gemini_keys[key_index]
             
             try:
-                client = Groq(api_key=current_key)
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": "You are a strict data parser. Output nothing but JSON."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    model="llama-3.3-70b-versatile", 
-                    temperature=temperature
+                genai.configure(api_key=current_key)
+                # 💡 ModelManager가 찾아준 최적의 모델 사용
+                model = genai.GenerativeModel(self.model_name)
+                
+                response = model.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=temperature,
+                        response_mime_type="application/json",
+                    )
                 )
                 
                 current_run_count += 1
                 self.db.update_groq_index(current_run_count)
                 
-                return chat_completion.choices[0].message.content.strip()
+                return response.text.strip()
                 
             except Exception as e:
-                print(f"  ⚠️ Groq Error (Key #{key_index+1}): {e}. Switching to next key...")
+                print(f"  ⚠️ Gemini Error (Key #{key_index+1}): {e}. Switching to next key...")
                 current_run_count += 1
                 self.db.update_groq_index(current_run_count)
                 time.sleep(1)
                 
-        print("❌ All Groq API Keys failed.")
+        print("❌ All Gemini API Keys failed.")
         return None
 
-    # 구글에서 무조건 이미지를 강제로 퍼오는 함수
     def _get_google_image(self, query):
         if not self.google_api_key or not self.google_cx:
             return ""
@@ -88,7 +102,7 @@ class NaverTrendEngine:
             "cx": self.google_cx,
             "q": query,
             "searchType": "image",
-            "num": 1 # 딱 1장만 가져옴
+            "num": 1 
         }
         
         try:
@@ -104,16 +118,14 @@ class NaverTrendEngine:
     def _scrape_article_full(self, url):
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
             
             res = None
             if self.proxies:
                 try:
                     res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
-                except:
-                    pass
+                except: pass
             
             if not res or res.status_code != 200:
                 res = requests.get(url, headers=headers, verify=False, timeout=10)
@@ -123,7 +135,7 @@ class NaverTrendEngine:
             
             image_url = ""
             
-            og_img = soup.select_one('meta[property="og:image"], meta[name="og:image"], meta[itemprop="image"]')
+            og_img = soup.select_one('meta[property="og:image"], meta[name="og:image"]')
             if og_img and og_img.get('content'):
                 image_url = str(og_img.get('content')).strip()
             
@@ -143,20 +155,13 @@ class NaverTrendEngine:
                 elif image_url.startswith("http://"):
                     image_url = image_url.replace("http://", "https://")
 
-            content_area = soup.select_one('#dic_area, #newsct_article, #artc_body, #newsEndContents, [itemprop="articleBody"]')
+            content_area = soup.select_one('#dic_area, #newsct_article, #artc_body, #newsEndContents')
             
             if content_area:
                 raw_text = content_area.get_text(separator='\n', strip=True)
                 lines = raw_text.split('\n')
-                blacklist = ['구독되었습니다', 'Copyright', '무단 전재', '재배포 금지', '기자의 다른 기사', '섹션 정보']
-                clean_lines = []
-                
-                for line in lines:
-                    line = line.strip()
-                    if len(line) < 20: continue 
-                    if any(bad in line for bad in blacklist): continue 
-                    clean_lines.append(line)
-                    
+                blacklist = ['구독되었습니다', 'Copyright', '무단 전재', '재배포 금지']
+                clean_lines = [line.strip() for line in lines if len(line.strip()) >= 20 and not any(bad in line for bad in blacklist)]
                 return " ".join(clean_lines), image_url
             return "", image_url 
         except:
@@ -187,17 +192,13 @@ class NaverTrendEngine:
                 combined_text += f"- {title}: {desc}\n"
 
             if not combined_text:
-                print(f"  ⚠️ No articles within the last 24 hours for '{category_keyword}'.")
                 return []
 
-            prompt = f"Extract ONLY HUMAN NAMES (Korean celebrities/figures) from the text: {combined_text[:12000]}\nRules: Extract up to 50 names. Output strictly as JSON array of strings: [\"Name1\", \"Name2\"]"
+            prompt = f"Extract ONLY HUMAN NAMES (Korean celebrities/figures) from the text: {combined_text[:12000]}\nRules: Extract up to 50 names. Output strictly as JSON array of strings like: [\"Name1\", \"Name2\"]"
             
-            result_text = self._call_groq_with_fallback(prompt, temperature=0.1)
+            result_text = self._call_gemini_with_fallback(prompt, temperature=0.1)
             if not result_text: return []
             
-            if result_text.startswith("```"):
-                result_text = result_text.replace("```json", "").replace("```", "").strip()
-                
             extracted_names = json.loads(result_text)
             name_counts = Counter(extracted_names)
             sorted_all_names = [name for name, count in name_counts.most_common()]
@@ -210,8 +211,7 @@ class NaverTrendEngine:
             return []
 
     def process_person(self, person_name, time_context):
-        # 💡 [버그 수정 완료] 이상한 괄호 [] 가 들어가지 않은 깨끗한 주소입니다.
-        url = "[https://openapi.naver.com/v1/search/news.json](https://openapi.naver.com/v1/search/news.json)"
+        url = "https://openapi.naver.com/v1/search/news.json"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
         params = {"query": person_name, "display": 15, "sort": "date"}
         
@@ -229,8 +229,7 @@ class NaverTrendEngine:
             
             for item in items:
                 pub_date = parsedate_to_datetime(item['pubDate'])
-                if now_utc - pub_date > timedelta(hours=24):
-                    continue
+                if now_utc - pub_date > timedelta(hours=24): continue
                     
                 link = item['link']
                 if not first_link: first_link = link
@@ -248,13 +247,10 @@ class NaverTrendEngine:
                 
                 if len(article_texts) >= 3: break
                 
-            if not article_texts:
-                print(f"  ⚠️ No recent articles (<24h) found for: {person_name}")
-                return None
+            if not article_texts: return None
 
-            # 네이버에서 3개나 뒤졌는데 이미지가 없으면 구글에서 강제로 퍼옵니다!
             if not first_image:
-                print(f"  ⚠️ 네이버 이미지 실패. 구글 이미지 검색으로 넘어갑니다: {person_name}")
+                print(f"  ⚠️ 네이버 이미지 실패. 구글 검색 작동: {person_name}")
                 first_image = self._get_google_image(f"{person_name} 연예인")
                 
             combined_articles = "\n\n".join(article_texts)
@@ -263,26 +259,21 @@ class NaverTrendEngine:
             Persona: You are a sharp Entertainment News Chief Editor.
             Current Time in Korea: {now_kst}
             Time Context: {time_context}
-            
             Recent News about '{person_name}': {combined_articles[:10000]}
             
             Task:
             1. Write a 3-sentence engaging summary based on the news above.
             2. Create a catchy headline.
-            3. TRANSLATE BOTH the headline and the summary into ENGLISH. Your final output must be completely in English.
-            4. Evaluate the 'Hotness Score' (평점) from 1 to 100.
-            5. Output STRICTLY as JSON.
+            3. TRANSLATE BOTH the headline and the summary into ENGLISH.
+            4. Evaluate the 'Hotness Score' from 1 to 100.
             
-            Format:
-            {{ "title": "[ English Headline ]", "summary": "English summary...", "score": 85 }}
+            Format: Output ONLY valid JSON matching this structure:
+            {{ "title": "English Headline", "summary": "English summary...", "score": 85 }}
             """
             
             print(f"  > Writing & Translating article for: {person_name}")
-            result_text = self._call_groq_with_fallback(prompt, temperature=0.5)
+            result_text = self._call_gemini_with_fallback(prompt, temperature=0.5)
             if not result_text: return None
-            
-            if result_text.startswith("```"):
-                result_text = result_text.replace("```json", "").replace("```", "").strip()
             
             summary_data = json.loads(result_text)
             summary_data['name'] = person_name
