@@ -37,7 +37,7 @@ export default function NewsFeed({ news, loading, onOpen }: NewsFeedProps) {
         
         // 💡 [수정됨] 기존 <= 6 을 <= 8 로 변경! 
         // 이제 3,4,5위가 한 줄을 채우고, 6,7,8위가 다음 한 줄을 예쁘게 채웁니다.
-        const isMedium = displayRank > 2 && displayRank <= 8;
+        const isMedium = displayRank > 2 && displayRank <= 5;
 
         return (
           <div 
