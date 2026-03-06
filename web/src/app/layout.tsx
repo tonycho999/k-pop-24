@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
+import Footer from '@/components/Footer'; // 💡 [추가] Footer 컴포넌트 불러오기
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -44,7 +45,14 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className}>
+        {/* 💡 [추가] 콘텐츠 영역이 화면 전체 높이를 차지하도록 하여 Footer를 맨 아래로 밀어냅니다 */}
+        <main className="min-h-screen">
+          {children}
+        </main>
+        {/* 💡 [추가] 모든 페이지 하단에 Footer 고정 */}
+        <Footer />
+      </body>
     </html >
   );
 }
