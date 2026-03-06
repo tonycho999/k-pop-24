@@ -3,3 +3,5 @@ supabase
 requests
 google-generativeai
 beautifulsoup4
+pytz
+python-dotenv
