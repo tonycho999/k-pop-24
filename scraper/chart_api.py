@@ -55,7 +55,6 @@ class ChartEngine:
             source_type = "Official KOBIS Daily Box Office"
             
         elif category == "k-pop":
-            # 무조건 '실시간(Real-time)' 차트를 긁어오기 위해 벅스 실시간 차트 사용
             raw_context = self._scrape_bugs_realtime()
             source_type = "Bugs Music REAL-TIME Chart"
             
@@ -97,16 +96,26 @@ class ChartEngine:
         except Exception:
             return None
 
+    # 💡 [우회 로직 적용] 프록시 실패 시 다이렉트 통신
     def _scrape_bugs_realtime(self):
-        """방어막 우회가 깔끔한 벅스(Bugs)의 '실시간' 차트 강제 추출"""
-        if not self.proxies: return None
         url = "https://music.bugs.co.kr/chart"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         
         try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
+            res = None
+            if self.proxies:
+                try:
+                    res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                except:
+                    pass
+            
+            # 프록시가 없거나, 접속 실패했거나, 봇 차단(200 아님) 당했으면 다이렉트로 재시도!
+            if not res or res.status_code != 200:
+                res = requests.get(url, headers=headers, verify=False, timeout=10)
+
             soup = BeautifulSoup(res.text, 'html.parser')
             
+            # 파싱 로직은 대표님 코드 100% 그대로 유지
             titles = soup.select('p.title a')
             artists = soup.select('p.artist a:nth-of-type(1)')
             
@@ -119,45 +128,63 @@ class ChartEngine:
         except Exception:
             return None
 
+    # 💡 [우회 로직 적용] 프록시 실패 시 다이렉트 통신
     def _scrape_naver_ratings(self, query):
-        """네이버 검색 결과에서 '표(Table)' 안의 최신 시청률 데이터만 핀셋 추출"""
-        if not self.proxies: return None
         url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         
         try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
+            res = None
+            if self.proxies:
+                try:
+                    res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                except:
+                    pass
+            
+            if not res or res.status_code != 200:
+                res = requests.get(url, headers=headers, verify=False, timeout=10)
+
             soup = BeautifulSoup(res.text, 'html.parser')
             
+            # 파싱 로직은 대표님 코드 100% 그대로 유지
             tables = soup.select('table')
             rating_text = ""
             
             for table in tables:
-                # 테이블 내용 중 시청률(%) 기호가 있으면 타겟으로 간주
                 if '%' in table.text or '시청률' in table.text:
                     rows = table.select('tr')
                     for i, row in enumerate(rows):
-                        if i == 0: continue # 헤더(제목) 행은 건너뜀
+                        if i == 0: continue
                         cols = row.select('td')
                         if len(cols) >= 2:
                             title = cols[0].text.strip()
                             rating = cols[1].text.strip()
                             rating_text += f"- Title: {title}, Rating: {rating}\n"
-                    break # 가장 상단의 최신 표 1개만 가져오고 멈춤
+                    break 
                     
             return rating_text if rating_text else None
         except Exception:
             return None
 
+    # 💡 [우회 로직 적용] 프록시 실패 시 다이렉트 통신
     def _scrape_naver_blogs(self, query):
-        if not self.proxies: return None
         url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         
         try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
+            res = None
+            if self.proxies:
+                try:
+                    res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                except:
+                    pass
+            
+            if not res or res.status_code != 200:
+                res = requests.get(url, headers=headers, verify=False, timeout=10)
+
             soup = BeautifulSoup(res.text, 'html.parser')
             
+            # 파싱 로직은 대표님 코드 100% 그대로 유지
             titles = soup.select('a.title_link')
             if not titles: return None
             
@@ -168,7 +195,6 @@ class ChartEngine:
         except Exception:
             return None
 
-    # 💡 [여기만 수정됨] Groq API 무한 릴레이 기능 이식 완료
     def _process_with_groq(self, category, context, source_type):
         if not self.groq_keys or not self.model_name:
             return json.dumps({"top10": []})
@@ -203,7 +229,6 @@ class ChartEngine:
             
             try:
                 print(f"  > Sending factual real-time data to Groq API (Key #{key_index + 1})...", flush=True)
-                # 매번 새로운 키를 장착한 클라이언트를 생성하여 사용합니다.
                 client = Groq(api_key=current_key)
                 
                 chat_completion = client.chat.completions.create(
@@ -212,10 +237,9 @@ class ChartEngine:
                         {"role": "user", "content": prompt}
                     ],
                     model=self.model_name,
-                    temperature=0.0, # 상상력 100% 차단. 무조건 텍스트에 있는 팩트만 출력
+                    temperature=0.0, 
                 )
 
-                # 성공 시 DB 카운트 1 증가
                 current_run_count += 1
                 self.db.update_groq_index(current_run_count)
 
@@ -225,12 +249,10 @@ class ChartEngine:
                 return content
 
             except Exception as e:
-                # 에러(한도 초과 등) 발생 시 다음 키로 릴레이
                 print(f"  ⚠️ Groq Error on Key #{key_index + 1}: {e}. Switching to next key...", flush=True)
                 current_run_count += 1
                 self.db.update_groq_index(current_run_count)
-                time.sleep(1) # API 호출 과부하 방지용 1초 대기
+                time.sleep(1) 
                 
-        # 8개 키를 다 썼는데도 실패한 경우
         print("❌ All Groq API Keys failed.", flush=True)
         return json.dumps({"top10": []})
