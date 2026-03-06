@@ -84,7 +84,7 @@ def run_hourly_news(db):
                 
                 # 💡 [핵심 3] 하위권 인물 정보 부족 대비책 (AI 환각 방지)
                 # 뉴스 퀄리티(점수)가 65점 미만이면 DB를 망치지 않게 과감히 스킵!
-                if score < 65:
+                if score < 40:
                     print(f"  ⏭️ [Weak News Skip] '{person}' 님은 기사 내용이 부족하여 제외합니다. (Score: {score}점)")
                     continue
                 
