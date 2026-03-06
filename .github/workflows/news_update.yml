@@ -18,23 +18,31 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install supabase requests beautifulsoup4 groq google-generativeai pytz
+        # 💡 [핵심 수정] groq, google-generativeai 삭제 -> google-genai 로 완벽 교체
+        run: |
+          python -m pip install --upgrade pip
+          pip install supabase requests beautifulsoup4 google-genai pytz
 
       - name: Run News Scraper
         env:
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          # 🚨 주의: 네이버 API 키가 추가되어야 합니다!
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-          GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
-          GROQ_API_KEY2: ${{ secrets.GROQ_API_KEY2 }}
-          GROQ_API_KEY3: ${{ secrets.GROQ_API_KEY3 }}
-          GROQ_API_KEY4: ${{ secrets.GROQ_API_KEY4 }}
-          GROQ_API_KEY5: ${{ secrets.GROQ_API_KEY5 }}
-          GROQ_API_KEY6: ${{ secrets.GROQ_API_KEY6 }}
-          GROQ_API_KEY7: ${{ secrets.GROQ_API_KEY7 }}
-          GROQ_API_KEY8: ${{ secrets.GROQ_API_KEY8 }}
+          
+          # 💡 [추가] 구글 이미지 검색용 키 연동
+          GOOGLE_SEARCH_API_KEY: ${{ secrets.GOOGLE_SEARCH_API_KEY }}
+          GOOGLE_SEARCH_CX: ${{ secrets.GOOGLE_SEARCH_CX }}
+          
+          # 💡 [교체] Groq 키를 빼고 Gemini 키 연동
+          GEMINI_API_KEY1: ${{ secrets.GEMINI_API_KEY1 }}
+          GEMINI_API_KEY2: ${{ secrets.GEMINI_API_KEY2 }}
+          GEMINI_API_KEY3: ${{ secrets.GEMINI_API_KEY3 }}
+          GEMINI_API_KEY4: ${{ secrets.GEMINI_API_KEY4 }}
+          GEMINI_API_KEY5: ${{ secrets.GEMINI_API_KEY5 }}
+          GEMINI_API_KEY6: ${{ secrets.GEMINI_API_KEY6 }}
+          GEMINI_API_KEY7: ${{ secrets.GEMINI_API_KEY7 }}
+          GEMINI_API_KEY8: ${{ secrets.GEMINI_API_KEY8 }}
         run: |
           cd scraper
           python -u main.py news  # 👈 'news' 모드로 실행
