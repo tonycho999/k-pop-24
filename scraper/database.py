@@ -54,7 +54,8 @@ class Database:
                 "title": res.get("title", ""),
                 "summary": res.get("summary", ""),
                 "link": res.get("link", ""),
-                "image_url": "", 
+                # 💡 [치명적 버그 수정] 빈칸이었던 image_url을 드디어 제대로 받아서 넣습니다!
+                "image_url": res.get("image_url", ""), 
                 "score": res.get("score", 50), # AI가 부여한 화제성 평점 (기본값 50)
                 "likes": 0,
                 "created_at": now
@@ -83,3 +84,31 @@ class Database:
                 print(f"🧹 Cleaned up {len(ids_to_delete)} old articles. Maintained exactly 50 for '{category}'.")
         except Exception as e:
             print(f"⚠️ Error enforcing max 50 limit: {e}")
+
+    # 💡 [새로 추가된 함수] 차트 데이터를 DB에 저장 (오래된 차트는 지우고 새 차트로 덮어쓰기)
+    def save_chart_results(self, category: str, results: list):
+        if not self.client or not results: return
+        
+        # 1. 차트는 '최신 10개'만 유지하므로 기존 해당 카테고리의 차트를 지웁니다.
+        try:
+            self.client.table("live_rankings").delete().eq("category", category).execute()
+        except Exception:
+            pass # 기존 데이터가 없어도 무시
+
+        # 2. 새로운 차트 10개 삽입
+        chart_data = []
+        now = datetime.utcnow().isoformat()
+        
+        for item in results:
+            chart_data.append({
+                "category": category,
+                "rank": item.get("rank"),
+                "title": item.get("title", ""),
+                "info": item.get("info", ""),
+                "updated_at": now
+            })
+
+        try:
+            self.client.table("live_rankings").insert(chart_data).execute()
+        except Exception as e:
+            print(f"❌ Chart DB Save Error: {e}")
