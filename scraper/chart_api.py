@@ -144,7 +144,7 @@ class ChartEngine:
         {context}
         
         CRITICAL RULES:
-        1. Base your rankings ONLY on the provided source text. {special_rule}
+        1. Base your rankings ONLY on the provided source text. For the music chart, place ONLY the Song Title in the 'title' field, and place ONLY the Singer Name (Artist Name) in the 'info' field. DO NOT include any rank descriptions (like 'ranked number one') in the 'info' field. {special_rule}
         2. Extract up to 10 items. If irrelevant or empty, return: {{ "top10": [] }}
         3. Translate all Korean into English naturally.
         4. 'info' MUST be a concise factual description (e.g., "A highly mentioned show" or "A popular pop-up store in Seongsu").
