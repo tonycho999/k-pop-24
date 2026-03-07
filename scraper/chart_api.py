@@ -4,6 +4,7 @@ import requests
 import pytz
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
+import urllib.parse
 from email.utils import parsedate_to_datetime
 
 from google import genai
@@ -16,7 +17,7 @@ class ChartEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
 
-        # 💡 닐슨코리아는 프록시가 없으면 100% 차단당합니다.
+        # 웹 크롤링(차트, 시청률, 블로그)을 위한 프록시 유지
         self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
         self.proxy_port = os.environ.get("PROXY_PORT", "12323")
         self.proxy_user = os.environ.get("PROXY_USER")
@@ -45,18 +46,21 @@ class ChartEngine:
         print(f"\n📊 --- Processing {category} (ABSOLUTE LATEST) ---", flush=True)
 
         if category == "k-actor":
+            # 💡 [방법 B] 군더더기 없이 "배우" 단일 키워드로 뉴스 API 검색
             raw_context = self._scrape_naver_news_api("배우")
-            source_type = "Naver News Mention Count"
+            source_type = "Naver News Mention Count (Last 24 Hours)"
         elif category == "k-pop":
+            # 💡 벅스 실시간 차트 유지
             raw_context = self._scrape_bugs_realtime()
             source_type = "Bugs Music REAL-TIME Chart"
         elif category == "k-entertain":
-            # 💡 [핵심] 닐슨코리아 공식 데이터로 교체
-            raw_context = self._scrape_nielsen_ratings()
-            source_type = "Nielsen Korea Official Ratings"
+            # 💡 예전에 잘 작동했던 네이버 통합검색 시청률 표 크롤링 복구!
+            raw_context = self._scrape_naver_ratings("현재 방영중 예능 시청률 순위")
+            source_type = "Naver Search (Entertainment Ratings Table)"
         elif category == "k-culture":
-            raw_context = self._scrape_naver_news_api("핫플레이스")
-            source_type = "Naver Realtime Viral Trends"
+            # 💡 네이버 VIEW(블로그) 탭 크롤링 복구 (외국인 맞춤형 장소/유행)
+            raw_context = self._scrape_naver_blogs("한국 핫플레이스 국내 축제 유행 디저트")
+            source_type = "Naver VIEW (Blog/Cafe Viral Trends)"
         else:
             raw_context = None
             source_type = "Unknown"
@@ -66,45 +70,6 @@ class ChartEngine:
             return json.dumps({"top10": []})
 
         return self._process_with_gemini(category, context=raw_context, source_type=source_type)
-
-    def _scrape_nielsen_ratings(self):
-        # 지상파, 종편, 케이블 페이지를 순회하며 수집
-        urls = [
-            "https://www.nielsenkorea.co.kr/tv_terrestrial_day.asp", # 지상파
-            "https://www.nielsenkorea.co.kr/tv_terrestrial_day.asp?menu=Tit_1&sub_menu=2_1", # 종편
-            "https://www.nielsenkorea.co.kr/tv_terrestrial_day.asp?menu=Tit_1&sub_menu=3_1"  # 케이블
-        ]
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        combined_ratings = ""
-
-        try:
-            for url in urls:
-                res = None
-                if self.proxies:
-                    res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
-                else:
-                    res = requests.get(url, headers=headers, verify=False, timeout=15)
-                
-                # 닐슨은 EUC-KR 인코딩을 사용함
-                res.encoding = 'euc-kr'
-                soup = BeautifulSoup(res.text, 'html.parser')
-                
-                # 시청률 테이블 추출
-                tables = soup.select('table.정렬') # 닐슨코리아의 고유 테이블 클래스
-                for table in tables:
-                    rows = table.find_all('tr')
-                    for row in rows:
-                        cols = row.find_all('td')
-                        if len(cols) >= 3:
-                            title = cols[1].get_text(strip=True)
-                            rating = cols[2].get_text(strip=True)
-                            if title and rating and title != '프로그램명':
-                                combined_ratings += f"Program: {title}, Rating: {rating}\n"
-            
-            return combined_ratings if combined_ratings else None
-        except Exception as e:
-            print(f"  ❌ Nielsen Scraping Error: {e}")
-            return None
 
     def _scrape_naver_news_api(self, query):
         if not self.naver_client_id: return None
@@ -134,8 +99,9 @@ class ChartEngine:
         try:
             res = None
             if self.proxies:
-                res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
-            else:
+                try: res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                except: pass
+            if not res or res.status_code != 200:
                 res = requests.get(url, headers=headers, verify=False, timeout=10)
 
             soup = BeautifulSoup(res.text, 'html.parser')
@@ -151,6 +117,59 @@ class ChartEngine:
             print(f"  ❌ Bugs Chart Error: {e}")
             return None
 
+    def _scrape_naver_ratings(self, query):
+        url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        try:
+            res = None
+            if self.proxies:
+                try: res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                except: pass
+            if not res or res.status_code != 200:
+                res = requests.get(url, headers=headers, verify=False, timeout=10)
+
+            soup = BeautifulSoup(res.text, 'html.parser')
+            tables = soup.select('table')
+            rating_text = ""
+            for table in tables:
+                if '%' in table.text or '시청률' in table.text:
+                    rows = table.select('tr')
+                    for i, row in enumerate(rows):
+                        if i == 0: continue
+                        cols = row.select('td')
+                        if len(cols) >= 2:
+                            title = cols[0].text.strip()
+                            rating = cols[1].text.strip()
+                            rating_text += f"- Title: {title}, Rating: {rating}\n"
+                    break 
+            return rating_text if rating_text else None
+        except Exception as e:
+            print(f"  ❌ Naver Ratings Error: {e}")
+            return None
+
+    def _scrape_naver_blogs(self, query):
+        url = f"https://search.naver.com/search.naver?where=view&query={urllib.parse.quote(query)}&nso=so%3Add%2Cp%3A1d"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        try:
+            res = None
+            if self.proxies:
+                try: res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                except: pass
+            if not res or res.status_code != 200:
+                res = requests.get(url, headers=headers, verify=False, timeout=10)
+
+            soup = BeautifulSoup(res.text, 'html.parser')
+            titles = soup.select('a.title_link, .api_txt_lines, .link_tit')
+            if titles:
+                context = ""
+                for i in range(min(30, len(titles))):
+                    context += f"- Trend: {titles[i].text.strip()}\n"
+                return context
+            return None
+        except Exception as e:
+            print(f"  ❌ Naver Blogs Error: {e}")
+            return None
+
     def _process_with_gemini(self, category, context, source_type):
         if not self.gemini_key or not self.model_name:
             return json.dumps({"top10": []})
@@ -160,14 +179,14 @@ class ChartEngine:
         
         special_rule = ""
         if category == "k-actor":
-            special_rule = "Identify the REAL ACTORS mentioned most frequently. DO NOT include character names. Output ONLY real actor names."
+            special_rule = "Identify the REAL ACTORS mentioned most frequently in the news. Count their mentions and rank them. DO NOT include character names. Output ONLY real actor names."
         elif category == "k-culture":
-            special_rule = "Extract the most viral trends, foods, or memes currently happening in Korea."
+            # 💡 외국인 팬들을 타겟팅하여 큐레이션 하도록 지시!
+            special_rule = "Analyze the blog titles and extract the Top 10 viral things foreigners visiting Korea would love (e.g., hot places, local festivals, popular foods, desserts, pop-up stores). Explain briefly why it's trending."
         elif category == "k-pop":
-            special_rule = "Output the Song Title and Singer Name."
+            special_rule = "Output the Song Title and Singer Name exactly as ranked."
         elif category == "k-entertain":
-            # 💡 시청률 데이터를 기반으로 예능 랭킹을 매기도록 룰 강화
-            special_rule = "The source data is from Nielsen Korea. Identify the most popular Variety Shows (Entertain) and their ratings. Ignore news or dramas. List the TOP 10 Variety Shows by rating."
+            special_rule = "Extract the Variety Show names and their ratings from the table data. Rank them by rating."
 
         prompt = f"""
         Current Date & Time in Korea: {now_kst}.
@@ -178,11 +197,10 @@ class ChartEngine:
         
         CRITICAL RULES:
         1. Base your rankings ONLY on the provided source text. {special_rule}
-        2. EXCLUDE OUTDATED DATA.
-        3. Extract up to 10 items. If irrelevant, return: {{ "top10": [] }}
-        4. Translate all Korean titles/names naturally into English.
-        5. 'info' MUST be a concise factual description (e.g., "Rating: 15.2%").
-        6. Format strictly as JSON.
+        2. Extract up to 10 items. If irrelevant or empty, return: {{ "top10": [] }}
+        3. Translate all Korean titles, names, and places naturally into English.
+        4. 'info' MUST be a concise factual description (e.g., "Rating: 15.2%" or "A highly mentioned actor" or "A popular dessert cafe in Seongsu").
+        5. Format strictly as JSON.
         
         Required JSON Structure:
         {{ "top10": [ {{ "rank": 1, "title": "English Target Name", "info": "Factual description" }} ] }}
@@ -195,7 +213,7 @@ class ChartEngine:
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.0,
+                    temperature=0.0,  # 팩트 기반 강제
                     response_mime_type="application/json",
                 )
             )
