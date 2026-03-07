@@ -50,26 +50,39 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
           onClick={(e) => e.stopPropagation()} 
           className="bg-white dark:bg-slate-900 w-full max-w-2xl max-h-[90vh] rounded-[32px] overflow-hidden shadow-2xl flex flex-col"
         >
-          {/* Header Image 영역 - 사진 원본 비율 유지 및 독립된 영역으로 변경 */}
-          <div className="relative w-full h-64 sm:h-80 bg-slate-50 dark:bg-black/50">
+          {/* Header Image 영역 - 유튜브/애플 스타일 블러 섀도우 배경 적용 */}
+          <div className="relative w-full h-64 sm:h-80 bg-slate-900 overflow-hidden">
             {article.image_url ? (
-              <Image 
-                src={article.image_url} 
-                alt={article.title} 
-                fill
-                /* ✅ object-contain 적용: 사진이 절대 잘리지 않고 원본 비율 그대로 쏙 들어갑니다 */
-                className="object-contain p-4"
-                priority
-              />
+              <>
+                {/* 1. 뒷배경: 꽉 채우고 강하게 블러 처리 (여백을 채워주는 역할) */}
+                <div className="absolute inset-0 opacity-40">
+                  <Image 
+                    src={article.image_url} 
+                    alt="background blur" 
+                    fill
+                    className="object-cover blur-2xl scale-110" 
+                    priority
+                  />
+                </div>
+                
+                {/* 2. 메인 사진: 잘림 없이 정중앙에 배치 (그림자 효과로 배경과 분리) */}
+                <Image 
+                  src={article.image_url} 
+                  alt={article.title} 
+                  fill
+                  className="object-contain drop-shadow-2xl z-10 p-2"
+                  priority
+                />
+              </>
             ) : (
-              <div className="w-full h-full flex items-center justify-center bg-slate-900 text-cyan-500 font-bold">
+              <div className="w-full h-full flex items-center justify-center bg-slate-900 text-cyan-500 font-bold z-10 relative">
                 {article.category}
               </div>
             )}
             
             <button 
               onClick={onClose}
-              className="absolute top-4 right-4 p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md rounded-full text-white transition-all z-20"
+              className="absolute top-4 right-4 p-2 bg-black/40 hover:bg-black/60 backdrop-blur-md rounded-full text-white transition-all z-20"
             >
               <X size={20} />
             </button>
