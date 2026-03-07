@@ -50,15 +50,15 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
           onClick={(e) => e.stopPropagation()} 
           className="bg-white dark:bg-slate-900 w-full max-w-2xl max-h-[90vh] rounded-[32px] overflow-hidden shadow-2xl flex flex-col"
         >
-          {/* Header Image 영역 - NewsFeed와 동일한 로직 적용 */}
-          <div className="relative h-64 sm:h-80 bg-slate-200 dark:bg-slate-800">
+          {/* Header Image 영역 - 사진 원본 비율 유지 및 독립된 영역으로 변경 */}
+          <div className="relative w-full h-64 sm:h-80 bg-slate-50 dark:bg-black/50">
             {article.image_url ? (
               <Image 
                 src={article.image_url} 
                 alt={article.title} 
                 fill
-                /* ✅ object-top 추가로 얼굴 잘림 방지 */
-                className="object-cover object-top"
+                /* ✅ object-contain 적용: 사진이 절대 잘리지 않고 원본 비율 그대로 쏙 들어갑니다 */
+                className="object-contain p-4"
                 priority
               />
             ) : (
@@ -67,35 +67,34 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
               </div>
             )}
             
-            {/* 하단 텍스트 가독성을 위한 그라데이션 오버레이 */}
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/20 to-transparent" />
-            
             <button 
               onClick={onClose}
               className="absolute top-4 right-4 p-2 bg-black/30 hover:bg-black/50 backdrop-blur-md rounded-full text-white transition-all z-20"
             >
               <X size={20} />
             </button>
-
-            <div className="absolute bottom-0 left-0 p-6 sm:p-8 w-full z-10">
-              <div className="flex items-center gap-3 mb-3">
-                <span className="px-2.5 py-1 bg-cyan-500 text-white text-[10px] font-black uppercase rounded-lg shadow-lg">
-                  {article.category}
-                </span>
-                <span className="flex items-center gap-1.5 text-slate-300 text-xs font-bold">
-                  <Calendar size={12} />
-                  {new Date(article.created_at).toLocaleDateString()}
-                </span>
-              </div>
-              <h2 className="text-2xl sm:text-3xl font-black text-white leading-tight line-clamp-2">
-                {article.title}
-              </h2>
-            </div>
           </div>
 
           {/* Body */}
           <div className="p-6 sm:p-8 overflow-y-auto flex-1 bg-white dark:bg-slate-900">
-            <div className="flex items-center justify-between mb-6 pb-6 border-b border-slate-100 dark:border-slate-800">
+            
+            {/* ✅ 기존에 사진을 가리던 제목과 날짜를 하단 흰색 본문 영역으로 이동 (가독성 확보) */}
+            <div className="mb-6 pb-6 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="px-2.5 py-1 bg-cyan-500 text-white text-[10px] font-black uppercase rounded-lg shadow-sm">
+                  {article.category}
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-xs font-bold">
+                  <Calendar size={12} />
+                  {new Date(article.created_at).toLocaleDateString()}
+                </span>
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white leading-tight">
+                {article.title}
+              </h2>
+            </div>
+
+            <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <span className="text-yellow-500 font-black text-lg">★ {article.score?.toFixed(1) || '0.0'}</span>
                 <span className="text-slate-300 text-xs">AI Score</span>
