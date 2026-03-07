@@ -1,12 +1,31 @@
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import pytz
 import json
 
 from database import Database
 from naver_api import NaverTrendEngine
 from chart_api import ChartEngine
+
+def run_garbage_collection(db):
+    print("========================================")
+    print("🧹 [MODE: CLEANUP] Garbage Collection (DB 청소)")
+    print("========================================")
+    try:
+        # DB에 supabase 클라이언트가 연결되어 있다고 가정하고 오래된 데이터 강제 삭제
+        if hasattr(db, 'supabase'):
+            now_utc = datetime.now(timezone.utc)
+            time_24h_ago = (now_utc - timedelta(hours=24)).isoformat()
+            time_7d_ago = (now_utc - timedelta(days=7)).isoformat()
+            
+            db.supabase.table('live_news').delete().lt('created_at', time_24h_ago).execute()
+            db.supabase.table('search_archive').delete().lt('created_at', time_7d_ago).execute()
+            print("  ✅ [GC 완료] 24시간 지난 기사 & 7일 지난 검색기록 삭제 완료!")
+        else:
+            print("  ⚠️ [GC 알림] db.supabase 객체가 없어 외부 청소를 스킵합니다. (내부 로직 의존)")
+    except Exception as e:
+        print(f"  ❌ [GC 에러] DB 청소 실패: {e}")
 
 def get_time_context():
     korea_tz = pytz.timezone('Asia/Seoul')
@@ -24,35 +43,33 @@ def get_time_context():
 
 def run_hourly_news(db):
     print("========================================")
-    print("📰 [MODE: NEWS] Starting Hourly Update (Smart Routing & Global Deduplication)")
+    print("📰 [MODE: NEWS] Starting Hourly Update (Smart Routing & Scoring)")
     print("========================================")
     
     engine = NaverTrendEngine(db=db)
     time_context = get_time_context()
     print(f"⏰ Current Time Context: {time_context}")
 
-    # 💡 [핵심 수정] k-movie와 k-drama를 k-actor로 통합
+    # 💡 4대 핵심 부서 편제
     categories = {
-        "k-actor": "배우",
-        "k-pop": "K-POP 아이돌 가수",
-        "k-entertain": "예능 출연진",
-        "k-culture": "인플루언서"
+        "k-actor": "한국 영화 드라마 배우",
+        "k-pop": "K-POP 아이돌 가수 노래",
+        "k-entertain": "예능 프로그램 시청률 화제",
+        "k-culture": "한국 핫플레이스 바이럴 트렌드"
     }
 
-    # 💡 [핵심 수정] 결과 저장용 딕셔너리도 k-actor로 통합
     final_categorized_results = {
         "k-actor": [], "k-pop": [], "k-entertain": [], "k-culture": []
     }
 
-    # 💡 [핵심 수정 1] 부서(카테고리) 상관없이 DB에 있는 '모든' 인물 명단을 하나로 합침 (전사적 통합 명단)
     global_active_names = []
     for cat in categories.keys():
         global_active_names.extend(db.get_active_names(cat))
-    global_active_names = list(set(global_active_names)) # 중복 제거
+    global_active_names = list(set(global_active_names))
     
-    print(f"🌍 Global Active Names in DB: {len(global_active_names)} people")
+    print(f"🌍 Global Active Names in DB: {len(global_active_names)} items")
 
-    # 💡 [새로 추가] 이번 업데이트에서 이미 사용된 사진 URL을 기억하는 바구니
+    # 💡 전사적 이미지 중복 검열 바구니
     global_used_images = set()
 
     for category_key, search_keyword in categories.items():
@@ -63,10 +80,9 @@ def run_hourly_news(db):
         if raw_top:
             top_1 = raw_top[0]
             if top_1 in global_active_names:
-                print(f"  🔥 [Breaking News] '{top_1}' 님은 화제성이 폭발하여 속보로 다룹니다!")
+                print(f"  🔥 [Breaking News] '{top_1}' 키워드가 화제성 폭발 중입니다!")
                 breaking_targets.append(top_1)
         
-        # 💡 [핵심 수정 2] 부서별 명단이 아닌 '전사적 통합 명단(global_active_names)'을 기준으로 제외 필터링
         strict_exclude = [n for n in global_active_names if n not in breaking_targets]
         target_names = engine.get_target_people(search_keyword, exclude_names=strict_exclude)
         
@@ -74,7 +90,7 @@ def run_hourly_news(db):
             print(f"⚠️ No new targets found for {category_key}. Skipping.")
             continue
             
-        print(f"  > [Oversampling] {len(target_names)} candidates fetched for robust routing.")
+        print(f"  > [Oversampling] {len(target_names)} candidates fetched.")
 
         for person in target_names:
             current_context = time_context
@@ -83,13 +99,13 @@ def run_hourly_news(db):
             if is_breaking:
                 current_context = "[긴급/속보] " + time_context
 
-            # 💡 [수정] 엔진에게 기사를 쓸 때 '사용된 사진 바구니(global_used_images)'를 같이 쥐여줍니다!
+            # 이미지 바구니를 쥐여주고 기사 작성을 지시
             result_data = engine.process_person(person, current_context, used_image_urls=global_used_images)
             if result_data:
                 score = result_data.get('score', 0)
                 
-                if score < 65:
-                    print(f"  ⏭️ [Weak News Skip] '{person}' 님 기사 내용 부족 (Score: {score}점)")
+                if score < 60:
+                    print(f"  ⏭️ [Weak News Skip] '{person}' 기사 파급력 부족 (Score: {score}점)")
                     continue
                 
                 if is_breaking:
@@ -99,13 +115,9 @@ def run_hourly_news(db):
                 if actual_category not in final_categorized_results:
                     actual_category = category_key
 
-                if actual_category != category_key:
-                    print(f"  🔄 [Smart Routing] '{person}' 님의 기사가 내용에 맞게 '{category_key}'에서 '{actual_category}'(으)로 이동되었습니다!")
-
                 final_categorized_results[actual_category].append(result_data)
                 print(f"  ✅ [{actual_category}] {result_data['title']} (Score: {score})")
                 
-                # 💡 [핵심 수정 3] 기사를 한 번 쓴 사람은 즉시 '전사적 명단'에 추가하여, 다음 카테고리에서 또 나오는 것을 완벽 차단!
                 if person not in global_active_names:
                     global_active_names.append(person)
                 
@@ -118,12 +130,10 @@ def run_hourly_news(db):
 
 def run_top10_charts(db):
     print("========================================")
-    print("📊 [MODE: CHART] Starting 6-Hour Top 10 Charts Update")
+    print("📊 [MODE: CHART] Starting Top 10 Charts Update")
     print("========================================")
     
     chart_engine = ChartEngine(db=db)
-    
-    # 💡 [핵심 수정] 차트 부서도 k-movie/k-drama 대신 k-actor로 통일
     categories = ["k-actor", "k-pop", "k-entertain", "k-culture"]
     
     for category in categories:
@@ -148,6 +158,9 @@ def run_top10_charts(db):
 def main():
     db = Database()
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
+    
+    # 💡 항상 DB 청소부터 시작
+    run_garbage_collection(db)
 
     if mode == "news":
         run_hourly_news(db)
