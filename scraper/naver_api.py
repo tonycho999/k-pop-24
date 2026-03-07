@@ -20,8 +20,6 @@ class NaverTrendEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        # 💡 [삭제] 검색어 딕셔너리가 main.py로 넘어갔으므로 여기서는 제거!
-        
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
 
         if self.gemini_key:
@@ -72,67 +70,70 @@ class NaverTrendEngine:
             pass
         return ""
 
-    # 💡 [수정] main.py로부터 search_keyword를 직접 넘겨받습니다.
     def get_target_people(self, category, search_keyword, exclude_names):
         if not self.naver_client_id or not search_keyword: return []
 
+        # 💡 [핵심] "배우 | 탤런트 | 캐스팅" 문자열을 쪼개서 배열로 만듭니다.
+        keyword_list = [k.strip() for k in search_keyword.split("|") if k.strip()]
+
         url = "https://openapi.naver.com/v1/search/news.json"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
-        params = {"query": search_keyword, "display": 100, "sort": "date"}
-        try:
-            res = requests.get(url, headers=headers, params=params, timeout=10)
-            res.raise_for_status()
-            news_items = res.json().get("items", [])
-            
-            # 💡 [핵심] 차트 봇과 동일하게 강력한 한국 시간(KST) 24시간 필터링 적용
-            korea_tz = pytz.timezone('Asia/Seoul')
-            now_kst = datetime.now(korea_tz)
-            deadline = now_kst - timedelta(hours=24)
-            
-            combined_text = ""
-            for item in news_items:
-                pub_date = parsedate_to_datetime(item['pubDate']).astimezone(korea_tz)
-                if pub_date > deadline: 
-                    title = BeautifulSoup(item['title'], 'html.parser').text
-                    desc = BeautifulSoup(item['description'], 'html.parser').text
-                    combined_text += f"- {title}: {desc}\n"
+        
+        korea_tz = pytz.timezone('Asia/Seoul')
+        now_kst = datetime.now(korea_tz)
+        deadline = now_kst - timedelta(hours=24)
+        
+        combined_text = ""
+        
+        # 💡 [핵심] 쪼개진 검색어들을 하나씩 돌면서 최신 100개씩 긁어와 합칩니다.
+        for keyword in keyword_list:
+            params = {"query": keyword, "display": 100, "sort": "date"}
+            try:
+                res = requests.get(url, headers=headers, params=params, timeout=10)
+                res.raise_for_status()
+                news_items = res.json().get("items", [])
+                
+                for item in news_items:
+                    pub_date = parsedate_to_datetime(item['pubDate']).astimezone(korea_tz)
+                    if pub_date > deadline: 
+                        title = BeautifulSoup(item['title'], 'html.parser').text
+                        desc = BeautifulSoup(item['description'], 'html.parser').text
+                        combined_text += f"- {title}: {desc}\n"
+            except Exception as e:
+                print(f"❌ Error extracting targets for '{keyword}': {e}")
 
-            if not combined_text: return []
-            
-            rule = ""
-            if category == "k-actor": 
-                rule = "MUST extract REAL ACTOR NAMES (Human names) ONLY. Strictly exclude movie titles and character names."
-            elif category == "k-pop": 
-                rule = "MUST extract SINGER or IDOL GROUP NAMES ONLY. Strictly exclude fan club names (e.g., '영웅시대') and generic words."
-            elif category == "k-entertain": 
-                rule = "MUST extract REAL ENTERTAINERS, COMEDIANS, or CAST MEMBERS (Human names) ONLY. STRICTLY EXCLUDE TV show titles, episode missions, and generic terms like '가구 시청률'."
-            elif category == "k-culture": 
-                rule = "Extract SPECIFIC VIRAL TRENDS, FOODS, MEMES, or HOT PLACES ONLY. Exclude generic words like '문화', '트렌드'."
+        if not combined_text: return []
+        
+        rule = ""
+        if category == "k-actor": 
+            rule = "MUST extract REAL ACTOR NAMES (Human names) ONLY. Strictly exclude movie titles and character names."
+        elif category == "k-pop": 
+            rule = "MUST extract SINGER or IDOL GROUP NAMES ONLY. Strictly exclude fan club names (e.g., '영웅시대') and generic words."
+        elif category == "k-entertain": 
+            rule = "MUST extract REAL ENTERTAINERS, COMEDIANS, or CAST MEMBERS (Human names) ONLY. STRICTLY EXCLUDE TV show titles, episode missions, and generic terms like '가구 시청률'."
+        elif category == "k-culture": 
+            rule = "Extract SPECIFIC VIRAL TRENDS, FOODS, MEMES, or HOT PLACES ONLY. Exclude generic words like '문화', '트렌드'."
 
-            prompt = f"""
-            Extract the 10 most frequently mentioned SUBJECTS from the text below:
-            {combined_text[:12000]}
-            
-            CRITICAL RULES:
-            1. {rule}
-            2. For k-actor, k-pop, and k-entertain: If it is NOT a real human name or group name, DO NOT extract it.
-            3. COMBINE duplicates (e.g., merge '임영웅' and '가수 임영웅' into just '임영웅').
-            4. Output strictly as a JSON array of strings like: ["Name1", "Name2"]
-            """
-            
-            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0)
-            if not result_text: return []
-            
-            extracted_names = json.loads(result_text)
-            name_counts = Counter(extracted_names)
-            sorted_all_names = [name for name, count in name_counts.most_common()]
-            filtered_names = [name for name in sorted_all_names if name not in exclude_names]
-            
-            return filtered_names[:10]
-
-        except Exception as e:
-            print(f"❌ Error extracting targets: {e}")
-            return []
+        prompt = f"""
+        Extract the 10 most frequently mentioned SUBJECTS from the text below:
+        {combined_text[:12000]}
+        
+        CRITICAL RULES:
+        1. {rule}
+        2. For k-actor, k-pop, and k-entertain: If it is NOT a real human name or group name, DO NOT extract it.
+        3. COMBINE duplicates (e.g., merge '임영웅' and '가수 임영웅' into just '임영웅').
+        4. Output strictly as a JSON array of strings like: ["Name1", "Name2"]
+        """
+        
+        result_text = self._call_gemini_with_fallback(prompt, temperature=0.0)
+        if not result_text: return []
+        
+        extracted_names = json.loads(result_text)
+        name_counts = Counter(extracted_names)
+        sorted_all_names = [name for name, count in name_counts.most_common()]
+        filtered_names = [name for name in sorted_all_names if name not in exclude_names]
+        
+        return filtered_names[:10]
 
     def process_person(self, person_name, time_context, used_image_urls, category):
         url = "https://openapi.naver.com/v1/search/news.json"
