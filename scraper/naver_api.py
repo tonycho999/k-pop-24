@@ -20,7 +20,15 @@ class NaverTrendEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        # 💡 구글 API 키 관련 내용 완전히 삭제됨
+        # 💡 [핵심] main.py에 있던 상세 검색 키워드가 이쪽으로 이사 왔습니다.
+        self.category_keywords = {
+            "k-actor": "영화배우 | 탤런트 | 드라마 캐스팅",
+            "k-pop": "걸그룹 | 보이그룹 | 아이돌 | 가요계",
+            "k-entertain": "예능인 | 방송인 | 코미디언 | 예능 출연",
+            "k-culture": "MZ세대 | 팝업스토어 | 품절대란 | SNS 화제 | 밈"
+        }
+        
+        # 💡 프록시 설정은 뉴스 본문 스크래핑이 없어졌으므로 영구 삭제했습니다.
         
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
 
@@ -51,7 +59,6 @@ class NaverTrendEngine:
             print(f"  ⚠️ Gemini Error: {e}")
             return None
 
-    # 💡 [핵심 수정] 구글 대신 네이버 이미지 검색 API 사용
     def _get_naver_image(self, query, used_image_urls):
         if not self.naver_client_id: return ""
         url = "https://openapi.naver.com/v1/search/image"
@@ -59,16 +66,13 @@ class NaverTrendEngine:
             "X-Naver-Client-Id": self.naver_client_id,
             "X-Naver-Client-Secret": self.naver_client_secret
         }
-        # display=5: 5개를 가져와서 중복 안 된 거 찾기 / filter=large: 고화질
         params = {"query": query, "display": 5, "sort": "sim", "filter": "large"}
         try:
             res = requests.get(url, headers=headers, params=params, timeout=10)
             data = res.json()
             items = data.get("items", [])
-            
             for item in items:
                 img_link = item.get("link")
-                # 가져온 사진이 바구니에 없는 '새로운 사진'일 경우에만 합격!
                 if img_link and img_link not in used_image_urls:
                     print(f"  📸 [Naver Image] Successfully fetched exclusive image for '{query}'!")
                     return img_link
@@ -76,11 +80,16 @@ class NaverTrendEngine:
             pass
         return ""
 
-    def get_target_people(self, category_keyword, exclude_names, category):
+    def get_target_people(self, category, exclude_names):
         if not self.naver_client_id: return []
+        
+        # 💡 딕셔너리에서 해당 부서의 검색 키워드를 꺼내옵니다.
+        search_keyword = self.category_keywords.get(category, "")
+        if not search_keyword: return []
+
         url = "https://openapi.naver.com/v1/search/news.json"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
-        params = {"query": category_keyword, "display": 100, "sort": "date"}
+        params = {"query": search_keyword, "display": 100, "sort": "date"}
         try:
             res = requests.get(url, headers=headers, params=params, timeout=10)
             res.raise_for_status()
@@ -90,31 +99,36 @@ class NaverTrendEngine:
             
             for item in news_items:
                 pub_date = parsedate_to_datetime(item['pubDate'])
-                if now_utc - pub_date > timedelta(hours=24): continue # 24시간 컷
+                if now_utc - pub_date > timedelta(hours=24): continue 
                 title = BeautifulSoup(item['title'], 'html.parser').text
                 desc = BeautifulSoup(item['description'], 'html.parser').text
                 combined_text += f"- {title}: {desc}\n"
 
             if not combined_text: return []
             
-            # 카테고리별 맞춤 타겟 추출 룰
+            # 💡 [핵심] 사람 이름만 뽑아내는 초강력 룰 적용
             rule = ""
-            if category == "k-actor": rule = "REAL ACTOR NAMES ONLY. Strictly exclude character names from movies/dramas."
-            elif category == "k-pop": rule = "SINGER, IDOL, or GROUP NAMES ONLY."
-            elif category == "k-entertain": rule = "TV SHOW NAMES or ENTERTAINERS/COMEDIANS ONLY."
-            elif category == "k-culture": rule = "VIRAL TREND KEYWORDS (foods, memes, hot places, culture phenomena) ONLY."
+            if category == "k-actor": 
+                rule = "MUST extract REAL ACTOR NAMES (Human names) ONLY. Strictly exclude movie titles and character names."
+            elif category == "k-pop": 
+                rule = "MUST extract SINGER or IDOL GROUP NAMES ONLY. Strictly exclude fan club names (e.g., '영웅시대') and generic words."
+            elif category == "k-entertain": 
+                rule = "MUST extract REAL ENTERTAINERS, COMEDIANS, or CAST MEMBERS (Human names) ONLY. STRICTLY EXCLUDE TV show titles, episode missions, and generic terms like '가구 시청률'."
+            elif category == "k-culture": 
+                rule = "Extract SPECIFIC VIRAL TRENDS, FOODS, MEMES, or HOT PLACES ONLY. Exclude generic words like '문화', '트렌드'."
 
             prompt = f"""
-            Extract the 15 most frequently mentioned SUBJECTS from the text below:
+            Extract the 10 most frequently mentioned SUBJECTS from the text below:
             {combined_text[:12000]}
             
             CRITICAL RULES:
             1. {rule}
-            2. EXCLUDE historical figures or politicians.
-            3. Output strictly as a JSON array of strings like: ["Name1", "Name2"]
+            2. For k-actor, k-pop, and k-entertain: If it is NOT a real human name or group name, DO NOT extract it.
+            3. COMBINE duplicates (e.g., merge '임영웅' and '가수 임영웅' into just '임영웅').
+            4. Output strictly as a JSON array of strings like: ["Name1", "Name2"]
             """
             
-            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0) # 철저한 팩트 기반
+            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0)
             if not result_text: return []
             
             extracted_names = json.loads(result_text)
@@ -144,7 +158,7 @@ class NaverTrendEngine:
             
             for item in items:
                 pub_date = parsedate_to_datetime(item['pubDate'])
-                if now_utc - pub_date > timedelta(hours=24): continue # 개별 기사도 24시간 컷
+                if now_utc - pub_date > timedelta(hours=24): continue 
                 
                 if not first_link: first_link = item['link']
                 
@@ -152,12 +166,11 @@ class NaverTrendEngine:
                 desc = BeautifulSoup(item['description'], 'html.parser').text
                 article_texts.append(f"Title: {title}\nSummary: {desc}")
                 
-                if len(article_texts) >= 3: break # 딱 최신 3개만 수집
+                if len(article_texts) >= 3: break 
                 
             if not article_texts: return None
 
-            # 💡 [핵심 수정] 네이버 이미지 검색 함수 호출
-            search_query = f"{person_name} 프로필" if category in ['k-actor', 'k-pop'] else f"{person_name}"
+            search_query = f"{person_name} 프로필" if category in ['k-actor', 'k-pop', 'k-entertain'] else f"{person_name}"
             print(f"  🔍 Searching Naver Image for exclusive photo: {person_name}")
             first_image = self._get_naver_image(search_query, used_image_urls)
                 
@@ -166,7 +179,6 @@ class NaverTrendEngine:
                 
             combined_articles = "\n\n".join(article_texts)
             
-            # 철저한 팩트 체크와 건조한 작성 룰
             prompt = f"""
             Current Time in Korea: {now_kst}
             Target Subject: '{person_name}'
@@ -184,7 +196,7 @@ class NaverTrendEngine:
             """
             
             print(f"  > AI Editor is extracting facts for: {person_name}")
-            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0) # 할루시네이션 방지
+            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0) 
             if not result_text: return None
             
             summary_data = json.loads(result_text)
