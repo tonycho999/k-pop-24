@@ -4,10 +4,10 @@ import requests
 import time
 import pytz
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import urllib.parse
+from email.utils import parsedate_to_datetime
 
-# 💡 구글 신형 SDK 규격 적용
 from google import genai
 from google.genai import types
 from model_manager import ModelManager 
@@ -15,7 +15,8 @@ from model_manager import ModelManager
 class ChartEngine:
     def __init__(self, db):
         self.db = db
-        self.kobis_key = os.environ.get("KOBIS_API_KEY")
+        self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
+        self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
 
         self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
         self.proxy_port = os.environ.get("PROXY_PORT", "12323")
@@ -30,7 +31,6 @@ class ChartEngine:
         else:
             self.proxies = None
 
-        # 💡 [핵심 수정] 8개를 찾는 배열 로직을 지우고, 단 1개의 키만 불러옵니다.
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
 
         if self.gemini_key:
@@ -45,21 +45,18 @@ class ChartEngine:
     def get_top10_chart(self, category):
         print(f"\n📊 --- Processing {category} (ABSOLUTE LATEST) ---", flush=True)
 
-        if category == "k-movie":
-            raw_context = self._get_kobis_data()
-            source_type = "Official KOBIS Daily Box Office"
+        if category == "k-actor":
+            raw_context = self._scrape_recent_actor_news()
+            source_type = "Naver News Mention Count (Last 24 Hours)"
         elif category == "k-pop":
             raw_context = self._scrape_bugs_realtime()
             source_type = "Bugs Music REAL-TIME Chart"
-        elif category == "k-drama":
-            raw_context = self._scrape_naver_ratings("현재 방영중 드라마 시청률 순위")
-            source_type = "Naver Latest Drama Ratings"
         elif category == "k-entertain":
             raw_context = self._scrape_naver_ratings("현재 방영중 예능 시청률 순위")
             source_type = "Naver Latest Entertain Ratings"
         elif category == "k-culture":
-            raw_context = self._scrape_naver_blogs("국내 핫플레이스 가볼만한곳")
-            source_type = "Naver Latest Trending Places in Korea"
+            raw_context = self._scrape_naver_blogs("실시간 한국 바이럴 트렌드 핫플")
+            source_type = "Naver Realtime Viral Trends"
         else:
             raw_context = None
             source_type = "Unknown"
@@ -70,18 +67,22 @@ class ChartEngine:
 
         return self._process_with_gemini(category, context=raw_context, source_type=source_type)
 
-    def _get_kobis_data(self):
-        if not self.kobis_key: return None
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-        url = f"http://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={self.kobis_key}&targetDt={yesterday}"
+    def _scrape_recent_actor_news(self):
+        if not self.naver_client_id: return None
+        url = "https://openapi.naver.com/v1/search/news.json"
+        headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
+        params = {"query": "한국 영화 드라마 배우", "display": 100, "sort": "date"}
         try:
-            res = requests.get(url, timeout=15)
-            box_office_list = res.json().get("boxOfficeResult", {}).get("dailyBoxOfficeList", [])
-            if not box_office_list: return None
-            context = ""
-            for movie in box_office_list:
-                context += f"- Rank {movie['rank']}: {movie['movieNm']} (Audiences: {movie['audiCnt']})\n"
-            return context
+            res = requests.get(url, headers=headers, params=params, timeout=15)
+            news_items = res.json().get("items", [])
+            now_utc = datetime.now(timezone.utc)
+            combined_text = ""
+            for item in news_items:
+                pub_date = parsedate_to_datetime(item['pubDate'])
+                if now_utc - pub_date > timedelta(hours=24): continue # 💡 무조건 24시간 이내 기사만
+                title = BeautifulSoup(item['title'], 'html.parser').text
+                combined_text += f"- {title}\n"
+            return combined_text
         except: return None
 
     def _scrape_bugs_realtime(self):
@@ -101,7 +102,7 @@ class ChartEngine:
             if not titles or not artists: return None
             
             context = ""
-            for i in range(min(10, len(titles))):
+            for i in range(min(15, len(titles))):
                 context += f"- Rank {i+1}: {titles[i].text.strip()} by {artists[i].text.strip()}\n"
             return context
         except: return None
@@ -143,56 +144,54 @@ class ChartEngine:
         url = f"https://search.naver.com/search.naver?where=view&query={urllib.parse.quote(query)}&nso=so%3Add%2Cp%3A1d"
         headers = {"User-Agent": "Mozilla/5.0"}
         try:
-            res = None
-            if self.proxies:
-                try: res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
-                except: pass
-            if not res or res.status_code != 200:
-                res = requests.get(url, headers=headers, verify=False, timeout=10)
-
+            res = requests.get(url, headers=headers, verify=False, timeout=10)
             soup = BeautifulSoup(res.text, 'html.parser')
             titles = soup.select('a.title_link, .api_txt_lines, .link_tit')
             if titles:
                 context = ""
-                for i in range(min(20, len(titles))):
+                for i in range(min(30, len(titles))):
                     context += f"- Title: {titles[i].text.strip()}\n"
                 return context
-            
-            main_pack = soup.select_one('#main_pack')
-            if main_pack: return main_pack.get_text(separator=' | ', strip=True)[:8000]
             return None
         except: return None
 
     def _process_with_gemini(self, category, context, source_type):
-        # 💡 [핵심 수정] 단일 키 조건으로 간소화
         if not self.gemini_key or not self.model_name:
             return json.dumps({"top10": []})
 
-        today = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        korea_tz = pytz.timezone('Asia/Seoul')
+        now_kst = datetime.now(korea_tz).strftime('%Y-%m-%d %H:%M:%S KST')
         
+        # 💡 [핵심] K-Actor 배역 철통 차단 및 카테고리별 특화 룰
+        special_rule = ""
+        if category == "k-actor":
+            special_rule = "Identify the REAL ACTORS mentioned most frequently in the news. DO NOT include character names (e.g., 'Gihun'). Output ONLY real actor names."
+        elif category == "k-culture":
+            special_rule = "Extract the most viral trends, foods, or memes currently happening in Korea based on the text."
+        elif category == "k-pop":
+            special_rule = "Output the Song Title and Singer Name."
+
         prompt = f"""
-        Current Date & Time: {today}.
-        Task: Create a Top 10 ranking chart for '{category}' based ABSOLUTELY ONLY on the provided source text.
+        Current Date & Time in Korea: {now_kst}.
+        Task: Create a Top 10 ranking chart for '{category}'.
         
         Source Data ({source_type}):
         {context}
         
         CRITICAL RULES:
-        1. DO NOT HALLUCINATE. Use ONLY the data provided above.
-        2. EXCLUDE OUTDATED DATA: Ignore old dramas/shows that ended in previous years. Ignore items in "Related Searches".
-        3. For K-Culture: Exclude any foreign locations. ONLY include places in South Korea.
-        4. Extract up to 10 items. If the text is completely irrelevant garbage, return an empty array: {{ "top10": [] }}
-        5. Translate all Korean titles naturally into English.
-        6. 'info' should be a concise 1-sentence description.
-        7. Format strictly as JSON.
+        1. Base your rankings on the provided source text. {special_rule}
+        2. EXCLUDE OUTDATED DATA: Ignore old items.
+        3. Extract up to 10 items. If irrelevant, return: {{ "top10": [] }}
+        4. Translate all Korean titles/names naturally into English.
+        5. 'info' MUST be a concise 1-sentence description explaining why they are ranked (e.g., "Currently highly mentioned for the new drama...").
+        6. Format strictly as JSON.
         
         Required JSON Structure:
-        {{ "top10": [ {{ "rank": 1, "title": "English Title", "info": "Brief description" }} ] }}
+        {{ "top10": [ {{ "rank": 1, "title": "English Target Name", "info": "Brief description" }} ] }}
         """
 
         try:
-            print(f"  > Sending data to Gemini API...", flush=True)
-            # 💡 [핵심 수정] 복잡한 루프 없이 바로 1개의 키로 직행
+            print(f"  > AI is counting and ranking data for {category}...", flush=True)
             client = genai.Client(api_key=self.gemini_key)
             response = client.models.generate_content(
                 model=self.model_name,
@@ -202,9 +201,7 @@ class ChartEngine:
                     response_mime_type="application/json",
                 )
             )
-
             return response.text.strip()
-
         except Exception as e:
             print(f"  ⚠️ Gemini Error: {e}", flush=True)
             return json.dumps({"top10": []})
