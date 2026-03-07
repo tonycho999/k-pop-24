@@ -33,7 +33,7 @@ def run_hourly_news(db):
 
     # 💡 [핵심 수정] k-movie와 k-drama를 k-actor로 통합
     categories = {
-        "k-actor": "한국 영화 드라마 배우",
+        "k-actor": "배우",
         "k-pop": "K-POP 아이돌 가수",
         "k-entertain": "예능 출연진",
         "k-culture": "인플루언서"
