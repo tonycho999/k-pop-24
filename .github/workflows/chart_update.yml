@@ -31,7 +31,8 @@ jobs:
           PROXY_PORT: ${{ secrets.PROXY_PORT }}
           PROXY_USER: ${{ secrets.PROXY_USER }}
           PROXY_PASS: ${{ secrets.PROXY_PASS }}
-          
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
           # 💡 [수정] 제미나이 키 딱 1개만 깔끔하게 연동
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
