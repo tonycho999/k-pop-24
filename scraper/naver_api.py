@@ -168,7 +168,6 @@ class NaverTrendEngine:
             print(f"❌ Error extracting people: {e}")
             return []
 
-    # 💡 [핵심 수정] used_image_urls 파라미터 추가하여 중복 사진 감지
     def process_person(self, person_name, time_context, used_image_urls=None):
         if used_image_urls is None:
             used_image_urls = set()
@@ -204,22 +203,20 @@ class NaverTrendEngine:
                 
             if not article_texts: return None
 
-            # 💡 [이미지 중복 검열 로직] 이미 사용된 사진이면 가차없이 비움!
             if first_image and first_image in used_image_urls:
                 print(f"  ⚠️ [이미지 중복 감지] '{person_name}' 기사의 사진이 이미 사용되었습니다. 단독 사진으로 대체합니다.")
                 first_image = ""
 
-            # 비워졌거나 원래 없으면 구글에서 새로 고화질 검색
             if not first_image:
                 print(f"  🔍 구글 이미지 검색 작동 (단독 프로필 탐색): {person_name}")
                 first_image = self._get_google_image(f"{person_name} 프로필 고화질")
                 
-            # 확정된 사진을 바구니에 저장하여 다음 턴에서 중복 방지
             if first_image:
                 used_image_urls.add(first_image)
                 
             combined_articles = "\n\n".join(article_texts)
             
+            # 💡 [핵심 수정] K-Actor 통합 룰 적용
             prompt = f"""
             Persona: You are a sharp Entertainment News Chief Editor.
             Current Time in Korea: {now_kst}
@@ -231,8 +228,7 @@ class NaverTrendEngine:
             2. Headline: Create a catchy English headline. STRICT RULE: It MUST start with the person's name in brackets. Example: "[{person_name}] The English Headline Here".
             3. Hotness Score (1-100): Evaluate the trend. STRICT RULE: DO NOT penalize scandals, dating news, DUI, or controversies. These are HIGH-TRAFFIC viral issues and MUST receive HIGH scores (80-100).
             4. Category Routing: Determine the actual 'category' based on the NEWS CONTENT:
-               - Movie (box office, filming) -> 'k-movie'
-               - Drama (ratings, episodes) -> 'k-drama'
+               - Movies, Dramas, Acting, Actors, Actresses -> 'k-actor'
                - Music, albums, idol groups, or concerts -> 'k-pop'
                - PERSONAL LIFE (marriage, parenting, dating, scandal, DUI, controversy) or VARIETY SHOWS -> 'k-entertain'
                - Influencers or general culture -> 'k-culture'
