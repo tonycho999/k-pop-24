@@ -3,7 +3,7 @@ name: Top10 Charts Update (6H)
 on:
   workflow_dispatch:
 #  schedule:
-#    - cron: '35 */6 * * *'
+#    - cron: '35 */12 * * *'
 
 jobs:
   run-chart-scraper:
