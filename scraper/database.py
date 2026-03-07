@@ -126,6 +126,7 @@ class Database:
                 "rank": item.get("rank"),
                 "title": item.get("title", ""),
                 "meta_info": item.get("info", ""), 
+                "score": item.get("score", 50),  # 💡 [추가] 제미나이가 준 점수를 DB로 전달!
                 "updated_at": now
             })
 
