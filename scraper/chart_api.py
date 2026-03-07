@@ -17,6 +17,20 @@ class ChartEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
 
+        # 💡 차트 수집기는 웹스크래핑을 하므로 프록시를 든든하게 유지합니다.
+        self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
+        self.proxy_port = os.environ.get("PROXY_PORT", "12323")
+        self.proxy_user = os.environ.get("PROXY_USER")
+        self.proxy_pass = os.environ.get("PROXY_PASS")
+        
+        if self.proxy_user and self.proxy_pass:
+            self.proxies = {
+                "http": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}",
+                "https": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}"
+            }
+        else:
+            self.proxies = None
+
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
 
         if self.gemini_key:
@@ -94,7 +108,13 @@ class ChartEngine:
         url = "https://music.bugs.co.kr/chart"
         headers = {"User-Agent": "Mozilla/5.0"}
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            res = None
+            if self.proxies:
+                try: res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                except: pass
+            if not res or res.status_code != 200:
+                res = requests.get(url, headers=headers, verify=False, timeout=10)
+
             soup = BeautifulSoup(res.text, 'html.parser')
             titles = soup.select('p.title a')
             artists = soup.select('p.artist a:nth-of-type(1)')
@@ -110,7 +130,13 @@ class ChartEngine:
         url = f"https://search.naver.com/search.naver?query={urllib.parse.quote(query)}"
         headers = {"User-Agent": "Mozilla/5.0"}
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            res = None
+            if self.proxies:
+                try: res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+                except: pass
+            if not res or res.status_code != 200:
+                res = requests.get(url, headers=headers, verify=False, timeout=10)
+
             soup = BeautifulSoup(res.text, 'html.parser')
             tables = soup.select('table')
             rating_text = ""
