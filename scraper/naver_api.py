@@ -20,15 +20,7 @@ class NaverTrendEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        # 💡 [핵심] main.py에 있던 상세 검색 키워드가 이쪽으로 이사 왔습니다.
-        self.category_keywords = {
-            "k-actor": "영화배우 | 탤런트 | 드라마 캐스팅",
-            "k-pop": "걸그룹 | 보이그룹 | 아이돌 | 가요계",
-            "k-entertain": "예능인 | 방송인 | 코미디언 | 예능 출연",
-            "k-culture": "MZ세대 | 팝업스토어 | 품절대란 | SNS 화제 | 밈"
-        }
-        
-        # 💡 프록시 설정은 뉴스 본문 스크래핑이 없어졌으므로 영구 삭제했습니다.
+        # 💡 [삭제] 검색어 딕셔너리가 main.py로 넘어갔으므로 여기서는 제거!
         
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
 
@@ -80,12 +72,9 @@ class NaverTrendEngine:
             pass
         return ""
 
-    def get_target_people(self, category, exclude_names):
-        if not self.naver_client_id: return []
-        
-        # 💡 딕셔너리에서 해당 부서의 검색 키워드를 꺼내옵니다.
-        search_keyword = self.category_keywords.get(category, "")
-        if not search_keyword: return []
+    # 💡 [수정] main.py로부터 search_keyword를 직접 넘겨받습니다.
+    def get_target_people(self, category, search_keyword, exclude_names):
+        if not self.naver_client_id or not search_keyword: return []
 
         url = "https://openapi.naver.com/v1/search/news.json"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
@@ -94,19 +83,22 @@ class NaverTrendEngine:
             res = requests.get(url, headers=headers, params=params, timeout=10)
             res.raise_for_status()
             news_items = res.json().get("items", [])
-            now_utc = datetime.now(timezone.utc)
-            combined_text = ""
             
+            # 💡 [핵심] 차트 봇과 동일하게 강력한 한국 시간(KST) 24시간 필터링 적용
+            korea_tz = pytz.timezone('Asia/Seoul')
+            now_kst = datetime.now(korea_tz)
+            deadline = now_kst - timedelta(hours=24)
+            
+            combined_text = ""
             for item in news_items:
-                pub_date = parsedate_to_datetime(item['pubDate'])
-                if now_utc - pub_date > timedelta(hours=24): continue 
-                title = BeautifulSoup(item['title'], 'html.parser').text
-                desc = BeautifulSoup(item['description'], 'html.parser').text
-                combined_text += f"- {title}: {desc}\n"
+                pub_date = parsedate_to_datetime(item['pubDate']).astimezone(korea_tz)
+                if pub_date > deadline: 
+                    title = BeautifulSoup(item['title'], 'html.parser').text
+                    desc = BeautifulSoup(item['description'], 'html.parser').text
+                    combined_text += f"- {title}: {desc}\n"
 
             if not combined_text: return []
             
-            # 💡 [핵심] 사람 이름만 뽑아내는 초강력 룰 적용
             rule = ""
             if category == "k-actor": 
                 rule = "MUST extract REAL ACTOR NAMES (Human names) ONLY. Strictly exclude movie titles and character names."
@@ -149,24 +141,24 @@ class NaverTrendEngine:
         try:
             res = requests.get(url, headers=headers, params=params, timeout=10)
             items = res.json().get("items", [])
-            now_utc = datetime.now(timezone.utc)
+            
             korea_tz = pytz.timezone('Asia/Seoul')
-            now_kst = datetime.now(korea_tz).strftime('%Y-%m-%d %H:%M:%S KST')
+            now_kst = datetime.now(korea_tz)
+            deadline = now_kst - timedelta(hours=24)
+            now_kst_str = now_kst.strftime('%Y-%m-%d %H:%M:%S KST')
             
             article_texts = []
             first_link = ""
             
             for item in items:
-                pub_date = parsedate_to_datetime(item['pubDate'])
-                if now_utc - pub_date > timedelta(hours=24): continue 
-                
-                if not first_link: first_link = item['link']
-                
-                title = BeautifulSoup(item['title'], 'html.parser').text
-                desc = BeautifulSoup(item['description'], 'html.parser').text
-                article_texts.append(f"Title: {title}\nSummary: {desc}")
-                
-                if len(article_texts) >= 3: break 
+                pub_date = parsedate_to_datetime(item['pubDate']).astimezone(korea_tz)
+                if pub_date > deadline: 
+                    if not first_link: first_link = item['link']
+                    title = BeautifulSoup(item['title'], 'html.parser').text
+                    desc = BeautifulSoup(item['description'], 'html.parser').text
+                    article_texts.append(f"Title: {title}\nSummary: {desc}")
+                    
+                    if len(article_texts) >= 3: break 
                 
             if not article_texts: return None
 
@@ -180,7 +172,7 @@ class NaverTrendEngine:
             combined_articles = "\n\n".join(article_texts)
             
             prompt = f"""
-            Current Time in Korea: {now_kst}
+            Current Time in Korea: {now_kst_str}
             Target Subject: '{person_name}'
             Recent News Summaries (from Naver API):
             {combined_articles}
