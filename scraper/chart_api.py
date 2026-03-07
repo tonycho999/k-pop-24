@@ -146,7 +146,7 @@ class ChartEngine:
         CRITICAL RULES:
         1. Base your rankings ONLY on the provided source text. {special_rule}
         2. Extract up to 10 items. If irrelevant or empty, return: {{ "top10": [] }}
-        3. Translate all Korean titles, names, and places naturally into English.
+        3. Translate all Korean into English naturally.
         4. 'info' MUST be a concise factual description (e.g., "A highly mentioned show" or "A popular pop-up store in Seongsu").
         5. Format strictly as JSON.
         
