@@ -20,8 +20,7 @@ class NaverTrendEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        self.google_api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
-        self.google_cx = os.environ.get("GOOGLE_SEARCH_CX")
+        # 💡 구글 API 키 관련 내용 완전히 삭제됨
         
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
 
@@ -52,16 +51,27 @@ class NaverTrendEngine:
             print(f"  ⚠️ Gemini Error: {e}")
             return None
 
-    def _get_google_image(self, query):
-        if not self.google_api_key or not self.google_cx: return ""
-        url = "https://customsearch.googleapis.com/customsearch/v1"
-        params = {"key": self.google_api_key, "cx": self.google_cx, "q": query, "searchType": "image", "num": 1}
+    # 💡 [핵심 수정] 구글 대신 네이버 이미지 검색 API 사용
+    def _get_naver_image(self, query, used_image_urls):
+        if not self.naver_client_id: return ""
+        url = "https://openapi.naver.com/v1/search/image"
+        headers = {
+            "X-Naver-Client-Id": self.naver_client_id,
+            "X-Naver-Client-Secret": self.naver_client_secret
+        }
+        # display=5: 5개를 가져와서 중복 안 된 거 찾기 / filter=large: 고화질
+        params = {"query": query, "display": 5, "sort": "sim", "filter": "large"}
         try:
-            res = requests.get(url, params=params, timeout=10)
+            res = requests.get(url, headers=headers, params=params, timeout=10)
             data = res.json()
-            if "items" in data and len(data["items"]) > 0:
-                print(f"  📸 [Google Image] Successfully fetched exclusive image for '{query}'!")
-                return data["items"][0]["link"]
+            items = data.get("items", [])
+            
+            for item in items:
+                img_link = item.get("link")
+                # 가져온 사진이 바구니에 없는 '새로운 사진'일 경우에만 합격!
+                if img_link and img_link not in used_image_urls:
+                    print(f"  📸 [Naver Image] Successfully fetched exclusive image for '{query}'!")
+                    return img_link
         except Exception as e:
             pass
         return ""
@@ -104,7 +114,7 @@ class NaverTrendEngine:
             3. Output strictly as a JSON array of strings like: ["Name1", "Name2"]
             """
             
-            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0) # 철저한 팩트 기반 (temp=0)
+            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0) # 철저한 팩트 기반
             if not result_text: return []
             
             extracted_names = json.loads(result_text)
@@ -146,14 +156,10 @@ class NaverTrendEngine:
                 
             if not article_texts: return None
 
-            # 구글에서 겹치지 않는 무조건 깨끗한 고화질 사진 검색
-            search_query = f"{person_name} 프로필 고화질" if category in ['k-actor', 'k-pop'] else f"{person_name} 고화질"
-            print(f"  🔍 Googling exclusive image for: {person_name}")
-            first_image = self._get_google_image(search_query)
-            
-            # 만약 방금 찾은 사진이 이미 쓴 사진이라면 다시 검색 (꼼꼼함)
-            if first_image in used_image_urls:
-                first_image = self._get_google_image(f"{person_name} 최신 근황 고화질")
+            # 💡 [핵심 수정] 네이버 이미지 검색 함수 호출
+            search_query = f"{person_name} 프로필" if category in ['k-actor', 'k-pop'] else f"{person_name}"
+            print(f"  🔍 Searching Naver Image for exclusive photo: {person_name}")
+            first_image = self._get_naver_image(search_query, used_image_urls)
                 
             if first_image:
                 used_image_urls.add(first_image)
@@ -178,7 +184,7 @@ class NaverTrendEngine:
             """
             
             print(f"  > AI Editor is extracting facts for: {person_name}")
-            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0) # 할루시네이션 방지 (temp=0)
+            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0) # 할루시네이션 방지
             if not result_text: return None
             
             summary_data = json.loads(result_text)
