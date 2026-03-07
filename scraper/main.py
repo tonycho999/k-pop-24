@@ -31,7 +31,7 @@ def run_hourly_news(db):
     time_context = get_time_context()
     print(f"⏰ Current Time Context: {time_context}")
 
-    # 💡 [핵심 수정] 영화와 드라마 부서를 k-actor(한국 배우)로 완벽 통합
+    # 💡 [핵심 수정] k-movie와 k-drama를 k-actor로 통합
     categories = {
         "k-actor": "한국 영화 드라마 배우",
         "k-pop": "K-POP 아이돌 가수",
@@ -39,17 +39,20 @@ def run_hourly_news(db):
         "k-culture": "인플루언서"
     }
 
+    # 💡 [핵심 수정] 결과 저장용 딕셔너리도 k-actor로 통합
     final_categorized_results = {
         "k-actor": [], "k-pop": [], "k-entertain": [], "k-culture": []
     }
 
+    # 💡 [핵심 수정 1] 부서(카테고리) 상관없이 DB에 있는 '모든' 인물 명단을 하나로 합침 (전사적 통합 명단)
     global_active_names = []
     for cat in categories.keys():
         global_active_names.extend(db.get_active_names(cat))
-    global_active_names = list(set(global_active_names))
+    global_active_names = list(set(global_active_names)) # 중복 제거
     
     print(f"🌍 Global Active Names in DB: {len(global_active_names)} people")
 
+    # 💡 [새로 추가] 이번 업데이트에서 이미 사용된 사진 URL을 기억하는 바구니
     global_used_images = set()
 
     for category_key, search_keyword in categories.items():
@@ -63,6 +66,7 @@ def run_hourly_news(db):
                 print(f"  🔥 [Breaking News] '{top_1}' 님은 화제성이 폭발하여 속보로 다룹니다!")
                 breaking_targets.append(top_1)
         
+        # 💡 [핵심 수정 2] 부서별 명단이 아닌 '전사적 통합 명단(global_active_names)'을 기준으로 제외 필터링
         strict_exclude = [n for n in global_active_names if n not in breaking_targets]
         target_names = engine.get_target_people(search_keyword, exclude_names=strict_exclude)
         
@@ -79,6 +83,7 @@ def run_hourly_news(db):
             if is_breaking:
                 current_context = "[긴급/속보] " + time_context
 
+            # 💡 [수정] 엔진에게 기사를 쓸 때 '사용된 사진 바구니(global_used_images)'를 같이 쥐여줍니다!
             result_data = engine.process_person(person, current_context, used_image_urls=global_used_images)
             if result_data:
                 score = result_data.get('score', 0)
@@ -100,6 +105,7 @@ def run_hourly_news(db):
                 final_categorized_results[actual_category].append(result_data)
                 print(f"  ✅ [{actual_category}] {result_data['title']} (Score: {score})")
                 
+                # 💡 [핵심 수정 3] 기사를 한 번 쓴 사람은 즉시 '전사적 명단'에 추가하여, 다음 카테고리에서 또 나오는 것을 완벽 차단!
                 if person not in global_active_names:
                     global_active_names.append(person)
                 
@@ -116,7 +122,8 @@ def run_top10_charts(db):
     print("========================================")
     
     chart_engine = ChartEngine(db=db)
-    # 💡 [핵심 수정] 차트 부서도 k-actor로 통일
+    
+    # 💡 [핵심 수정] 차트 부서도 k-movie/k-drama 대신 k-actor로 통일
     categories = ["k-actor", "k-pop", "k-entertain", "k-culture"]
     
     for category in categories:
