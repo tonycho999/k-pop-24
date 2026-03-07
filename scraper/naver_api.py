@@ -182,7 +182,8 @@ class NaverTrendEngine:
             1. Summary: Summarize the FACTS based strictly on the provided text. DO NOT add your own opinions, expert analysis, or extra comments.
             2. Exact Match: Keep all numbers (viewers, ratings, sales) and proper nouns EXACTLY as they appear in the original text.
             3. Headline: Create an English headline starting with the subject's name in brackets. Example: "[{person_name}] Headline Here".
-            4. Hotness Score (1-100): Evaluate the trend impact. Give HIGH scores (80-100) for huge hits, major scandals, or mega viral crazes.
+            4. Hotness Score: Freely evaluate and assign a score between 50 and 100 based on the actual buzz and importance of the news. DO NOT give everyone the same score. Be diverse.
+               - CRITICAL LIMIT: If the category is 'k-culture', the maximum score allowed is 80. (For k-culture, you MUST score between 50 and 80 ONLY).
             
             Format: Output ONLY valid JSON matching this structure:
             {{ "category": "{category}", "title": "[{person_name}] English Headline...", "summary": "Factual English summary...", "score": 95 }}
