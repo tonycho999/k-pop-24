@@ -8,6 +8,14 @@ from database import Database
 from naver_api import NaverTrendEngine
 from chart_api import ChartEngine
 
+# 💡 [핵심] 관제탑에 공통 검색어 탑재! 뉴스 봇과 차트 봇이 이 키워드를 공유합니다.
+COMMON_KEYWORDS = {
+    "k-actor": "영화배우 | 탤런트 | 드라마 캐스팅",
+    "k-pop": "",  # K-POP은 벅스뮤직을 사용하므로 비워둡니다.
+    "k-entertain": "예능 프로그램 | 예능인 | 방송인 | 코미디언",
+    "k-culture": "핫플레이스 | 팝업스토어 | 축제 | 밈 | 품절대란"
+}
+
 def run_garbage_collection(db):
     print("========================================")
     print("🧹 [MODE: CLEANUP] Garbage Collection (DB 청소)")
@@ -45,9 +53,7 @@ def run_hourly_news(db):
     time_context = get_time_context()
     print(f"⏰ Current Time Context: {time_context}")
 
-    # 💡 [핵심] 키워드 딕셔너리가 사라지고, 깔끔한 부서 리스트만 남았습니다.
     category_keys = ["k-actor", "k-pop", "k-entertain", "k-culture"]
-
     final_categorized_results = {key: [] for key in category_keys}
 
     global_active_names = []
@@ -56,15 +62,16 @@ def run_hourly_news(db):
     global_active_names = list(set(global_active_names))
     
     print(f"🌍 Global Active Subjects in DB: {len(global_active_names)} items")
-
     global_used_images = set()
 
     for category_key in category_keys:
         print(f"\n\n▶️ Starting News Category: {category_key}")
         
-        # 💡 [핵심] 어떤 키워드로 검색할지는 engine(naver_api)이 스스로 알아서 합니다.
+        # 💡 [수정] main.py의 공통 키워드를 뉴스 봇에 주입!
+        search_keyword = COMMON_KEYWORDS.get(category_key, "")
         target_names = engine.get_target_people(
             category=category_key, 
+            search_keyword=search_keyword,
             exclude_names=global_active_names
         )
         
@@ -94,7 +101,7 @@ def run_hourly_news(db):
                 if person not in global_active_names:
                     global_active_names.append(person)
                 
-            time.sleep(1) # API Rate limit 보호
+            time.sleep(1) 
             
     for final_cat, results in final_categorized_results.items():
         if results:
@@ -110,7 +117,9 @@ def run_top10_charts(db):
     categories = ["k-actor", "k-pop", "k-entertain", "k-culture"]
     
     for category in categories:
-        result_json_str = chart_engine.get_top10_chart(category)
+        # 💡 [수정] 차트 봇에도 동일한 공통 키워드를 주입!
+        search_keyword = COMMON_KEYWORDS.get(category, "")
+        result_json_str = chart_engine.get_top10_chart(category, search_keyword)
         
         if result_json_str:
             try:
