@@ -46,19 +46,15 @@ class ChartEngine:
         print(f"\n📊 --- Processing {category} (ABSOLUTE LATEST) ---", flush=True)
 
         if category == "k-actor":
-            # 💡 [방법 B] 군더더기 없이 "배우" 단일 키워드로 뉴스 API 검색
             raw_context = self._scrape_naver_news_api("배우")
             source_type = "Naver News Mention Count (Last 24 Hours)"
         elif category == "k-pop":
-            # 💡 벅스 실시간 차트 유지
             raw_context = self._scrape_bugs_realtime()
             source_type = "Bugs Music REAL-TIME Chart"
         elif category == "k-entertain":
-            # 💡 예전에 잘 작동했던 네이버 통합검색 시청률 표 크롤링 복구!
             raw_context = self._scrape_naver_ratings("현재 방영중 예능 시청률 순위")
             source_type = "Naver Search (Entertainment Ratings Table)"
         elif category == "k-culture":
-            # 💡 네이버 VIEW(블로그) 탭 크롤링 복구 (외국인 맞춤형 장소/유행)
             raw_context = self._scrape_naver_blogs("한국 핫플레이스 국내 축제 유행 디저트")
             source_type = "Naver VIEW (Blog/Cafe Viral Trends)"
         else:
@@ -71,23 +67,55 @@ class ChartEngine:
 
         return self._process_with_gemini(category, context=raw_context, source_type=source_type)
 
+    # 💡 [핵심 업데이트] 봇의 시간 동기화 및 24시간 풀 스캔 로직 탑재
     def _scrape_naver_news_api(self, query):
         if not self.naver_client_id: return None
         url = "https://openapi.naver.com/v1/search/news.json"
         headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
-        params = {"query": query, "display": 100, "sort": "date"}
+        
+        # 1. 봇의 시계를 한국 시간(KST)으로 강제 고정
+        korea_tz = pytz.timezone('Asia/Seoul')
+        now_kst = datetime.now(korea_tz)
+        
+        # 2. 정확히 24시간 전이라는 '데드라인' 설정
+        deadline = now_kst - timedelta(hours=24)
+        
+        combined_text = ""
+        start_index = 1
+        max_pages = 5 # 혹시 모를 무한루프 방지 (최대 500개 기사까지만 허용)
+
         try:
-            res = requests.get(url, headers=headers, params=params, timeout=10)
-            res.raise_for_status()
-            news_items = res.json().get("items", [])
-            now_utc = datetime.now(timezone.utc)
-            combined_text = ""
-            for item in news_items:
-                pub_date = parsedate_to_datetime(item['pubDate'])
-                if now_utc - pub_date > timedelta(hours=24): continue
-                title = BeautifulSoup(item['title'], 'html.parser').text
-                desc = BeautifulSoup(item['description'], 'html.parser').text
-                combined_text += f"- {title}: {desc}\n"
+            # 3. 100개 단위로 '24시간'이 다 찰 때까지 무한 수집 (최대 5번)
+            for _ in range(max_pages):
+                params = {"query": query, "display": 100, "start": start_index, "sort": "date"}
+                res = requests.get(url, headers=headers, params=params, timeout=10)
+                res.raise_for_status()
+                news_items = res.json().get("items", [])
+                
+                if not news_items:
+                    break # 더 이상 가져올 기사가 없으면 탈출
+                    
+                reached_deadline = False
+                
+                for item in news_items:
+                    # 기사 발행 시간을 KST로 변환하여 봇의 시간과 동일선상에 둠
+                    pub_date = parsedate_to_datetime(item['pubDate']).astimezone(korea_tz)
+                    
+                    # 데드라인(24시간 전) 이내의 기사만 수집
+                    if pub_date > deadline:
+                        title = BeautifulSoup(item['title'], 'html.parser').text
+                        desc = BeautifulSoup(item['description'], 'html.parser').text
+                        combined_text += f"- {title}: {desc}\n"
+                    else:
+                        # 24시간을 넘어간 옛날 기사가 등장하면 즉시 스캔 종료
+                        reached_deadline = True
+                        break 
+                
+                if reached_deadline:
+                    break # 바깥쪽 페이징 루프도 완전히 종료
+                    
+                start_index += 100 # 아직 24시간이 안 끝났다면 다음 100개(페이지) 요청 준비
+                
             return combined_text if combined_text else None
         except Exception as e:
             print(f"  ❌ Naver API Error for '{query}': {e}")
@@ -181,7 +209,6 @@ class ChartEngine:
         if category == "k-actor":
             special_rule = "Identify the REAL ACTORS mentioned most frequently in the news. Count their mentions and rank them. DO NOT include character names. Output ONLY real actor names."
         elif category == "k-culture":
-            # 💡 외국인 팬들을 타겟팅하여 큐레이션 하도록 지시!
             special_rule = "Analyze the blog titles and extract the Top 10 viral things foreigners visiting Korea would love (e.g., hot places, local festivals, popular foods, desserts, pop-up stores). Explain briefly why it's trending."
         elif category == "k-pop":
             special_rule = "Output the Song Title and Singer Name exactly as ranked."
@@ -213,7 +240,7 @@ class ChartEngine:
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.0,  # 팩트 기반 강제
+                    temperature=0.0,
                     response_mime_type="application/json",
                 )
             )
