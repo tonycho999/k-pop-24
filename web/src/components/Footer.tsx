@@ -27,7 +27,7 @@ export default function Footer() {
               Privacy Policy
             </Link>
             {/* 💡 대표님 이메일 적용 완료 */}
-            <a href="mailto:admin@k-enter24.com" className="hover:text-white transition-colors">
+            <a href="mailto:tonycho999@gmail.com" className="hover:text-white transition-colors">
               Contact
             </a>
           </div>
