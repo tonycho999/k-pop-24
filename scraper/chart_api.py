@@ -16,7 +16,7 @@ class ChartEngine:
         self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
 
-        # 벅스뮤직 크롤링을 위한 프록시 (그대로 유지)
+        # 💡 닐슨코리아는 프록시가 없으면 100% 차단당합니다.
         self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
         self.proxy_port = os.environ.get("PROXY_PORT", "12323")
         self.proxy_user = os.environ.get("PROXY_USER")
@@ -46,13 +46,14 @@ class ChartEngine:
 
         if category == "k-actor":
             raw_context = self._scrape_naver_news_api("배우")
-            source_type = "Naver News Mention Count (Last 24 Hours)"
+            source_type = "Naver News Mention Count"
         elif category == "k-pop":
             raw_context = self._scrape_bugs_realtime()
             source_type = "Bugs Music REAL-TIME Chart"
         elif category == "k-entertain":
-            raw_context = self._scrape_naver_news_api("예능")
-            source_type = "Naver News (Entertainment Ratings)"
+            # 💡 [핵심] 닐슨코리아 공식 데이터로 교체
+            raw_context = self._scrape_nielsen_ratings()
+            source_type = "Nielsen Korea Official Ratings"
         elif category == "k-culture":
             raw_context = self._scrape_naver_news_api("핫플레이스")
             source_type = "Naver Realtime Viral Trends"
@@ -66,7 +67,45 @@ class ChartEngine:
 
         return self._process_with_gemini(category, context=raw_context, source_type=source_type)
 
-    # 💡 [누락되었던 핵심 함수] 네이버 뉴스 API 하나로 통합!
+    def _scrape_nielsen_ratings(self):
+        # 지상파, 종편, 케이블 페이지를 순회하며 수집
+        urls = [
+            "https://www.nielsenkorea.co.kr/tv_terrestrial_day.asp", # 지상파
+            "https://www.nielsenkorea.co.kr/tv_terrestrial_day.asp?menu=Tit_1&sub_menu=2_1", # 종편
+            "https://www.nielsenkorea.co.kr/tv_terrestrial_day.asp?menu=Tit_1&sub_menu=3_1"  # 케이블
+        ]
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        combined_ratings = ""
+
+        try:
+            for url in urls:
+                res = None
+                if self.proxies:
+                    res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
+                else:
+                    res = requests.get(url, headers=headers, verify=False, timeout=15)
+                
+                # 닐슨은 EUC-KR 인코딩을 사용함
+                res.encoding = 'euc-kr'
+                soup = BeautifulSoup(res.text, 'html.parser')
+                
+                # 시청률 테이블 추출
+                tables = soup.select('table.정렬') # 닐슨코리아의 고유 테이블 클래스
+                for table in tables:
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cols = row.find_all('td')
+                        if len(cols) >= 3:
+                            title = cols[1].get_text(strip=True)
+                            rating = cols[2].get_text(strip=True)
+                            if title and rating and title != '프로그램명':
+                                combined_ratings += f"Program: {title}, Rating: {rating}\n"
+            
+            return combined_ratings if combined_ratings else None
+        except Exception as e:
+            print(f"  ❌ Nielsen Scraping Error: {e}")
+            return None
+
     def _scrape_naver_news_api(self, query):
         if not self.naver_client_id: return None
         url = "https://openapi.naver.com/v1/search/news.json"
@@ -95,9 +134,8 @@ class ChartEngine:
         try:
             res = None
             if self.proxies:
-                try: res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
-                except: pass
-            if not res or res.status_code != 200:
+                res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
+            else:
                 res = requests.get(url, headers=headers, verify=False, timeout=10)
 
             soup = BeautifulSoup(res.text, 'html.parser')
@@ -128,7 +166,8 @@ class ChartEngine:
         elif category == "k-pop":
             special_rule = "Output the Song Title and Singer Name."
         elif category == "k-entertain":
-            special_rule = "Extract the TV Show names and their ratings/popularity mentioned in the news."
+            # 💡 시청률 데이터를 기반으로 예능 랭킹을 매기도록 룰 강화
+            special_rule = "The source data is from Nielsen Korea. Identify the most popular Variety Shows (Entertain) and their ratings. Ignore news or dramas. List the TOP 10 Variety Shows by rating."
 
         prompt = f"""
         Current Date & Time in Korea: {now_kst}.
@@ -142,7 +181,7 @@ class ChartEngine:
         2. EXCLUDE OUTDATED DATA.
         3. Extract up to 10 items. If irrelevant, return: {{ "top10": [] }}
         4. Translate all Korean titles/names naturally into English.
-        5. 'info' MUST be a concise factual description (e.g., "Rating: 15.2%" or "Highly mentioned for...").
+        5. 'info' MUST be a concise factual description (e.g., "Rating: 15.2%").
         6. Format strictly as JSON.
         
         Required JSON Structure:
