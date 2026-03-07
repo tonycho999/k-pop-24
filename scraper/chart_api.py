@@ -45,16 +45,16 @@ class ChartEngine:
         print(f"\n📊 --- Processing {category} (ABSOLUTE LATEST) ---", flush=True)
 
         if category == "k-actor":
-            raw_context = self._scrape_naver_news_api("영화배우 | 탤런트 | 배우")
+            raw_context = self._scrape_naver_news_api("배우")
             source_type = "Naver News Mention Count (Last 24 Hours)"
         elif category == "k-pop":
             raw_context = self._scrape_bugs_realtime()
             source_type = "Bugs Music REAL-TIME Chart"
         elif category == "k-entertain":
-            raw_context = self._scrape_naver_news_api("예능 시청률")
+            raw_context = self._scrape_naver_news_api("예능")
             source_type = "Naver News (Entertainment Ratings)"
         elif category == "k-culture":
-            raw_context = self._scrape_naver_news_api("핫플레이스 | 팝업스토어 | 트렌드 | SNS 화제 | 밈")
+            raw_context = self._scrape_naver_news_api("핫플레이스")
             source_type = "Naver Realtime Viral Trends"
         else:
             raw_context = None
