@@ -15,9 +15,7 @@ def run_garbage_collection(db):
     try:
         if hasattr(db, 'supabase'):
             now_utc = datetime.now(timezone.utc)
-            # 24시간 지난 뉴스 삭제
             time_24h_ago = (now_utc - timedelta(hours=24)).isoformat()
-            # 7일 지난 검색 기록 삭제
             time_7d_ago = (now_utc - timedelta(days=7)).isoformat()
             
             db.supabase.table('live_news').delete().lt('created_at', time_24h_ago).execute()
@@ -47,19 +45,13 @@ def run_hourly_news(db):
     time_context = get_time_context()
     print(f"⏰ Current Time Context: {time_context}")
 
-    categories = {
-        "k-actor": "한국 영화 드라마 배우",
-        "k-pop": "K-POP 아이돌 가수 노래",
-        "k-entertain": "예능 프로그램 시청률 화제",
-        "k-culture": "한국 핫플레이스 바이럴 트렌드"
-    }
+    # 💡 [핵심] 키워드 딕셔너리가 사라지고, 깔끔한 부서 리스트만 남았습니다.
+    category_keys = ["k-actor", "k-pop", "k-entertain", "k-culture"]
 
-    final_categorized_results = {
-        "k-actor": [], "k-pop": [], "k-entertain": [], "k-culture": []
-    }
+    final_categorized_results = {key: [] for key in category_keys}
 
     global_active_names = []
-    for cat in categories.keys():
+    for cat in category_keys:
         global_active_names.extend(db.get_active_names(cat))
     global_active_names = list(set(global_active_names))
     
@@ -67,10 +59,14 @@ def run_hourly_news(db):
 
     global_used_images = set()
 
-    for category_key, search_keyword in categories.items():
+    for category_key in category_keys:
         print(f"\n\n▶️ Starting News Category: {category_key}")
         
-        target_names = engine.get_target_people(search_keyword, exclude_names=global_active_names, category=category_key)
+        # 💡 [핵심] 어떤 키워드로 검색할지는 engine(naver_api)이 스스로 알아서 합니다.
+        target_names = engine.get_target_people(
+            category=category_key, 
+            exclude_names=global_active_names
+        )
         
         if not target_names:
             print(f"⚠️ No new targets found for {category_key}. Skipping.")
@@ -135,7 +131,6 @@ def main():
     db = Database()
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
     
-    # 항상 쓰레기통 비우고 시작!
     run_garbage_collection(db)
 
     if mode == "news":
