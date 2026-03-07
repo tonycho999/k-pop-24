@@ -148,7 +148,8 @@ class ChartEngine:
         2. Extract up to 10 items. If irrelevant or empty, return: {{ "top10": [] }}
         3. Translate all Korean into English naturally.
         4. 'info' MUST be extremely short (Maximum 2-3 words). Act like an Instagram hashtag. Use catchy English keyword phrases (e.g., "New Movie Issue", "Viral Dessert", "Scandal", "Pop-up Store"). For k-pop, 'info' must be ONLY the Singer Name. NEVER write a full sentence.
-        5. Format strictly as JSON.
+        5. Assign a 'score' (1-100) based on how viral or frequently mentioned the item is. Higher rank MUST have a higher score. # 💡 [추가] 점수 강제 지시
+        6. Format strictly as JSON.
         
         Required JSON Structure:
         {{ "top10": [ {{ "rank": 1, "title": "English Target Name", "info": "Brief info or reason" }} ] }}
