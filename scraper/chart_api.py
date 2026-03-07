@@ -128,11 +128,11 @@ class ChartEngine:
         
         special_rule = ""
         if category == "k-actor":
-            special_rule = "Identify the REAL ACTORS mentioned most frequently in the news. Count their mentions and rank them. DO NOT include character names."
+            special_rule = "Identify the REAL ACTORS mentioned. STRICTLY EXCLUDE actors if the text is about a VARIETY SHOW (예능). Count mentions ONLY for dramas/movies. DO NOT include character names."
         elif category == "k-entertain":
-            special_rule = "Identify the VARIETY SHOWS (예능 프로그램) or ENTERTAINERS (예능인) mentioned most frequently. Rank them by mention count. Ignore dramas or news programs."
+            special_rule = "Identify ANY ENTERTAINERS or GUESTS (including actors/idols) mentioned IN THE CONTEXT OF A VARIETY SHOW (예능). Rank by mention count. Ignore dramas or news programs."
         elif category == "k-culture":
-            special_rule = "MUST extract ONLY exact PROPER NOUNS (Specific food/dessert names, festival names, hot place locations, or pop-up store brands). STRICTLY FORBIDDEN: generic words, full article titles, TV documentaries, regional government news (e.g., 창원시 유튜브). If it is not a specific brand, place, or food name, DROP IT."
+            special_rule = "MUST extract ONLY exact PROPER NOUNS (Specific food/dessert names, festival names, hot place locations, or pop-up store brands). STRICTLY FORBIDDEN: generic words, full article titles, TV documentaries, regional government news."
         elif category == "k-pop":
             special_rule = "Output the Song Title and Singer Name exactly as ranked."
 
