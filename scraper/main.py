@@ -10,10 +10,10 @@ from chart_api import ChartEngine
 
 # 💡 [핵심] 관제탑에 공통 검색어 탑재! 뉴스 봇과 차트 봇이 이 키워드를 공유합니다.
 COMMON_KEYWORDS = {
-    "k-actor": "영화배우 | 탤런트 | 드라마 캐스팅",
-    "k-pop": "",  # K-POP은 벅스뮤직을 사용하므로 비워둡니다.
-    "k-entertain": "예능 프로그램 | 예능인 | 방송인 | 코미디언",
-    "k-culture": "핫플레이스 | 팝업스토어 | 축제 | 밈 | 품절대란"
+    "k-actor": "배우 | 탤런트 | 캐스팅",
+    "k-pop": "아이돌 | 걸그룹 | 보이그룹 | K팝",
+    "k-entertain": "예능 프로그램 | 예능인 | 방송인",
+    "k-culture": "핫플레이스 | 한식 | 컨텐츠 | SNS 화제 | 축제"
 }
 
 def run_garbage_collection(db):
