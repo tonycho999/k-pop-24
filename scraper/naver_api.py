@@ -105,14 +105,14 @@ class NaverTrendEngine:
         if not combined_text: return []
         
         rule = ""
-            if category == "k-actor": 
-                rule = "MUST extract REAL ACTOR NAMES ONLY. STRICTLY EXCLUDE actors if the article is about them appearing on a VARIETY SHOW (예능). Extract ONLY for dramas, movies, or acting issues."
-            elif category == "k-pop": 
-                rule = "MUST extract SINGER/IDOL NAMES ONLY. STRICTLY EXCLUDE if the article is about a VARIETY SHOW (예능). Extract ONLY for music releases, charts, or concerts."
-            elif category == "k-entertain": 
-                rule = "MUST extract ANY HUMAN NAME (including actors and singers) IF they are mentioned as cast members or guests on a VARIETY SHOW (예능). STRICTLY EXCLUDE drama or music chart news."
-            elif category == "k-culture": 
-                rule = "Extract SPECIFIC VIRAL TRENDS, FOODS, MEMES, or HOT PLACES ONLY. Exclude generic words like '문화', '트렌드'."
+        if category == "k-actor": 
+            rule = "MUST extract REAL ACTOR NAMES ONLY. STRICTLY EXCLUDE actors if the article is about them appearing on a VARIETY SHOW (예능). Extract ONLY for dramas, movies, or acting issues."
+        elif category == "k-pop": 
+            rule = "MUST extract SINGER/IDOL NAMES ONLY. STRICTLY EXCLUDE if the article is about a VARIETY SHOW (예능). Extract ONLY for music releases, charts, or concerts."
+        elif category == "k-entertain": 
+            rule = "MUST extract ANY HUMAN NAME (including actors and singers) IF they are mentioned as cast members or guests on a VARIETY SHOW (예능). STRICTLY EXCLUDE drama or music chart news."
+        elif category == "k-culture": 
+            rule = "Extract SPECIFIC VIRAL TRENDS, FOODS, MEMES, or HOT PLACES ONLY. Exclude generic words like '문화', '트렌드'."
 
         prompt = f"""
         Extract the 10 most frequently mentioned SUBJECTS from the text below:
