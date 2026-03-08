@@ -1,156 +1,54 @@
 import sys
-import time
-from datetime import datetime, timedelta, timezone
-import pytz
-import json
-
 from database import Database
-from naver_api import NaverTrendEngine
-from chart_api import ChartEngine
+from model_manager import ModelManager
+from naver_api import NaverNewsAPI
+from chart_api import ChartManager
 
-# 💡 [핵심] 관제탑에 공통 검색어 탑재! 뉴스 봇과 차트 봇이 이 키워드를 공유합니다.
-COMMON_KEYWORDS = {
-    "k-actor": "배우 | 탤런트 | 캐스팅",
-    "k-pop": "아이돌 | 걸그룹 | 보이그룹 | K팝",
-    "k-entertain": "예능 프로그램 | 예능인 | 방송인",
-    "k-culture": "핫플레이스 | 한식 | 컨텐츠 | SNS 화제 | 축제"
-}
-
-def run_garbage_collection(db):
-    print("========================================")
-    print("🧹 [MODE: CLEANUP] Garbage Collection (DB 청소)")
-    print("========================================")
-    try:
-        if hasattr(db, 'supabase'):
-            now_utc = datetime.now(timezone.utc)
-            time_24h_ago = (now_utc - timedelta(hours=24)).isoformat()
-            time_7d_ago = (now_utc - timedelta(days=7)).isoformat()
-            
-            db.supabase.table('live_news').delete().lt('created_at', time_24h_ago).execute()
-            db.supabase.table('search_archive').delete().lt('created_at', time_7d_ago).execute()
-            print("  ✅ [GC 완료] 24시간 지난 기사 & 7일 지난 검색기록 완벽 삭제!")
-        else:
-            print("  ⚠️ [GC 알림] 외부 청소를 스킵합니다.")
-    except Exception as e:
-        print(f"  ❌ [GC 에러] DB 청소 실패: {e}")
-
-def get_time_context():
-    korea_tz = pytz.timezone('Asia/Seoul')
-    now = datetime.now(korea_tz)
-    hour = now.hour
+def run_news_scraper():
+    print("🚀 Starting Smart News Scraper (Reverse Matching DB)...")
+    db = Database()
+    model = ModelManager()
+    naver = NaverNewsAPI(db_client=db, model_manager=model)
     
-    if 5 <= hour < 11: return "Morning Update"
-    elif 11 <= hour < 17: return "Afternoon Update"
-    elif 17 <= hour < 23: return "Evening Update"
-    else: return "Late Night Breaking"
-
-def run_hourly_news(db):
-    print("========================================")
-    print("📰 [MODE: NEWS] Starting Pure API News Update")
-    print("========================================")
+    # 똑똑해진 역방향 엔진 가동 (50세 이하 연예인만 필터, 부서 자동 이동)
+    news_results = naver.fetch_smart_news()
     
-    engine = NaverTrendEngine(db=db)
-    time_context = get_time_context()
-    print(f"⏰ Current Time Context: {time_context}")
+    if news_results:
+        db.save_news(news_results)
+        print(f"✅ Saved {len(news_results)} heavily vetted articles to DB!")
+    else:
+        print("⚠️ No news processed.")
 
-    category_keys = ["k-actor", "k-pop", "k-entertain", "k-culture"]
-    final_categorized_results = {key: [] for key in category_keys}
-
-    global_active_names = []
-    for cat in category_keys:
-        global_active_names.extend(db.get_active_names(cat))
-    global_active_names = list(set(global_active_names))
+def run_chart_scraper():
+    print("📊 Starting Chart Scraper...")
+    db = Database()
+    model = ModelManager()
+    chart_mgr = ChartManager(model_manager=model)
     
-    print(f"🌍 Global Active Subjects in DB: {len(global_active_names)} items")
-    global_used_images = set()
-
-    for category_key in category_keys:
-        print(f"\n\n▶️ Starting News Category: {category_key}")
-        
-        # 💡 [수정] main.py의 공통 키워드를 뉴스 봇에 주입!
-        search_keyword = COMMON_KEYWORDS.get(category_key, "")
-        target_names = engine.get_target_people(
-            category=category_key, 
-            search_keyword=search_keyword,
-            exclude_names=global_active_names
-        )
-        
-        if not target_names:
-            print(f"⚠️ No new targets found for {category_key}. Skipping.")
-            continue
-            
-        print(f"  > Fetched {len(target_names)} trending subjects.")
-
-        for person in target_names:
-            result_data = engine.process_person(
-                person_name=person, 
-                time_context=time_context, 
-                used_image_urls=global_used_images,
-                category=category_key
-            )
-            
-            if result_data:
-                score = result_data.get('score', 0)
-                if score < 60:
-                    print(f"  ⏭️ [Skip] '{person}' 기사 화제성 부족 (Score: {score})")
-                    continue
-                
-                final_categorized_results[category_key].append(result_data)
-                print(f"  ✅ [{category_key}] {result_data['title']} (Score: {score})")
-                
-                if person not in global_active_names:
-                    global_active_names.append(person)
-                
-            time.sleep(1) 
-            
-    for final_cat, results in final_categorized_results.items():
-        if results:
-            print(f"💾 Saving {len(results)} articles to '{final_cat}' DB...")
-            db.save_news_results(category=final_cat, results=results)
-
-def run_top10_charts(db):
-    print("========================================")
-    print("📊 [MODE: CHART] Starting Top 10 Charts Update")
-    print("========================================")
-    
-    chart_engine = ChartEngine(db=db)
     categories = ["k-actor", "k-pop", "k-entertain", "k-culture"]
     
-    for category in categories:
-        # 💡 [수정] 차트 봇에도 동일한 공통 키워드를 주입!
-        search_keyword = COMMON_KEYWORDS.get(category, "")
-        result_json_str = chart_engine.get_top10_chart(category, search_keyword)
+    for cat in categories:
+        print(f"\n📊 --- Processing {cat} ---")
+        # 기존에 DB에 저장된 뉴스 데이터를 기반으로 차트 생성
+        context = db.get_recent_news_context(cat)
         
-        if result_json_str:
-            try:
-                data = json.loads(result_json_str)
-                top10_list = data.get("top10", [])
-                
-                if top10_list:
-                    db.save_chart_results(category=category, results=top10_list)
-                    print(f"  💾 [DB 저장 성공] {category} 차트 {len(top10_list)}개 업데이트 완료!")
-                else:
-                    print(f"  ⚠️ [DB 저장 스킵] {category} 차트 데이터가 비어있습니다.")
-            except Exception as e:
-                print(f"  ❌ [DB 저장 에러] {category} 데이터 파싱 또는 저장 실패: {e}")
-        
-        time.sleep(2) 
-
-def main():
-    db = Database()
-    mode = sys.argv[1] if len(sys.argv) > 1 else "all"
-    
-    run_garbage_collection(db)
-
-    if mode == "news":
-        run_hourly_news(db)
-    elif mode == "chart":
-        run_top10_charts(db)
-    else:
-        run_hourly_news(db)
-        run_top10_charts(db)
-
-    print("\n🎉 All Requested Tasks Completed Successfully!")
+        if not context:
+            print(f"⚠️ [Skip] Valid real-time data not found for {cat}.")
+            continue
+            
+        top10 = chart_mgr.process_chart(cat, context, "Naver News DB")
+        if top10:
+            db.save_chart_results(cat, top10)
+            print(f"  💾 [DB 저장 성공] {cat} 차트 10개 업데이트 완료!")
+        else:
+            print(f"  ❌ {cat} 차트 생성 실패.")
 
 if __name__ == "__main__":
-    main()
+    mode = sys.argv[1] if len(sys.argv) > 1 else "news"
+    
+    if mode == "news":
+        run_news_scraper()
+    elif mode == "chart":
+        run_chart_scraper()
+    else:
+        print("Invalid mode. Use 'news' or 'chart'.")
