@@ -1,10 +1,14 @@
 import os
 import json
 import requests
+import urllib3
 from bs4 import BeautifulSoup
 from datetime import datetime
 import pytz
 from google import genai
+
+# 💡 [핵심] 프록시 SSL 에러 경고창 깔끔하게 숨기기
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class ChartManager:
     def __init__(self, model_name):
@@ -34,11 +38,13 @@ class ChartManager:
         }
         try:
             if target == "melon":
-                res = requests.get("https://www.melon.com/chart/index.htm", headers=headers, proxies=self.proxies, timeout=10)
+                # 💡 [핵심] verify=False 를 끝에 추가하여 깐깐한 보안 검사를 패스시킵니다!
+                res = requests.get("https://www.melon.com/chart/index.htm", headers=headers, proxies=self.proxies, timeout=10, verify=False)
                 soup = BeautifulSoup(res.text, 'html.parser')
                 return soup.find('tbody').get_text(separator=' | ', strip=True)[:4000]
             elif target == "nielsen":
-                res = requests.get("https://search.naver.com/search.naver?query=주간+예능+시청률", headers=headers, proxies=self.proxies, timeout=10)
+                # 💡 [핵심] 여기도 verify=False 추가!
+                res = requests.get("https://search.naver.com/search.naver?query=주간+예능+시청률", headers=headers, proxies=self.proxies, timeout=10, verify=False)
                 soup = BeautifulSoup(res.text, 'html.parser')
                 return soup.find('table').get_text(separator=' | ', strip=True)[:4000]
         except Exception as e:
@@ -46,7 +52,7 @@ class ChartManager:
             return ""
 
     def process_chart(self, category: str, context: str):
-        # 💡 [핵심 1] 정확한 한국 날짜와 시간 가져오기
+        # 정확한 한국 날짜와 시간 가져오기
         kst = pytz.timezone('Asia/Seoul')
         now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M:%S KST")
         
@@ -55,7 +61,7 @@ class ChartManager:
         if category == "k-pop":
             raw = self._scrape_real_chart("melon")
             
-            # 💡 [핵심 2] 데이터가 비어있으면 과거 데이터로 소설 쓰는 것을 원천 차단
+            # 데이터가 비어있으면 과거 데이터로 소설 쓰는 것을 원천 차단
             if not raw or len(raw) < 50:
                 print("❌ 최신 멜론 차트 크롤링 실패 (AI 할루시네이션 방지 차단)")
                 return None
