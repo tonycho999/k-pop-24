@@ -10,7 +10,6 @@ def run_news_scraper():
     model = ModelManager()
     naver = NaverNewsAPI(db_client=db, model_manager=model)
     
-    # 똑똑해진 역방향 엔진 가동 (50세 이하 연예인만 필터, 부서 자동 이동)
     news_results = naver.fetch_smart_news()
     
     if news_results:
@@ -20,23 +19,26 @@ def run_news_scraper():
         print("⚠️ No news processed.")
 
 def run_chart_scraper():
-    print("📊 Starting Chart Scraper...")
+    print("📊 Starting 4-Color Chart Scraper...")
     db = Database()
     model = ModelManager()
     chart_mgr = ChartManager(model_manager=model)
     
-    categories = ["k-actor", "k-pop", "k-entertain", "k-culture"]
+    categories = ["k-pop", "k-entertain", "k-actor", "k-culture"]
     
     for cat in categories:
         print(f"\n📊 --- Processing {cat} ---")
-        # 기존에 DB에 저장된 뉴스 데이터를 기반으로 차트 생성
-        context = db.get_recent_news_context(cat)
         
-        if not context:
-            print(f"⚠️ [Skip] Valid real-time data not found for {cat}.")
-            continue
+        context = ""
+        # 💡 배우와 문화 카테고리만 뉴스 DB에서 데이터를 꺼내옵니다.
+        # K-Pop과 K-Entertain은 ChartManager 내부에서 직접 웹 검색을 돌리므로 context가 불필요합니다.
+        if cat in ["k-actor", "k-culture"]:
+            context = db.get_recent_news_context(cat)
+            if not context:
+                print(f"⚠️ [Skip] Valid real-time data not found for {cat}.")
+                continue
             
-        top10 = chart_mgr.process_chart(cat, context, "Naver News DB")
+        top10 = chart_mgr.process_chart(cat, context, "Naver News / Web Data")
         if top10:
             db.save_chart_results(cat, top10)
             print(f"  💾 [DB 저장 성공] {cat} 차트 10개 업데이트 완료!")
