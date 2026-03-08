@@ -1,26 +1,15 @@
 import os
+import pytz
 import json
 import requests
-import pytz
-import urllib3
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
-from email.utils import parsedate_to_datetime
+from datetime import datetime
 
-from google import genai
-from google.genai import types
-from model_manager import ModelManager 
-
-# 터미널 HTTPS 보안 경고창 완벽 제거
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-class ChartEngine:
-    def __init__(self, db):
-        self.db = db
-        self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
-        self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
-
-        # Bugs 크롤링을 위한 프록시 유지 (네이버 API는 안 씀)
+class ChartManager:
+    def __init__(self, model_manager):
+        self.model = model_manager
+        
+        # 💡 [핵심] 대표님이 작성해주신 환경 변수 기반 IPRoyal 프록시 로직 완벽 적용
         self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
         self.proxy_port = os.environ.get("PROXY_PORT", "12323")
         self.proxy_user = os.environ.get("PROXY_USER")
@@ -31,142 +20,120 @@ class ChartEngine:
                 "http": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}",
                 "https": f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}"
             }
+            print("✅ IPRoyal Proxy successfully configured via Environment Variables!")
         else:
             self.proxies = None
+            print("⚠️ Warning: Proxy credentials not found. Proceeding without proxy.")
 
-        self.gemini_key = os.environ.get("GEMINI_API_KEY")
-
-        if self.gemini_key:
-            temp_client = genai.Client(api_key=self.gemini_key)
-            manager = ModelManager(client=temp_client, provider="gemini")
-            self.model_name = manager.get_best_model()
-            if not self.model_name:
-                self.model_name = "gemini-2.5-flash"
-        else:
-            self.model_name = None
-
-    def get_top10_chart(self, category, search_keyword):
-        print(f"\n📊 --- Processing {category} (ABSOLUTE LATEST) ---", flush=True)
-
-        if category == "k-pop":
-            raw_context = self._scrape_bugs_realtime()
-            source_type = "Bugs Music REAL-TIME Chart"
-        else:
-            raw_context = self._scrape_naver_news_api(search_keyword)
-            source_type = f"Naver News Mention Count (Last 24 Hours, Keyword: {search_keyword})"
-
-        if not raw_context:
-            print(f"⚠️ [Skip] Valid real-time data not found for {category}.", flush=True)
-            return json.dumps({"top10": []})
-
-        return self._process_with_gemini(category, context=raw_context, source_type=source_type)
-
-    def _scrape_naver_news_api(self, query):
-        if not self.naver_client_id or not query: return None
-        
-        # 💡 [핵심] 차트 봇도 동일하게 문자열을 쪼개서 배열로 만듭니다.
-        keyword_list = [k.strip() for k in query.split("|") if k.strip()]
-        
-        url = "https://openapi.naver.com/v1/search/news.json"
-        headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
-        
-        korea_tz = pytz.timezone('Asia/Seoul')
-        now_kst = datetime.now(korea_tz)
-        deadline = now_kst - timedelta(hours=24)
-        
-        combined_text = ""
-
-        # 💡 [핵심] 쪼개진 단어별로 각각 검색하여 데이터를 거대한 텍스트로 합칩니다.
-        for keyword in keyword_list:
-            params = {"query": keyword, "display": 100, "sort": "date"}
-            try:
-                res = requests.get(url, headers=headers, params=params, timeout=10)
-                res.raise_for_status()
-                news_items = res.json().get("items", [])
-                
-                for item in news_items:
-                    pub_date = parsedate_to_datetime(item['pubDate']).astimezone(korea_tz)
-                    if pub_date > deadline:
-                        title = BeautifulSoup(item['title'], 'html.parser').text
-                        desc = BeautifulSoup(item['description'], 'html.parser').text
-                        combined_text += f"- {title}: {desc}\n"
-            except Exception as e:
-                print(f"  ❌ Naver API Error for '{keyword}': {e}")
-                
-        return combined_text if combined_text else None
-
-    def _scrape_bugs_realtime(self):
-        url = "https://music.bugs.co.kr/chart"
-        headers = {"User-Agent": "Mozilla/5.0"}
+    def _scrape_real_chart(self, target):
+        """IPRoyal 프록시를 이용해 타겟 사이트의 순위표(HTML)를 직접 뜯어옵니다."""
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
         try:
-            res = None
-            if self.proxies:
-                try: res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=10)
-                except: pass
-            if not res or res.status_code != 200:
-                res = requests.get(url, headers=headers, verify=False, timeout=10)
-
-            soup = BeautifulSoup(res.text, 'html.parser')
-            titles = soup.select('p.title a')
-            artists = soup.select('p.artist a:nth-of-type(1)')
-            if not titles or not artists: return None
-            
-            context = ""
-            for i in range(min(15, len(titles))):
-                context += f"- Rank {i+1}: {titles[i].text.strip()} by {artists[i].text.strip()}\n"
-            return context
+            if target == "melon":
+                # 멜론 실시간 차트 직접 접속
+                url = "https://www.melon.com/chart/index.htm"
+                res = requests.get(url, headers=headers, proxies=self.proxies, timeout=10)
+                soup = BeautifulSoup(res.text, 'html.parser')
+                
+                # 차트 테이블 안의 글자들만 싹 긁어옴 (가수, 곡명 등)
+                chart_body = soup.find('tbody')
+                return chart_body.get_text(separator=' | ', strip=True)[:4000] if chart_body else ""
+                
+            elif target == "nielsen":
+                # 네이버의 시청률 요약표 직접 긁기
+                url = "https://search.naver.com/search.naver?query=주간+예능+시청률"
+                res = requests.get(url, headers=headers, proxies=self.proxies, timeout=10)
+                soup = BeautifulSoup(res.text, 'html.parser')
+                
+                # 시청률 테이블 글자만 싹 긁어옴
+                rating_table = soup.find('table')
+                return rating_table.get_text(separator=' | ', strip=True)[:4000] if rating_table else ""
+                
         except Exception as e:
-            print(f"  ❌ Bugs Chart Error: {e}")
-            return None
+            print(f"⚠️ Scraping Error for {target}: {e}")
+            return ""
 
-    def _process_with_gemini(self, category, context, source_type):
-        if not self.gemini_key or not self.model_name:
-            return json.dumps({"top10": []})
-
-        korea_tz = pytz.timezone('Asia/Seoul')
-        now_kst = datetime.now(korea_tz).strftime('%Y-%m-%d %H:%M:%S KST')
+    def process_chart(self, category: str, context: str, source_type: str):
+        kst = pytz.timezone('Asia/Seoul')
+        now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M:%S")
         
-        special_rule = ""
-        if category == "k-actor":
-            special_rule = "Identify the REAL ACTORS mentioned. STRICTLY EXCLUDE actors if the text is about a VARIETY SHOW (예능). Count mentions ONLY for dramas/movies. DO NOT include character names."
+        prompt = ""
+        
+        # 🎵 K-Pop: 멜론 차트 HTML 텍스트를 AI에게 번역/정리시킴
+        if category == "k-pop":
+            raw_chart_text = self._scrape_real_chart("melon")
+            prompt = f"""
+            Current Time: {now_kst}.
+            Task: Create a Top 10 K-Pop Music Chart.
+            Raw Website Text (Melon Chart): {raw_chart_text}
+            
+            CRITICAL RULES:
+            1. Parse the provided raw text to find the actual Top 10 songs.
+            2. 'title' MUST be the Song Name (English translated).
+            3. 'info' MUST be ONLY the Singer Name.
+            4. Score: Assign exactly 100 for 1st place, decreasing by 1 down to 91 for 10th place.
+            """
+            
+        # 📺 K-Entertain: 닐슨코리아 시청률 HTML 텍스트를 AI에게 번역/정리시킴
         elif category == "k-entertain":
-            special_rule = "Identify ANY ENTERTAINERS or GUESTS (including actors/idols) mentioned IN THE CONTEXT OF A VARIETY SHOW (예능). Rank by mention count. Ignore dramas or news programs."
+            raw_rating_text = self._scrape_real_chart("nielsen")
+            prompt = f"""
+            Current Time: {now_kst}.
+            Task: Create a Top 10 Variety Show Rankings based on TV ratings.
+            Raw Website Text (Nielsen Ratings): {raw_rating_text}
+            
+            CRITICAL RULES:
+            1. Parse the raw text to find Top 10 variety shows based on ratings. EXCLUDE Dramas and News.
+            2. 'title' MUST be the Show Name (English translated).
+            3. 'info' MUST be the TV Channel (e.g., "tvN", "SBS", "MBC").
+            4. Score: Assign exactly 100 for 1st place, decreasing by 1 down to 91 for 10th place.
+            """
+            
+        # 🌟 K-Actor: 뉴스 DB 화제성 기준 (기존 유지)
+        elif category == "k-actor":
+            prompt = f"""
+            Current Time: {now_kst}.
+            Task: Create a Top 10 Actor Trend Chart based on mention frequency.
+            Source Data: {context}
+            
+            CRITICAL RULES:
+            1. Count mentions of ACTORS ONLY in the provided news context. Rank by frequency.
+            2. 'title' MUST be the Actor Name (English).
+            3. 'info' MUST be a very short 1-2 word English keyword (e.g., "New Drama", "Scandal", "Dating").
+            4. Score: Freely assign between 80 and 100 based on the buzz. Be diverse.
+            """
+            
+        # 🔥 K-Culture: 고유명사 & 트렌드 기준 (기존 유지)
         elif category == "k-culture":
-            special_rule = "MUST extract ONLY exact PROPER NOUNS (Specific food/dessert names, festival names, hot place locations, or pop-up store brands). STRICTLY FORBIDDEN: generic words, full article titles, TV documentaries, regional government news."
-        elif category == "k-pop":
-            special_rule = "Output the Song Title and Singer Name exactly as ranked."
+            prompt = f"""
+            Current Time: {now_kst}.
+            Task: Create a Top 10 K-Culture Trend Chart.
+            Source Data: {context}
+            
+            CRITICAL RULES:
+            1. Extract PROPER NOUNS ONLY (Specific foods, desserts, festivals, hot places, memes).
+            2. EXCLUDE generic words, TV shows, politicians, or ordinary news.
+            3. 'title' MUST be the specific trend name (English).
+            4. 'info' MUST be a 1-2 word category (e.g., "Dessert", "Pop-up", "Meme").
+            5. Score: Freely assign between 50 and 80 ONLY. (DO NOT EXCEED 80).
+            """
 
-        prompt = f"""
-        Current Date & Time in Korea: {now_kst}.
-        Task: Create a Top 10 ranking chart for '{category}'.
-        
-        Source Data ({source_type}):
-        {context}
-        
-        CRITICAL RULES:
-        1. Base your rankings ONLY on the provided source text. For the music chart, place ONLY the Song Title in the 'title' field, and place ONLY the Singer Name (Artist Name) in the 'info' field. DO NOT include any rank descriptions (like 'ranked number one') in the 'info' field. {special_rule}
-        2. Extract up to 10 items. If irrelevant or empty, return: {{ "top10": [] }}
-        3. Translate all Korean into English naturally.
-        4. 'info' MUST be extremely short (Maximum 2-3 words). Act like an Instagram hashtag. Use catchy English keyword phrases (e.g., "New Movie Issue", "Viral Dessert", "Scandal", "Pop-up Store"). For k-pop, 'info' must be ONLY the Singer Name. NEVER write a full sentence.
-        5. Assign a 'score' (1-100) based on how viral or frequently mentioned the item is. Higher rank MUST have a higher score. # 💡 [추가] 점수 강제 지시
-        6. Format strictly as JSON.
-        
+        prompt += """
+        Format strictly as JSON.
         Required JSON Structure:
-        {{ "top10": [ {{ "rank": 1, "title": "English Target Name", "info": "Brief info or reason" }} ] }}
+        { "top10": [ { "rank": 1, "title": "Target Name", "info": "Keyword", "score": 90 } ] }
         """
 
+        print(f"  > AI is parsing raw HTML data for {category}...")
         try:
-            print(f"  > AI Analyst is counting and ranking data for {category}...", flush=True)
-            client = genai.Client(api_key=self.gemini_key)
-            response = client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    response_mime_type="application/json",
-                )
-            )
-            return response.text.strip()
+            result_text = self.model.generate_content(prompt)
+            if not result_text: return None
+            
+            json_str = result_text.replace("```json", "").replace("```", "").strip()
+            data = json.loads(json_str)
+            return data.get("top10", [])
         except Exception as e:
-            print(f"  ⚠️ Gemini Error: {e}", flush=True)
-            return json.dumps({"top10": []})
+            print(f"❌ Gemini Chart Error for {category}: {e}")
+            return None
