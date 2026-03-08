@@ -4,16 +4,19 @@ import json
 from datetime import datetime
 import pytz
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+
+# 💡 구형(google.generativeai) 삭제, 신형(google-genai) 임포트 적용!
+from google import genai 
 
 class NaverNewsAPI:
     def __init__(self, db_client, model_name):
         self.client_id = os.environ.get("NAVER_CLIENT_ID")
         self.client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         self.db = db_client
+        self.model_name = model_name
         
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel(model_name)
+        # 💡 신형 Client 방식 연결
+        self.ai_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
     def _extract_image(self, url):
         try:
@@ -44,9 +47,7 @@ class NaverNewsAPI:
             return []
 
     def _discover_and_add_rookies(self, bulk_news, existing_names):
-        """🛡️ [그룹명 & 동의어 처리 추가] 신인 발굴 시스템"""
         print("🕵️‍♂️ AI 스카우터가 새로운 라이징 스타/아이돌 그룹을 탐색 중입니다...")
-        
         sample_news = "\n".join([f"- {a['title']}: {a['description']}" for a in bulk_news[:50]])
         
         prompt = f"""
@@ -58,7 +59,7 @@ class NaverNewsAPI:
         1. Find proper names of REAL celebrities or GROUPS who are trending but NOT in the existing list.
         2. Must be UNDER 50 years old. For IDOL GROUPS, use their debut year as 'birth_year'.
         3. STRICT: NO fictional character names.
-        4. ALIASES (IMPORTANT): If a group/person is known by multiple names (Korean and English), COMBINE them with a comma in the 'name' field. (e.g., "방탄소년단, BTS", "블랙핑크, BLACKPINK").
+        4. ALIASES: If known by multiple names (Korean and English), COMBINE with a comma (e.g., "방탄소년단, BTS").
         5. Provide the exact Korean sentence from the news as 'evidence'.
         
         Format EXACTLY as a JSON array:
@@ -67,13 +68,18 @@ class NaverNewsAPI:
                 "name": "방탄소년단, BTS", 
                 "category": "k-pop", 
                 "birth_year": 2013,
-                "evidence": "그룹 방탄소년단(BTS)이 빌보드 차트에 진입했다."
+                "evidence": "그룹 방탄소년단(BTS)이 차트에 진입했다."
             }}
         ]
         If no new real names are found, return [].
         """
         try:
-            res_text = self.model.generate_content(prompt).text
+            # 💡 신형 generate_content 호출 방식 적용
+            response = self.ai_client.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
+            res_text = response.text
             if not res_text: return
             
             new_celebs = json.loads(res_text.replace("```json", "").replace("```", "").strip())
@@ -86,7 +92,6 @@ class NaverNewsAPI:
                 if any(word in evidence for word in forbidden_words):
                     continue
                 
-                # 그룹/인물 첫 번째 이름을 대표 이름으로 삼아 교차 검증
                 primary_name = raw_name.split(',')[0].strip()
                 validation_query = f"{primary_name} 소속사 OR 데뷔 OR 프로필 OR 멤버"
                 validation_results = self._search_naver_keyword(validation_query, display=3)
@@ -94,18 +99,16 @@ class NaverNewsAPI:
                 if not validation_results:
                     continue
                 
-                print(f"🎉 [신인/그룹 검증 완료!] '{raw_name}' ({celeb['category']}) DB 추가 완료.")
+                print(f"🎉 [신인 검증 완료] '{raw_name}' ({celeb['category']}) DB 추가 완료.")
                 self.db.client.table("celebrity_dict").insert({
                     "name": raw_name,
                     "default_category": celeb.get('category', 'k-pop'),
                     "birth_year": celeb.get('birth_year', 2000)
                 }).execute()
-                
         except Exception as e:
             print(f"⚠️ Rookie Discovery Error: {e}")
 
     def fetch_smart_news(self):
-        """다중 이름(쉼표) 스플릿 매칭 엔진 적용"""
         if not self.client_id: return {}
 
         try:
@@ -135,12 +138,9 @@ class NaverNewsAPI:
                 continue 
             
             raw_name = celeb['name']
-            
-            # 💡 [핵심] 쉼표로 이름을 분리하여 리스트로 만듭니다. (예: ["방탄소년단", "BTS"])
             aliases = [alias.strip() for alias in raw_name.split(',')]
-            primary_name = aliases[0] # 기사에 노출될 대표 이름
+            primary_name = aliases[0]
             
-            # 기사 제목/내용에 여러 이름 중 하나라도 포함되어 있으면 매칭 성공!
             matched_articles = [
                 n for n in bulk_news 
                 if any(alias in n['title'] or alias in n['description'] for alias in aliases)
@@ -160,12 +160,12 @@ class NaverNewsAPI:
                 News: {articles_text}
                 
                 CRITICAL RULES:
-                1. FACT ONLY SUMMARY: Summarize facts strictly based on text. NO expert analysis.
+                1. FACT ONLY SUMMARY. NO expert analysis.
                 2. EXACT MATCH: Keep all numbers and proper nouns EXACTLY as in original text. Translate naturally to English.
                 3. TRAFFIC CONTROL:
-                   - If news is about Variety Shows/YouTube, category MUST BE 'k-entertain'.
-                   - If about Acting/Drama/Movie, category MUST BE 'k-actor'.
-                   - If about Singing/Album/Concert, category MUST BE 'k-pop'.
+                   - Variety Shows/YouTube -> 'k-entertain'
+                   - Acting/Drama/Movie -> 'k-actor'
+                   - Singing/Album/Concert -> 'k-pop'
                 4. SCORING: Assign Hotness Score (50-100).
                 
                 Format EXACTLY as JSON:
@@ -178,7 +178,13 @@ class NaverNewsAPI:
                 }}
                 """
                 try:
-                    res_text = self.model.generate_content(prompt).text
+                    # 💡 신형 generate_content 호출 방식 적용
+                    response = self.ai_client.models.generate_content(
+                        model=self.model_name,
+                        contents=prompt
+                    )
+                    res_text = response.text
+                    
                     if res_text:
                         data = json.loads(res_text.replace("```json", "").replace("```", "").strip())
                         final_cat = data.get("category", category)
@@ -191,7 +197,6 @@ class NaverNewsAPI:
                 except Exception:
                     pass
 
-        # 5. K-Culture 처리 
         if len(results["k-culture"]) < 10:
             culture_news = self._search_naver_keyword("팝업스토어 OR 디저트 OR 밈 OR 트렌드", display=15)
             for c_art in culture_news:
@@ -203,8 +208,12 @@ class NaverNewsAPI:
                     JSON: {{ "name": "TrendName", "title": "English Headline", "summary": "Fact only summary.", "score": 75 }}
                     """
                     try:
-                        c_res = self.model.generate_content(c_prompt).text
-                        c_data = json.loads(c_res.replace("```json", "").replace("```", "").strip())
+                        # 💡 신형 generate_content 호출 방식 적용
+                        c_res = self.ai_client.models.generate_content(
+                            model=self.model_name,
+                            contents=c_prompt
+                        )
+                        c_data = json.loads(c_res.text.replace("```json", "").replace("```", "").strip())
                         c_data.update({"category": "k-culture", "link": c_art['link'], "image_url": img})
                         results["k-culture"].append(c_data)
                         break
