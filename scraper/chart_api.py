@@ -2,12 +2,15 @@ import os
 import json
 import requests
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+
+# 💡 구형(google.generativeai) 삭제, 신형(google-genai) 임포트 적용!
+from google import genai
 
 class ChartManager:
     def __init__(self, model_name):
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel(model_name)
+        # 💡 신형 Client 방식 연결
+        self.ai_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+        self.model_name = model_name
         
         # IPRoyal 우회 봇 프록시 세팅
         self.proxy_host = os.environ.get("PROXY_HOST", "unblocker.iproyal.com")
@@ -77,7 +80,12 @@ class ChartManager:
         { "top10": [ { "rank": 1, "title": "Name", "info": "Keyword", "score": 95 } ] }
         """
         try:
-            res_text = self.model.generate_content(prompt).text
+            # 💡 신형 generate_content 호출 방식 적용
+            response = self.ai_client.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
+            res_text = response.text
             data = json.loads(res_text.replace("```json", "").replace("```", "").strip())
             return data.get("top10", [])
         except Exception as e:
