@@ -12,12 +12,10 @@ class NaverNewsAPI:
         self.client_secret = os.environ.get("NAVER_CLIENT_SECRET")
         self.db = db_client
         
-        # ModelManager에서 받아온 최적의 모델명으로 세팅
         genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
         self.model = genai.GenerativeModel(model_name)
 
     def _extract_image(self, url):
-        """기사 원본 링크에 접속하여 고화질 썸네일(og:image)을 추출합니다."""
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
             res = requests.get(url, headers=headers, timeout=5)
@@ -46,65 +44,60 @@ class NaverNewsAPI:
             return []
 
     def _discover_and_add_rookies(self, bulk_news, existing_names):
-        """🛡️ [3중 방어망 적용] 완벽한 무인 신인 발굴 시스템"""
-        print("🕵️‍♂️ AI 스카우터가 새로운 라이징 스타를 탐색 중입니다...")
+        """🛡️ [그룹명 & 동의어 처리 추가] 신인 발굴 시스템"""
+        print("🕵️‍♂️ AI 스카우터가 새로운 라이징 스타/아이돌 그룹을 탐색 중입니다...")
         
         sample_news = "\n".join([f"- {a['title']}: {a['description']}" for a in bulk_news[:50]])
         
-        # [1차 방어] 증거(Evidence) 제출 의무화
         prompt = f"""
-        Task: Identify NEW rising Korean celebrities (Actors, Idols, Entertainers) from the news.
+        Task: Identify NEW rising Korean celebrities (Actors, Idols, IDOL GROUPS, Entertainers) from the news.
         Recent News: {sample_news}
         Existing Database Names: {existing_names}
         
         CRITICAL RULES:
-        1. Find proper names of REAL celebrities who are trending but NOT in the existing list.
-        2. Must be UNDER 50 years old (born after 1976).
-        3. STRICT: NO fictional character names from dramas/movies.
-        4. You MUST provide the exact Korean sentence from the news as 'evidence' proving they are a real human actor/singer.
+        1. Find proper names of REAL celebrities or GROUPS who are trending but NOT in the existing list.
+        2. Must be UNDER 50 years old. For IDOL GROUPS, use their debut year as 'birth_year'.
+        3. STRICT: NO fictional character names.
+        4. ALIASES (IMPORTANT): If a group/person is known by multiple names (Korean and English), COMBINE them with a comma in the 'name' field. (e.g., "방탄소년단, BTS", "블랙핑크, BLACKPINK").
+        5. Provide the exact Korean sentence from the news as 'evidence'.
         
         Format EXACTLY as a JSON array:
         [
             {{
-                "name": "RealName", 
-                "category": "k-actor", 
-                "birth_year": 1999,
-                "evidence": "소속사 측은 배우 OOO의 데뷔를 알렸다."
+                "name": "방탄소년단, BTS", 
+                "category": "k-pop", 
+                "birth_year": 2013,
+                "evidence": "그룹 방탄소년단(BTS)이 빌보드 차트에 진입했다."
             }}
         ]
-        If no real new celebrities are found, return [].
+        If no new real names are found, return [].
         """
         try:
             res_text = self.model.generate_content(prompt).text
             if not res_text: return
             
             new_celebs = json.loads(res_text.replace("```json", "").replace("```", "").strip())
-            
-            # 금지어 리스트 (배역을 의미하는 단어들)
             forbidden_words = ["역", "배역", "캐릭터", "분한", "극중", "극 중", "세계관", "맡은"]
             
             for celeb in new_celebs:
-                name = celeb.get("name")
+                raw_name = celeb.get("name")
                 evidence = celeb.get("evidence", "")
                 
-                # [2차 방어] 파이썬 사형 집행관 (증거 문장에 금지어가 있으면 즉시 폐기)
                 if any(word in evidence for word in forbidden_words):
-                    print(f"🚫 [차단] '{name}'은(는) 배역 이름일 확률이 높습니다. (증거: {evidence})")
                     continue
                 
-                # [3차 방어] 네이버 실존 인물 교차 검증 (팩트 체크)
-                validation_query = f"{name} 소속사 OR 데뷔 OR 프로필"
+                # 그룹/인물 첫 번째 이름을 대표 이름으로 삼아 교차 검증
+                primary_name = raw_name.split(',')[0].strip()
+                validation_query = f"{primary_name} 소속사 OR 데뷔 OR 프로필 OR 멤버"
                 validation_results = self._search_naver_keyword(validation_query, display=3)
                 
                 if not validation_results:
-                    print(f"🚫 [차단] '{name}'에 대한 실존 연예인 정보(소속사/데뷔)가 부족합니다.")
                     continue
                 
-                # 3중 방어망을 모두 뚫은 진짜 신인만 DB에 저장!
-                print(f"🎉 [신인 검증 완료!] AI가 진짜 스타 '{name}' ({celeb['category']})을(를) DB에 추가합니다.")
+                print(f"🎉 [신인/그룹 검증 완료!] '{raw_name}' ({celeb['category']}) DB 추가 완료.")
                 self.db.client.table("celebrity_dict").insert({
-                    "name": name,
-                    "default_category": celeb.get('category', 'k-actor'),
+                    "name": raw_name,
+                    "default_category": celeb.get('category', 'k-pop'),
                     "birth_year": celeb.get('birth_year', 2000)
                 }).execute()
                 
@@ -112,10 +105,9 @@ class NaverNewsAPI:
             print(f"⚠️ Rookie Discovery Error: {e}")
 
     def fetch_smart_news(self):
-        """그물망 매칭 + 팩트 체크 요약 + 카테고리 교통정리"""
+        """다중 이름(쉼표) 스플릿 매칭 엔진 적용"""
         if not self.client_id: return {}
 
-        # 1. DB 명단 로드
         try:
             res = self.db.client.table("celebrity_dict").select("*").execute()
             celebrities = res.data
@@ -123,13 +115,11 @@ class NaverNewsAPI:
         except Exception:
             return {}
 
-        # 2. 핫한 기사 300개 그물망 수집
         bulk_news = []
-        queries = ["예능 OR 방송 OR 유재석", "드라마 OR 영화 OR 배우", "아이돌 OR 컴백 OR 신곡"]
+        queries = ["예능 OR 방송 OR 유재석", "드라마 OR 영화 OR 배우", "아이돌 OR 컴백 OR 걸그룹 OR 보이그룹"]
         for q in queries:
             bulk_news.extend(self._search_naver_keyword(q, display=100))
 
-        # 3. 3중 검증 신인 발굴 실행 (발굴 후 명단 새로고침)
         self._discover_and_add_rookies(bulk_news, existing_names)
         celebrities = self.db.client.table("celebrity_dict").select("*").execute().data
 
@@ -137,45 +127,52 @@ class NaverNewsAPI:
         now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M:%S")
         results = {"k-pop": [], "k-actor": [], "k-entertain": [], "k-culture": []}
 
-        # 4. 파이썬 초고속 매칭 및 AI 편집국장 요약
         for celeb in celebrities:
             category = celeb.get('default_category', 'k-actor')
             birth_year = celeb.get('birth_year')
 
-            # K-Pop 50세 이하(1976년생 이후) 엄격 필터링
             if category == 'k-pop' and birth_year and int(birth_year) <= 1976:
                 continue 
             
-            name = celeb['name']
-            matched_articles = [n for n in bulk_news if name in n['title'] or name in n['description']]
+            raw_name = celeb['name']
+            
+            # 💡 [핵심] 쉼표로 이름을 분리하여 리스트로 만듭니다. (예: ["방탄소년단", "BTS"])
+            aliases = [alias.strip() for alias in raw_name.split(',')]
+            primary_name = aliases[0] # 기사에 노출될 대표 이름
+            
+            # 기사 제목/내용에 여러 이름 중 하나라도 포함되어 있으면 매칭 성공!
+            matched_articles = [
+                n for n in bulk_news 
+                if any(alias in n['title'] or alias in n['description'] for alias in aliases)
+            ]
             
             if matched_articles:
                 target_link = matched_articles[0]['link']
                 image_url = self._extract_image(target_link)
-                if not image_url: continue # 이미지 없으면 가차없이 폐기
+                if not image_url: continue 
 
                 articles_text = "\n".join([f"- {a['title']}: {a['description']}" for a in matched_articles[:3]])
                 
                 prompt = f"""
                 You are the Chief Editor of South Korea's top entertainment news portal.
                 Current Time: {now_kst}
-                Subject: '{name}'
+                Subject: '{primary_name}'
                 News: {articles_text}
                 
                 CRITICAL RULES:
-                1. FACT ONLY SUMMARY: Summarize facts strictly based on text. NO expert analysis, NO extra opinions.
+                1. FACT ONLY SUMMARY: Summarize facts strictly based on text. NO expert analysis.
                 2. EXACT MATCH: Keep all numbers and proper nouns EXACTLY as in original text. Translate naturally to English.
                 3. TRAFFIC CONTROL:
                    - If news is about Variety Shows/YouTube, category MUST BE 'k-entertain'.
                    - If about Acting/Drama/Movie, category MUST BE 'k-actor'.
-                   - If about Singing/Album, category MUST BE 'k-pop'.
+                   - If about Singing/Album/Concert, category MUST BE 'k-pop'.
                 4. SCORING: Assign Hotness Score (50-100).
                 
                 Format EXACTLY as JSON:
                 {{
                     "category": "determined_category",
-                    "name": "{name}",
-                    "title": "[{name}] English Headline",
+                    "name": "{primary_name}",
+                    "title": "[{primary_name}] English Headline",
                     "summary": "Factual English Summary",
                     "score": 85
                 }}
@@ -194,7 +191,7 @@ class NaverNewsAPI:
                 except Exception:
                     pass
 
-        # 5. K-Culture 처리 (문화 트렌드)
+        # 5. K-Culture 처리 
         if len(results["k-culture"]) < 10:
             culture_news = self._search_naver_keyword("팝업스토어 OR 디저트 OR 밈 OR 트렌드", display=15)
             for c_art in culture_news:
