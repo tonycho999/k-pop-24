@@ -1,205 +1,176 @@
 import os
-import time
-import json
 import requests
+import json
+from datetime import datetime
+import urllib.parse
 import pytz
 from bs4 import BeautifulSoup
-from collections import Counter
-from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 
-from google import genai
-from google.genai import types
+class NaverNewsAPI:
+    def __init__(self, db_client, model_manager):
+        self.client_id = os.environ.get("NAVER_CLIENT_ID")
+        self.client_secret = os.environ.get("NAVER_CLIENT_SECRET")
+        self.db = db_client  # database.py의 인스턴스
+        self.model = model_manager
 
-from database import Database
-from model_manager import ModelManager
-
-class NaverTrendEngine:
-    def __init__(self, db: Database):
-        self.db = db
-        self.naver_client_id = os.environ.get("NAVER_CLIENT_ID")
-        self.naver_client_secret = os.environ.get("NAVER_CLIENT_SECRET")
-        
-        self.gemini_key = os.environ.get("GEMINI_API_KEY")
-
-        if self.gemini_key:
-            temp_client = genai.Client(api_key=self.gemini_key)
-            manager = ModelManager(client=temp_client, provider="gemini")
-            self.model_name = manager.get_best_model()
-            if not self.model_name:
-                self.model_name = "gemini-2.5-flash"
-        else:
-            self.model_name = None
-
-    def _call_gemini_with_fallback(self, prompt, temperature=0.0):
-        if not self.gemini_key or not self.model_name: 
-            return None
+    def _extract_image(self, url):
+        """기사 원본 링크에 접속하여 고화질 썸네일(og:image)을 추출합니다."""
         try:
-            client = genai.Client(api_key=self.gemini_key)
-            response = client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=temperature,
-                    response_mime_type="application/json",
-                )
-            )
-            return response.text.strip()
-        except Exception as e:
-            print(f"  ⚠️ Gemini Error: {e}")
-            return None
-
-    def _get_naver_image(self, query, used_image_urls):
-        if not self.naver_client_id: return ""
-        url = "https://openapi.naver.com/v1/search/image"
-        headers = {
-            "X-Naver-Client-Id": self.naver_client_id,
-            "X-Naver-Client-Secret": self.naver_client_secret
-        }
-        params = {"query": query, "display": 5, "sort": "sim", "filter": "large"}
-        try:
-            res = requests.get(url, headers=headers, params=params, timeout=10)
-            data = res.json()
-            items = data.get("items", [])
-            for item in items:
-                img_link = item.get("link")
-                if img_link and img_link not in used_image_urls:
-                    print(f"  📸 [Naver Image] Successfully fetched exclusive image for '{query}'!")
-                    return img_link
-        except Exception as e:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            res = requests.get(url, headers=headers, timeout=5)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            meta_img = soup.find("meta", property="og:image")
+            if meta_img and meta_img.get("content"):
+                img_url = meta_img["content"]
+                # 네이버 기본 로고나 더미 이미지는 걸러냅니다.
+                if "dummy" in img_url or "naver_logo" in img_url:
+                    return None
+                return img_url
+        except Exception:
             pass
-        return ""
+        return None
+        
+    def fetch_smart_news(self):
+        """역방향 매칭 + 나이 맞춤 필터링 + 이미지 필수 로직"""
+        if not self.client_id:
+            print("❌ Naver API Keys not found!")
+            return []
 
-    def get_target_people(self, category, search_keyword, exclude_names):
-        if not self.naver_client_id or not search_keyword: return []
-
-        # 💡 [핵심] "배우 | 탤런트 | 캐스팅" 문자열을 쪼개서 배열로 만듭니다.
-        keyword_list = [k.strip() for k in search_keyword.split("|") if k.strip()]
-
-        url = "https://openapi.naver.com/v1/search/news.json"
-        headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
-        
-        korea_tz = pytz.timezone('Asia/Seoul')
-        now_kst = datetime.now(korea_tz)
-        deadline = now_kst - timedelta(hours=24)
-        
-        combined_text = ""
-        
-        # 💡 [핵심] 쪼개진 검색어들을 하나씩 돌면서 최신 100개씩 긁어와 합칩니다.
-        for keyword in keyword_list:
-            params = {"query": keyword, "display": 100, "sort": "date"}
-            try:
-                res = requests.get(url, headers=headers, params=params, timeout=10)
-                res.raise_for_status()
-                news_items = res.json().get("items", [])
-                
-                for item in news_items:
-                    pub_date = parsedate_to_datetime(item['pubDate']).astimezone(korea_tz)
-                    if pub_date > deadline: 
-                        title = BeautifulSoup(item['title'], 'html.parser').text
-                        desc = BeautifulSoup(item['description'], 'html.parser').text
-                        combined_text += f"- {title}: {desc}\n"
-            except Exception as e:
-                print(f"❌ Error extracting targets for '{keyword}': {e}")
-
-        if not combined_text: return []
-        
-        rule = ""
-        if category == "k-actor": 
-            rule = "MUST extract REAL ACTOR NAMES ONLY. STRICTLY EXCLUDE actors if the article is about them appearing on a VARIETY SHOW (예능). Extract ONLY for dramas, movies, or acting issues."
-        elif category == "k-pop": 
-            rule = "MUST extract SINGER/IDOL NAMES ONLY. STRICTLY EXCLUDE if the article is about a VARIETY SHOW (예능). Extract ONLY for music releases, charts, or concerts."
-        elif category == "k-entertain": 
-            rule = "MUST extract ANY HUMAN NAME (including actors and singers) IF they are mentioned as cast members or guests on a VARIETY SHOW (예능). STRICTLY EXCLUDE drama or music chart news."
-        elif category == "k-culture": 
-            rule = "Extract SPECIFIC VIRAL TRENDS, FOODS, MEMES, or HOT PLACES ONLY. Exclude generic words like '문화', '트렌드'."
-
-        prompt = f"""
-        Extract the 10 most frequently mentioned SUBJECTS from the text below:
-        {combined_text[:12000]}
-        
-        CRITICAL RULES:
-        1. {rule}
-        2. For k-actor, k-pop, and k-entertain: If it is NOT a real human name or group name, DO NOT extract it.
-        3. COMBINE duplicates (e.g., merge '임영웅' and '가수 임영웅' into just '임영웅').
-        4. Output strictly as a JSON array of strings like: ["Name1", "Name2"]
-        """
-        
-        result_text = self._call_gemini_with_fallback(prompt, temperature=0.0)
-        if not result_text: return []
-        
-        extracted_names = json.loads(result_text)
-        name_counts = Counter(extracted_names)
-        sorted_all_names = [name for name, count in name_counts.most_common()]
-        filtered_names = [name for name in sorted_all_names if name not in exclude_names]
-        
-        return filtered_names[:10]
-
-    def process_person(self, person_name, time_context, used_image_urls, category):
-        url = "https://openapi.naver.com/v1/search/news.json"
-        headers = {"X-Naver-Client-Id": self.naver_client_id, "X-Naver-Client-Secret": self.naver_client_secret}
-        params = {"query": person_name, "display": 15, "sort": "date"}
+        # 1. DB에서 명단 모두 불러오기 (SQL 필터링 대신 파이썬 내부 필터링 사용)
         try:
-            res = requests.get(url, headers=headers, params=params, timeout=10)
-            items = res.json().get("items", [])
-            
-            korea_tz = pytz.timezone('Asia/Seoul')
-            now_kst = datetime.now(korea_tz)
-            deadline = now_kst - timedelta(hours=24)
-            now_kst_str = now_kst.strftime('%Y-%m-%d %H:%M:%S KST')
-            
-            article_texts = []
-            first_link = ""
-            
-            for item in items:
-                pub_date = parsedate_to_datetime(item['pubDate']).astimezone(korea_tz)
-                if pub_date > deadline: 
-                    if not first_link: first_link = item['link']
-                    title = BeautifulSoup(item['title'], 'html.parser').text
-                    desc = BeautifulSoup(item['description'], 'html.parser').text
-                    article_texts.append(f"Title: {title}\nSummary: {desc}")
-                    
-                    if len(article_texts) >= 3: break 
-                
-            if not article_texts: return None
-
-            search_query = f"{person_name} 프로필" if category in ['k-actor', 'k-pop', 'k-entertain'] else f"{person_name}"
-            print(f"  🔍 Searching Naver Image for exclusive photo: {person_name}")
-            first_image = self._get_naver_image(search_query, used_image_urls)
-                
-            if first_image:
-                used_image_urls.add(first_image)
-                
-            combined_articles = "\n\n".join(article_texts)
-            
-            prompt = f"""
-            Current Time in Korea: {now_kst_str}
-            Target Subject: '{person_name}'
-            Recent News Summaries (from Naver API):
-            {combined_articles}
-            
-            Task:
-            1. Summary: Summarize the FACTS based strictly on the provided text. DO NOT add your own opinions, expert analysis, or extra comments.
-            2. Exact Match: Keep all numbers (viewers, ratings, sales) and proper nouns EXACTLY as they appear in the original text.
-            3. Headline: Create an English headline starting with the subject's name in brackets. Example: "[{person_name}] Headline Here".
-            4. Hotness Score: Freely evaluate and assign a score between 50 and 100 based on the actual buzz and importance of the news. DO NOT give everyone the same score. Be diverse.
-               - CRITICAL LIMIT: If the category is 'k-culture', the maximum score allowed is 80. (For k-culture, you MUST score between 50 and 80 ONLY).
-            
-            Format: Output ONLY valid JSON matching this structure:
-            {{ "category": "{category}", "title": "[{person_name}] English Headline...", "summary": "Factual English summary...", "score": 95 }}
-            """
-            
-            print(f"  > AI Editor is extracting facts for: {person_name}")
-            result_text = self._call_gemini_with_fallback(prompt, temperature=0.0) 
-            if not result_text: return None
-            
-            summary_data = json.loads(result_text)
-            summary_data['name'] = person_name
-            summary_data['link'] = first_link 
-            summary_data['image_url'] = first_image
-            if 'score' not in summary_data: summary_data['score'] = 50 
-                
-            return summary_data
+            res = self.db.client.table("celebrity_dict").select("*").execute()
+            celebrities = res.data
         except Exception as e:
-            print(f"❌ Error processing {person_name}: {e}")
-            return None
+            print(f"❌ DB 연예인 명단 로드 실패: {e}")
+            return []
+
+        # 2. 핫한 기사 뭉텅이로 긁어오기 (카테고리별 100개)
+        bulk_news = []
+        queries = ["예능 OR 방송 OR 유재석", "드라마 OR 영화 OR 배우", "아이돌 OR 컴백 OR 신곡"]
+        for q in queries:
+            bulk_news.extend(self._search_naver_keyword(q, display=100))
+
+        kst = pytz.timezone('Asia/Seoul')
+        now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M:%S")
+        processed_news = []
+
+        # 3. 파이썬 내부에서 초고속 매칭 및 깐깐한 조건 검사
+        for celeb in celebrities:
+            category = celeb.get('default_category', '')
+            birth_year = celeb.get('birth_year')
+
+            # 💡 [핵심] K-Pop 카테고리만 50세 이상(1976년 이전 출생) 스킵
+            if category == 'k-pop' and birth_year:
+                if int(birth_year) <= 1976:
+                    continue 
+            
+            name = celeb['name']
+            matched_articles = [n for n in bulk_news if name in n['title'] or name in n['description']]
+            
+            if matched_articles:
+                target_link = matched_articles[0]['link']
+                
+                # 💡 [핵심] 썸네일 이미지가 없으면 기사 가차없이 폐기
+                image_url = self._extract_image(target_link)
+                if not image_url:
+                    continue # 이미지가 없으므로 이번 연예인은 패스
+
+                articles_text = "\n".join([f"- {a['title']}: {a['description']}" for a in matched_articles[:5]])
+                
+                # 4. 제미나이 교통정리 및 점수 평가
+                prompt = f"""
+                Current Time: {now_kst}
+                Subject: '{name}' (Original Category: {category})
+                News: {articles_text}
+                
+                CRITICAL TRAFFIC CONTROL:
+                Read the news context and ASSIGN the CORRECT category:
+                - If the news is about starring in a Variety Show (예능, 유튜브 방송, 런닝맨 등), category MUST BE 'k-entertain'.
+                - If about acting (Drama/Movie), category MUST BE 'k-actor'.
+                - If about singing/music chart/album, category MUST BE 'k-pop'.
+                
+                SCORING (50~100):
+                Freely evaluate the buzz. DO NOT give everyone the same score.
+                
+                Format EXACTLY as JSON:
+                {{
+                    "category": "determined_category",
+                    "title": "[{name}] English Headline",
+                    "summary": "English Factual Summary",
+                    "score": 85
+                }}
+                """
+                
+                try:
+                    result_text = self.model.generate_content(prompt)
+                    if result_text:
+                        json_str = result_text.replace("```json", "").replace("```", "").strip()
+                        ai_data = json.loads(json_str)
+                        
+                        processed_news.append({
+                            "category": ai_data.get("category", category),
+                            "title": ai_data.get("title", f"[{name}] News Update"),
+                            "summary": ai_data.get("summary", ""),
+                            "score": ai_data.get("score", 70),
+                            "link": target_link,
+                            "image_url": image_url, # 정상 추출된 이미지만 저장
+                            "created_at": datetime.utcnow().isoformat()
+                        })
+                        
+                        # DB의 마지막 노출일 업데이트
+                        self.db.client.table("celebrity_dict").update({"last_seen_at": "now()"}).eq("id", celeb['id']).execute()
+                        
+                except Exception as e:
+                    print(f"⚠️ Gemini Processing Error for {name}: {e}")
+
+        # 5. K-Culture 처리 (이미지 있는 기사 찾기)
+        culture_news = self._search_naver_keyword("팝업스토어 OR 트렌드 OR 핫플 OR 바이럴", display=20)
+        
+        culture_target_link = None
+        culture_image_url = None
+        culture_articles_to_use = []
+
+        # 💡 [핵심] K-Culture 역시 이미지가 존재하는 기사가 나올 때까지 찾습니다
+        for article in culture_news:
+            img = self._extract_image(article['link'])
+            if img:
+                culture_target_link = article['link']
+                culture_image_url = img
+                culture_articles_to_use.append(article)
+                break 
+
+        if culture_image_url and culture_articles_to_use:
+            culture_text = "\n".join([f"- {a['title']}: {a['description']}" for a in culture_articles_to_use])
+            culture_prompt = f"""
+            Extract the SINGLE most viral K-Culture trend (Food, Place, Meme) from these articles.
+            STRICTLY EXCLUDE: Politics, ordinary news.
+            Score freely between 50 and 80. (DO NOT EXCEED 80).
+            Format EXACTLY as JSON: {{ "category": "k-culture", "title": "English Headline", "summary": "...", "score": 75 }}
+            News: {culture_text}
+            """
+            try:
+                culture_res = self.model.generate_content(culture_prompt)
+                culture_data = json.loads(culture_res.replace("```json", "").replace("```", "").strip())
+                culture_data["link"] = culture_target_link
+                culture_data["image_url"] = culture_image_url # 정상 이미지 저장
+                culture_data["created_at"] = datetime.utcnow().isoformat()
+                processed_news.append(culture_data)
+            except:
+                pass
+                
+        return processed_news
+
+    def _search_naver_keyword(self, query, display=10):
+        url = "https://openapi.naver.com/v1/search/news.json"
+        headers = {
+            "X-Naver-Client-Id": self.client_id,
+            "X-Naver-Client-Secret": self.client_secret
+        }
+        params = {"query": query, "display": display, "sort": "sim"}
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            res.raise_for_status()
+            return res.json().get('items', [])
+        except Exception as e:
+            print(f"❌ Naver Search Error ({query}): {e}")
+            return []
