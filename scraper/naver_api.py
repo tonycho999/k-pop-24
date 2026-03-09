@@ -49,7 +49,7 @@ class NaverNewsAPI:
         except Exception as e:
             return []
 
-    # 🛡️ Step 4: 팩트 체크망 (가짜 배역명 차단 및 실존 인증)
+    # 🛡️ 팩트 체크망
     def _is_valid_new_celeb(self, name):
         forbidden_words = ["역", "캐릭터", "배역", "분한", "극중", "극 중"]
         if any(word in name for word in forbidden_words) or len(name) < 2:
@@ -72,7 +72,7 @@ class NaverNewsAPI:
                 break
                 
         if not is_real:
-            print(f"    ❌ 탈락 [{name}]: 연예인 활동 증거(키워드) 없음 (일반인/타분야/가명)")
+            print(f"    ❌ 탈락 [{name}]: 연예인 활동 증거(키워드) 없음")
             return False
             
         return True
@@ -90,19 +90,16 @@ class NaverNewsAPI:
         
         final_results = {"k-pop": [], "k-actor": [], "k-entertain": [], "k-culture": []}
 
-        # 🔄 카테고리별 독립 루프 시작
         for cat_key, cat_query in categories_config.items():
             print(f"\n{'='*50}")
             print(f"🚀 [카테고리: {cat_key}] 독립 파이프라인 구동 시작!")
             print(f"{'='*50}")
             
-            # Step 2: 해당 카테고리 뉴스만 100개 긁어오기
             bulk_news = self._search_naver_keyword(cat_query, display=100, sort="date")
             if not bulk_news:
                 print(f"⚠️ 뉴스를 가져오지 못했습니다. 패스.")
                 continue
 
-            # Step 3: AI 이름 추출 & 빈도수 랭킹
             sample_titles = "\n".join([f"- {a['title']}" for a in bulk_news[:60]])
             extract_prompt = f"""
             Extract only REAL proper names of Korean celebrities, actors, or idol groups from these headlines.
@@ -114,7 +111,6 @@ class NaverNewsAPI:
                 res = self.ai_client.models.generate_content(model=self.model_name, contents=extract_prompt)
                 extracted_names = json.loads(res.text.replace("```json", "").replace("```", "").strip())
             except Exception as e:
-                print(f"⚠️ AI Name Extraction Error: {e}")
                 extracted_names = []
 
             name_counter = Counter()
@@ -125,7 +121,6 @@ class NaverNewsAPI:
 
             sorted_candidates = [name for name, count in name_counter.most_common()]
             
-            # Step 4 & 5: 예비 명단 20명 확보 (할당량 보충을 위해 넉넉히)
             try:
                 db_res = self.db.client.table("celebrity_dict").select("name").execute()
                 existing_names = {row['name'].split(',')[0].strip() for row in db_res.data}
@@ -134,7 +129,7 @@ class NaverNewsAPI:
 
             valid_candidates = []
             for name in sorted_candidates:
-                if len(valid_candidates) >= 20: # 넉넉하게 20명 확보
+                if len(valid_candidates) >= 20: 
                     break 
                 
                 if name in existing_names:
@@ -155,24 +150,37 @@ class NaverNewsAPI:
                         except Exception as e:
                             print(f"    ⚠️ DB 저장 실패: {e}")
 
-            # Step 6 & 7: 차등 검색 및 트래픽 컨트롤 (할당량 10개 채우기)
-            print(f"🚦 [Step 6 & 7] {cat_key} 할당량 10개 달성을 위한 기사 작성 및 분류...")
+            print(f"🚦 [Step 6 & 7] {cat_key} 할당량 10개 달성을 위한 기사 작성 및 썸네일 검증...")
             current_cat_quota = 0
             
             for idx, name in enumerate(valid_candidates):
                 if current_cat_quota >= 10:
-                    print(f"🎯 [{cat_key}] 목표 할당량 10개 달성 완료! 루프를 종료합니다.")
+                    print(f"🎯 [{cat_key}] 목표 할당량 10개 달성 완료! 루프 종료.")
                     break 
                 
-                # 순위 배정 로직 (1~5위는 3개, 그 외는 2개 참조)
                 rank = current_cat_quota + 1
                 article_count = 3 if rank <= 5 else 2 
                 target_news = self._search_naver_keyword(name, display=article_count, sort="sim")
                 if not target_news: continue
                 
+                # 💡 [핵심 보완 1] 썸네일 무한 탐색 및 스킵 로직
+                valid_img_url = None
+                valid_link = None
+                
+                # 기사 3개를 순회하며 이미지가 있는 기사부터 찾습니다.
+                for article in target_news:
+                    extracted_img = self._extract_image(article['link'])
+                    if extracted_img:
+                        valid_img_url = extracted_img
+                        valid_link = article['link']
+                        break # 이미지 찾으면 즉시 탐색 중단
+                
+                if not valid_img_url:
+                    print(f"  ⏭️ [스킵] {name}: 제공된 기사들에 썸네일이 없어 포털 메인에 부적합. 다음 후보로 넘어갑니다.")
+                    continue # AI 통신 아끼고 바로 다음 사람으로!
+
                 articles_text = "\n".join([f"- {a['title']}: {a['description']}" for a in target_news])
                 
-                # 💡 JSON 키값을 headline에서 title로 수정!
                 summary_prompt = f"""
                 Current Time: {now_kst}. Subject: '{name}' (Target Rank: {rank})
                 News: {articles_text}
@@ -180,18 +188,17 @@ class NaverNewsAPI:
                 CRITICAL RULES:
                 1. FACT ONLY SUMMARY. Do NOT add expert analysis or extra opinions. Keep original proper nouns/numbers.
                 2. Translate summary naturally to English.
-                3. TRAFFIC CONTROL (Categorize by ACTION, not by the person's usual job):
-                   - Action = Variety show, YouTube guest, MC, TV Broadcaster -> 'k-entertain'
-                   - Action = Drama casting, movie release, acting, pictorials -> 'k-actor'
-                   - Action = Album release, concert, music charts, fan meeting -> 'k-pop'
-                   Evaluate the main action in the provided news and determine the EXACT category.
+                3. TRAFFIC CONTROL:
+                   - Action = Variety show, YouTube guest, MC -> 'k-entertain'
+                   - Action = Drama casting, movie release, acting -> 'k-actor'
+                   - Action = Album release, concert, music charts -> 'k-pop'
                 
                 JSON Format EXACTLY:
                 {{
                     "category": "determined_category",
                     "name": "{name}",
                     "rank": {rank},
-                    "title": "[{name}] English Headline", 
+                    "title": "[{name}] English Translated Headline", 
                     "summary": "Factual English Summary"
                 }}
                 """
@@ -199,63 +206,75 @@ class NaverNewsAPI:
                     ai_res = self.ai_client.models.generate_content(model=self.model_name, contents=summary_prompt)
                     if ai_res.text:
                         data = json.loads(ai_res.text.replace("```json", "").replace("```", "").strip())
-                        assigned_cat = data.get("category", cat_key)
                         
+                        assigned_cat = data.get("category", cat_key)
                         if assigned_cat not in categories_config:
                             assigned_cat = cat_key
-                            
-                        data['category'] = assigned_cat
-                        data['link'] = target_news[0]['link'] 
                         
-                        img_url = self._extract_image(target_news[0]['link'])
-                        if img_url: 
-                            data['image_url'] = img_url
+                        # 💡 [핵심 보완 2] 타이틀 강제 포맷팅 (AI가 말을 안 들어도 파이썬이 고칩니다)
+                        raw_title = data.get("title", data.get("headline", "Untitled"))
+                        # 혹시 AI가 [이름]을 안 붙였다면 파이썬이 강제로 덮어씌움
+                        if not raw_title.startswith(f"[{name}]"):
+                            # 기존에 잘못 붙인 대괄호나 이름이 있다면 제거 후 깔끔하게 재조립
+                            clean_title = raw_title.replace(f"[{name}]", "").strip()
+                            raw_title = f"[{name}] {clean_title}"
+                            
+                        data['title'] = raw_title
+                        data['category'] = assigned_cat
+                        data['link'] = valid_link
+                        data['image_url'] = valid_img_url # 검증된 이미지만 투입
                             
                         final_results[assigned_cat].append(data)
                         
-                        # 할당량 체크 로직
                         if assigned_cat == cat_key:
                             current_cat_quota += 1
-                            print(f"  ✅ [Rank {current_cat_quota}] {name} ➔ [{assigned_cat}] 정상 할당 완료 (참고 기사: {article_count}개)")
+                            print(f"  ✅ [Rank {current_cat_quota}] {data['title']} ➔ [{assigned_cat}] 할당 (이미지 OK)")
                         else:
-                            print(f"  🔄 [스필오버 발생] {name} 기사는 [{assigned_cat}] 카테고리로 이동! [{cat_key}] 할당량(현재 {current_cat_quota}개) 보충을 위해 다음 후보를 계속 탐색합니다...")
+                            print(f"  🔄 [스필오버] {data['title']} ➔ [{assigned_cat}] 로드맵 변경! 빈자리 보충 탐색 재개...")
                 except Exception as e:
                     pass
 
-        # 🎨 K-Culture 트렌드 트랙 (동일)
+        # 🎨 K-Culture 트렌드 트랙
         print("\n🎨 [K-Culture] 순수 트렌드 포착 파이프라인 구동...")
         culture_news = self._search_naver_keyword("MZ세대 트렌드 OR 팝업스토어 OR 디저트 밈 OR 챌린지", display=15)
         final_results["k-culture"] = []
         
         for c_art in culture_news:
+            # 트렌드 뉴스도 썸네일 검증 거침
             img = self._extract_image(c_art['link'])
-            if img:
-                c_prompt = f"""
-                Extract ONE viral K-Culture trend from this news.
-                News: {c_art['title']} - {c_art['description']}
+            if not img:
+                continue
+
+            c_prompt = f"""
+            Extract ONE viral K-Culture trend from this news.
+            News: {c_art['title']} - {c_art['description']}
+            
+            CRITICAL RULE:
+            EXCLUDE any news where a specific celebrity, actor, or idol group is the main subject. Focus ONLY on lifestyle, memes, food, or general trends.
+            If the news is just about a celebrity, return an empty JSON {{}}.
+            
+            JSON Format:
+            {{
+                "name": "Trend Name",
+                "title": "[Trend Name] English Headline",
+                "summary": "Fact only summary."
+            }}
+            """
+            try:
+                c_res = self.ai_client.models.generate_content(model=self.model_name, contents=c_prompt)
+                c_data = json.loads(c_res.text.replace("```json", "").replace("```", "").strip())
                 
-                CRITICAL RULE:
-                EXCLUDE any news where a specific celebrity, actor, or idol group is the main subject. Focus ONLY on lifestyle, memes, food, or general trends.
-                If the news is just about a celebrity, return an empty JSON {{}}.
-                
-                JSON Format:
-                {{
-                    "name": "Trend Name",
-                    "title": "English Headline",
-                    "summary": "Fact only summary."
-                }}
-                """
-                try:
-                    c_res = self.ai_client.models.generate_content(model=self.model_name, contents=c_prompt)
-                    c_data = json.loads(c_res.text.replace("```json", "").replace("```", "").strip())
-                    
-                    if c_data and c_data.get("name"):
-                        c_data.update({"category": "k-culture", "link": c_art['link'], "image_url": img, "rank": 1})
-                        final_results["k-culture"].append(c_data)
-                        print(f"  ✅ [k-culture] 순수 트렌드 기사화 완료: {c_data.get('name')}")
-                        break 
-                except:
-                    pass
+                if c_data and c_data.get("name"):
+                    raw_title = c_data.get("title", c_data.get("headline", "Untitled"))
+                    if not raw_title.startswith(f"[{c_data['name']}]"):
+                        raw_title = f"[{c_data['name']}] {raw_title}"
+                        
+                    c_data.update({"category": "k-culture", "link": c_art['link'], "image_url": img, "rank": 1, "title": raw_title})
+                    final_results["k-culture"].append(c_data)
+                    print(f"  ✅ [k-culture] 순수 트렌드 기사화 완료: {c_data['title']}")
+                    break 
+            except:
+                pass
 
         print("\n💾 [Step 8] 8단계 파이프라인 완료. 메인 DB 저장 프로세스로 데이터를 넘깁니다.")
         return final_results
