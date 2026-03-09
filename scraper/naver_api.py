@@ -4,6 +4,8 @@ import json
 from datetime import datetime
 import pytz
 from bs4 import BeautifulSoup
+
+# 💡 구형(google.generativeai) 삭제, 신형(google-genai) 및 types 임포트 적용!
 from google import genai 
 from google.genai import types
 
@@ -14,6 +16,7 @@ class NaverNewsAPI:
         self.db = db_client
         self.model_name = model_name
         
+        # 💡 신형 Client 방식 연결 + 30초 타임아웃 방어막 장착!
         self.ai_client = genai.Client(
             api_key=os.environ.get("GEMINI_API_KEY"),
             http_options=types.HttpOptions(timeout=30000)
@@ -41,23 +44,25 @@ class NaverNewsAPI:
         }
         params = {"query": query, "display": display, "sort": "sim"}
         try:
-            res = requests.get(url, headers=headers, params=params, timeout=30)
+            # 💡 timeout 10초로 제한 및 에러 로깅 강화
+            res = requests.get(url, headers=headers, params=params, timeout=10)
             res.raise_for_status()
             return res.json().get('items', [])
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ Naver API Search Error ({query}): {e}")
             return []
 
     def _discover_and_add_rookies(self, bulk_news, existing_names):
         print("🕵️‍♂️ AI 스카우터가 새로운 라이징 스타/아이돌 그룹을 탐색 중입니다...")
         sample_news = "\n".join([f"- {a['title']}: {a['description']}" for a in bulk_news[:50]])
         
+        # 💡 AI 과부하 방지: 프롬프트에서 수천 명의 기존 DB 명단을 빼서 짐을 덜어줍니다!
         prompt = f"""
-        Task: Identify NEW rising Korean celebrities (Actors, Idols, IDOL GROUPS, Entertainers) from the news.
+        Task: Identify rising Korean celebrities (Actors, Idols, IDOL GROUPS, Entertainers) from the news.
         Recent News: {sample_news}
-        Existing Database Names: {existing_names}
         
         CRITICAL RULES:
-        1. Find proper names of REAL celebrities or GROUPS who are trending but NOT in the existing list.
+        1. Find proper names of REAL celebrities or GROUPS who are trending in the news provided.
         2. Must be UNDER 50 years old. For IDOL GROUPS, use their debut year as 'birth_year'.
         3. STRICT: NO fictional character names.
         4. ALIASES: If known by multiple names (Korean and English), COMBINE with a comma (e.g., "방탄소년단, BTS").
@@ -72,7 +77,7 @@ class NaverNewsAPI:
                 "evidence": "그룹 방탄소년단(BTS)이 차트에 진입했다."
             }}
         ]
-        If no new real names are found, return [].
+        If no real names are found, return [].
         """
         try:
             # 💡 신형 generate_content 호출 방식 적용
@@ -81,31 +86,50 @@ class NaverNewsAPI:
                 contents=prompt
             )
             res_text = response.text
-            if not res_text: return
+            
+            if not res_text: 
+                print("⚠️ AI 스카우터가 빈 응답을 반환했습니다.")
+                return
+            
+            print("✅ AI 스카우터 응답 완료! 파이썬 초고속 팩트 체크를 시작합니다...")
             
             new_celebs = json.loads(res_text.replace("```json", "").replace("```", "").strip())
             forbidden_words = ["역", "배역", "캐릭터", "분한", "극중", "극 중", "세계관", "맡은"]
             
+            print(f"🔍 AI가 뉴스에서 발췌한 인물 수: {len(new_celebs)}명")
+
             for celeb in new_celebs:
                 raw_name = celeb.get("name")
                 evidence = celeb.get("evidence", "")
+                primary_name = raw_name.split(',')[0].strip()
                 
-                if any(word in evidence for word in forbidden_words):
+                # 💡 추가됨: 파이썬이 빛의 속도로 기존 DB 명단과 대조 (AI 대신 일합니다)
+                if any(primary_name == ex_name.split(',')[0].strip() for ex_name in existing_names):
+                    print(f"  ⏩ 패스: 이미 DB에 있는 인물입니다 ({primary_name})")
                     continue
                 
-                primary_name = raw_name.split(',')[0].strip()
+                print(f"  👉 신규 후보 팩트 체크 중: {raw_name} (증거: {evidence[:20]}...)")
+                
+                if any(word in evidence for word in forbidden_words):
+                    print(f"  ❌ 탈락: 배역/캐릭터명 금지어 감지 ({raw_name})")
+                    continue
+                
                 validation_query = f"{primary_name} 소속사 OR 데뷔 OR 프로필 OR 멤버"
                 validation_results = self._search_naver_keyword(validation_query, display=3)
                 
                 if not validation_results:
+                    print(f"  ❌ 탈락: 네이버 검색 결과 없음 (허구의 인물 가능성 높음: {raw_name})")
                     continue
                 
-                print(f"🎉 [신인 검증 완료] '{raw_name}' ({celeb['category']}) DB 추가 완료.")
+                print(f"🎉 [신인 검증 완료] '{raw_name}' ({celeb.get('category', 'k-pop')}) DB 추가 완료.")
                 self.db.client.table("celebrity_dict").insert({
                     "name": raw_name,
                     "default_category": celeb.get('category', 'k-pop'),
                     "birth_year": celeb.get('birth_year', 2000)
                 }).execute()
+                
+        except json.JSONDecodeError:
+            print(f"⚠️ Rookie Discovery JSON Error: AI가 올바른 JSON 형식을 주지 않았습니다.\n{res_text}")
         except Exception as e:
             print(f"⚠️ Rookie Discovery Error: {e}")
 
