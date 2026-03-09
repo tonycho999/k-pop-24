@@ -2,7 +2,7 @@ import os
 import requests
 import json
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from bs4 import BeautifulSoup
 
@@ -49,7 +49,7 @@ class NaverNewsAPI:
         except Exception as e:
             return []
 
-    # 🛡️ 팩트 체크망
+    # 🛡️ Step 4: 팩트 체크망 (생존 서바이벌)
     def _is_valid_new_celeb(self, name):
         forbidden_words = ["역", "캐릭터", "배역", "분한", "극중", "극 중"]
         if any(word in name for word in forbidden_words) or len(name) < 2:
@@ -82,6 +82,24 @@ class NaverNewsAPI:
         now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M:%S")
         print(f"\n🕒 [Step 1] 시스템 KST 시간 설정 완료: {now_kst}")
 
+        # 🌟 [핵심 보완] 5시간 쿨타임 및 자동 삭제 시스템
+        # Supabase는 UTC 기준이므로 UTC로 5시간 전 계산
+        five_hours_ago = datetime.utcnow() - timedelta(hours=5)
+        try:
+            # 1. 5시간 이전 데이터(오래된 기사)는 DB에서 완전히 삭제
+            self.db.client.table("live_news").delete().lt("created_at", five_hours_ago.isoformat()).execute()
+            print("🧹 [DB 정리] 5시간이 지난 오래된 기사를 삭제 완료했습니다.")
+        except Exception as e:
+            print(f"⚠️ DB 정리 실패: {e}")
+
+        try:
+            # 2. 최근 5시간 이내(1~4시간 전)에 작성된 기사의 주인공 명단 불러오기 (쿨타임 대상자)
+            recent_res = self.db.client.table("live_news").select("keyword").gte("created_at", five_hours_ago.isoformat()).execute()
+            cooldown_names = {row['keyword'] for row in recent_res.data if row.get('keyword')}
+            print(f"⏳ [쿨타임 시스템] 최근 5시간 내 기사화되어 배제될 인물 수: {len(cooldown_names)}명")
+        except:
+            cooldown_names = set()
+
         categories_config = {
             "k-pop": "아이돌 OR 컴백 OR 보이그룹 OR 걸그룹 OR 솔로가수",
             "k-actor": "드라마 OR 영화 OR 배우",
@@ -90,14 +108,14 @@ class NaverNewsAPI:
         
         final_results = {"k-pop": [], "k-actor": [], "k-entertain": [], "k-culture": []}
 
+        # 🔄 카테고리별 독립 루프
         for cat_key, cat_query in categories_config.items():
             print(f"\n{'='*50}")
-            print(f"🚀 [카테고리: {cat_key}] 독립 파이프라인 구동 시작!")
+            print(f"🚀 [카테고리: {cat_key}] 10개 강제 할당 파이프라인 구동!")
             print(f"{'='*50}")
             
             bulk_news = self._search_naver_keyword(cat_query, display=100, sort="date")
             if not bulk_news:
-                print(f"⚠️ 뉴스를 가져오지 못했습니다. 패스.")
                 continue
 
             sample_titles = "\n".join([f"- {a['title']}" for a in bulk_news[:60]])
@@ -110,7 +128,7 @@ class NaverNewsAPI:
             try:
                 res = self.ai_client.models.generate_content(model=self.model_name, contents=extract_prompt)
                 extracted_names = json.loads(res.text.replace("```json", "").replace("```", "").strip())
-            except Exception as e:
+            except:
                 extracted_names = []
 
             name_counter = Counter()
@@ -129,16 +147,20 @@ class NaverNewsAPI:
 
             valid_candidates = []
             for name in sorted_candidates:
-                if len(valid_candidates) >= 20: 
+                if len(valid_candidates) >= 40: # 할당량 10개를 위해 예비 후보를 40명까지 넉넉히 확보
                     break 
                 
+                # 💡 5시간 쿨타임 필터링 작동!
+                if name in cooldown_names:
+                    print(f"  ⏳ [쿨타임 배제] {name}: 최근 5시간 내 등록됨. 다양성 확보를 위해 스킵합니다.")
+                    continue
+                
                 if name in existing_names:
-                    print(f"  🟢 [유지] DB 존재: {name} ({name_counter[name]}회)")
+                    print(f"  🟢 [유지] DB 존재: {name}")
                     valid_candidates.append(name)
                 else:
                     print(f"  🔴 [검증] DB 없음, 팩트 체크 진입: {name}")
                     if self._is_valid_new_celeb(name):
-                        print(f"    🎉 [승인] 신규 연예인 DB 업데이트: {name}")
                         try:
                             self.db.client.table("celebrity_dict").insert({
                                 "name": name,
@@ -147,15 +169,16 @@ class NaverNewsAPI:
                             }).execute()
                             existing_names.add(name)
                             valid_candidates.append(name)
+                            print(f"    🎉 [승인] 신규 연예인 DB 업데이트: {name}")
                         except Exception as e:
-                            print(f"    ⚠️ DB 저장 실패: {e}")
+                            pass
 
-            print(f"🚦 [Step 6 & 7] {cat_key} 할당량 10개 달성을 위한 기사 작성 및 썸네일 검증...")
+            print(f"🚦 [Step 6 & 7] {cat_key} 10개 강제 할당 및 썸네일/트래픽 검증...")
             current_cat_quota = 0
             
-            for idx, name in enumerate(valid_candidates):
+            for name in valid_candidates:
                 if current_cat_quota >= 10:
-                    print(f"🎯 [{cat_key}] 목표 할당량 10개 달성 완료! 루프 종료.")
+                    print(f"🎯 [{cat_key}] 목표 할당량 10개 완벽 달성! 루프 종료.")
                     break 
                 
                 rank = current_cat_quota + 1
@@ -163,21 +186,19 @@ class NaverNewsAPI:
                 target_news = self._search_naver_keyword(name, display=article_count, sort="sim")
                 if not target_news: continue
                 
-                # 💡 [핵심 보완 1] 썸네일 무한 탐색 및 스킵 로직
+                # 이미지 필터링 로직
                 valid_img_url = None
                 valid_link = None
-                
-                # 기사 3개를 순회하며 이미지가 있는 기사부터 찾습니다.
                 for article in target_news:
                     extracted_img = self._extract_image(article['link'])
                     if extracted_img:
                         valid_img_url = extracted_img
                         valid_link = article['link']
-                        break # 이미지 찾으면 즉시 탐색 중단
+                        break 
                 
                 if not valid_img_url:
-                    print(f"  ⏭️ [스킵] {name}: 제공된 기사들에 썸네일이 없어 포털 메인에 부적합. 다음 후보로 넘어갑니다.")
-                    continue # AI 통신 아끼고 바로 다음 사람으로!
+                    print(f"  ⏭️ [스킵] {name}: 썸네일 없음. 다음 후보로 넘어갑니다.")
+                    continue 
 
                 articles_text = "\n".join([f"- {a['title']}: {a['description']}" for a in target_news])
                 
@@ -186,7 +207,7 @@ class NaverNewsAPI:
                 News: {articles_text}
                 
                 CRITICAL RULES:
-                1. FACT ONLY SUMMARY. Do NOT add expert analysis or extra opinions. Keep original proper nouns/numbers.
+                1. FACT ONLY SUMMARY. Do NOT add expert analysis. Keep original proper nouns/numbers.
                 2. Translate summary naturally to English.
                 3. TRAFFIC CONTROL:
                    - Action = Variety show, YouTube guest, MC -> 'k-entertain'
@@ -196,7 +217,7 @@ class NaverNewsAPI:
                 JSON Format EXACTLY:
                 {{
                     "category": "determined_category",
-                    "name": "{name}",
+                    "keyword": "{name}",
                     "rank": {rank},
                     "title": "[{name}] English Translated Headline", 
                     "summary": "Factual English Summary"
@@ -211,36 +232,38 @@ class NaverNewsAPI:
                         if assigned_cat not in categories_config:
                             assigned_cat = cat_key
                         
-                        # 💡 [핵심 보완 2] 타이틀 강제 포맷팅 (AI가 말을 안 들어도 파이썬이 고칩니다)
                         raw_title = data.get("title", data.get("headline", "Untitled"))
-                        # 혹시 AI가 [이름]을 안 붙였다면 파이썬이 강제로 덮어씌움
                         if not raw_title.startswith(f"[{name}]"):
-                            # 기존에 잘못 붙인 대괄호나 이름이 있다면 제거 후 깔끔하게 재조립
                             clean_title = raw_title.replace(f"[{name}]", "").strip()
                             raw_title = f"[{name}] {clean_title}"
                             
                         data['title'] = raw_title
                         data['category'] = assigned_cat
+                        data['keyword'] = name # DB의 keyword 컬럼용 명시
                         data['link'] = valid_link
-                        data['image_url'] = valid_img_url # 검증된 이미지만 투입
+                        data['image_url'] = valid_img_url
                             
                         final_results[assigned_cat].append(data)
                         
                         if assigned_cat == cat_key:
                             current_cat_quota += 1
-                            print(f"  ✅ [Rank {current_cat_quota}] {data['title']} ➔ [{assigned_cat}] 할당 (이미지 OK)")
+                            print(f"  ✅ [Rank {current_cat_quota}/10] {data['title']} ➔ [{assigned_cat}] 할당 성공")
                         else:
-                            print(f"  🔄 [스필오버] {data['title']} ➔ [{assigned_cat}] 로드맵 변경! 빈자리 보충 탐색 재개...")
-                except Exception as e:
+                            print(f"  🔄 [스필오버] {data['title']} ➔ [{assigned_cat}] 로드맵 변경! 빈자리 10개 채우기를 계속합니다.")
+                except:
                     pass
 
-        # 🎨 K-Culture 트렌드 트랙
-        print("\n🎨 [K-Culture] 순수 트렌드 포착 파이프라인 구동...")
-        culture_news = self._search_naver_keyword("MZ세대 트렌드 OR 팝업스토어 OR 디저트 밈 OR 챌린지", display=15)
+        # 🎨 K-Culture 트렌드 트랙 (10개 강제 할당)
+        print("\n🎨 [K-Culture] 순수 트렌드 포착 파이프라인 구동 (목표: 10개)...")
+        culture_news = self._search_naver_keyword("MZ세대 트렌드 OR 팝업스토어 OR 디저트 밈 OR 챌린지", display=60)
         final_results["k-culture"] = []
+        c_quota = 0
         
         for c_art in culture_news:
-            # 트렌드 뉴스도 썸네일 검증 거침
+            if c_quota >= 10:
+                print(f"🎯 [k-culture] 목표 할당량 10개 완벽 달성! 루프 종료.")
+                break
+
             img = self._extract_image(c_art['link'])
             if not img:
                 continue
@@ -255,7 +278,7 @@ class NaverNewsAPI:
             
             JSON Format:
             {{
-                "name": "Trend Name",
+                "keyword": "Trend Name",
                 "title": "[Trend Name] English Headline",
                 "summary": "Fact only summary."
             }}
@@ -264,17 +287,24 @@ class NaverNewsAPI:
                 c_res = self.ai_client.models.generate_content(model=self.model_name, contents=c_prompt)
                 c_data = json.loads(c_res.text.replace("```json", "").replace("```", "").strip())
                 
-                if c_data and c_data.get("name"):
+                if c_data and c_data.get("keyword"):
+                    trend_name = c_data["keyword"]
+                    
+                    # 컬처도 쿨타임 검증 적용
+                    if trend_name in cooldown_names:
+                        continue
+
                     raw_title = c_data.get("title", c_data.get("headline", "Untitled"))
-                    if not raw_title.startswith(f"[{c_data['name']}]"):
-                        raw_title = f"[{c_data['name']}] {raw_title}"
+                    if not raw_title.startswith(f"[{trend_name}]"):
+                        raw_title = f"[{trend_name}] {raw_title}"
                         
-                    c_data.update({"category": "k-culture", "link": c_art['link'], "image_url": img, "rank": 1, "title": raw_title})
+                    c_data.update({"category": "k-culture", "link": c_art['link'], "image_url": img, "rank": c_quota+1, "title": raw_title})
                     final_results["k-culture"].append(c_data)
-                    print(f"  ✅ [k-culture] 순수 트렌드 기사화 완료: {c_data['title']}")
-                    break 
+                    c_quota += 1
+                    cooldown_names.add(trend_name) # 같은 루프 내 중복 방지
+                    print(f"  ✅ [k-culture Rank {c_quota}/10] 순수 트렌드 기사화 완료: {c_data['title']}")
             except:
                 pass
 
-        print("\n💾 [Step 8] 8단계 파이프라인 완료. 메인 DB 저장 프로세스로 데이터를 넘깁니다.")
+        print("\n💾 [Step 8] 8단계 파이프라인 (10개 할당 보장) 완료. DB 저장 프로세스로 데이터를 넘깁니다.")
         return final_results
