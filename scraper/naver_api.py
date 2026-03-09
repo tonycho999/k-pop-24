@@ -4,9 +4,8 @@ import json
 from datetime import datetime
 import pytz
 from bs4 import BeautifulSoup
-
-# 💡 구형(google.generativeai) 삭제, 신형(google-genai) 임포트 적용!
 from google import genai 
+from google.genai import types
 
 class NaverNewsAPI:
     def __init__(self, db_client, model_name):
@@ -15,8 +14,10 @@ class NaverNewsAPI:
         self.db = db_client
         self.model_name = model_name
         
-        # 💡 신형 Client 방식 연결
-        self.ai_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+        self.ai_client = genai.Client(
+            api_key=os.environ.get("GEMINI_API_KEY"),
+            http_options=types.HttpOptions(timeout=30000)
+        )
 
     def _extract_image(self, url):
         try:
