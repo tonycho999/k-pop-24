@@ -14,7 +14,7 @@ def run_news_scraper():
     
     # 3중 방어망이 탑재된 뉴스 API 가동
     naver = NaverNewsAPI(db_client=db, model_name=best_model_name)
-    news_results = naver.fetch_smart_news()
+    news_results = naver.run_7_step_pipeline()
     
     # 대표님의 database.py에 있는 통합 저장 로직 호출 (자동 삭제 기능 포함)
     for category, items in news_results.items():
