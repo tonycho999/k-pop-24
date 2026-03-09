@@ -40,7 +40,7 @@ class NaverNewsAPI:
         }
         params = {"query": query, "display": display, "sort": "sim"}
         try:
-            res = requests.get(url, headers=headers, params=params)
+            res = requests.get(url, headers=headers, params=params, timeout=30)
             res.raise_for_status()
             return res.json().get('items', [])
         except Exception:
