@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import KeywordTicker from './KeywordTicker';
 import VibeCheck from './VibeCheck';
 import RankingItem from './RankingItem';
-import { Trophy, Flame, Music, Star, MapPin, ThumbsUp, TrendingUp } from 'lucide-react';
+import { Trophy, Flame, Music, Star, MapPin, ThumbsUp, TrendingUp, Tv, Film } from 'lucide-react';
 import { LiveNewsItem, RankingItemData } from '@/types';
 
 interface SidebarProps {
@@ -68,10 +68,11 @@ export default function Sidebar({ news, category }: SidebarProps) {
   }, [category]);
 
   // 2. 헤더 정보 설정
-  const headerInfo = useMemo(() => {
+const headerInfo = useMemo(() => {
     switch (category) {
       case 'K-Pop': return { title: 'Top 10 Music Chart', icon: <Music size={18} /> };
-      case 'K-Actor': return { title: 'Actor Ranking', icon: <Star size={18} /> };
+      case 'K-Drama': return { title: 'Top TV Ratings', icon: <Tv size={18} /> };   // ✨ 드라마 시청률 랭킹용
+      case 'K-Movie': return { title: 'Box Office Top 10', icon: <Film size={18} /> }; // ✨ 영화 박스오피스용
       case 'K-Entertain': return { title: 'Variety Show Trends', icon: <Flame size={18} /> };
       case 'K-Culture': return { title: "K-Culture Hot Picks", icon: <MapPin size={18} /> };
       default: return { title: 'Total Trend Ranking', icon: <TrendingUp size={18} /> };
