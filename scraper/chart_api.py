@@ -31,7 +31,7 @@ class ChartManager:
             self.proxies = None
 
     def _scrape_real_chart(self, target):
-        """실시간 차트 스크래핑 (3회 재시도 + SSL 무시)"""
+        """실시간 차트 스크래핑 (3회 재시도 + 멜론 실패 시 네이버 음원차트 폴백)"""
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -39,40 +39,65 @@ class ChartManager:
         }
         
         max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                if target == "melon":
+        
+        if target == "melon":
+            # [플랜 A] 멜론 크롤링 3회 시도
+            for attempt in range(max_retries):
+                try:
                     res = requests.get("https://www.melon.com/chart/index.htm", headers=headers, proxies=self.proxies, timeout=30, verify=False)
                     res.raise_for_status()
                     soup = BeautifulSoup(res.text, 'html.parser')
                     
                     # 파이썬으로 1~10위 제목/가수만 미리 추출 (AI 환각 원천 차단)
                     songs = soup.select('div.wrap_song_info')
-                    if not songs: return ""
-                    
-                    context = "MELON REAL-TIME TOP 10:\n"
-                    count = 1
-                    for song in songs:
-                        title_elem = song.select_one('div.ellipsis.rank01 a')
-                        artist_elem = song.select_one('div.ellipsis.rank02 > a')
-                        if title_elem and artist_elem:
-                            title = title_elem.text.strip()
-                            artist = artist_elem.text.strip()
-                            context += f"{count}. {title} - {artist}\n"
-                            count += 1
-                        if count > 10: break
-                    return context
+                    if songs:
+                        context = "MELON REAL-TIME TOP 10:\n"
+                        count = 1
+                        for song in songs:
+                            title_elem = song.select_one('div.ellipsis.rank01 a')
+                            artist_elem = song.select_one('div.ellipsis.rank02 > a')
+                            if title_elem and artist_elem:
+                                title = title_elem.text.strip()
+                                artist = artist_elem.text.strip()
+                                context += f"{count}. {title} - {artist}\n"
+                                count += 1
+                            if count > 10: break
+                        return context
+                        
+                except Exception as e:
+                    print(f"⚠️ Scraping Attempt {attempt + 1} Error ({target}): {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(3) # 실패 시 3초 대기 후 재시도
+            
+            # 💡 [플랜 B] 멜론 3회 전부 실패 시, 네이버 "음원차트" 우회 검색!
+            print("🔄 멜론 접속 최종 실패. 네이버 '음원차트' 검색으로 대체(Fallback)합니다...")
+            try:
+                res = requests.get("https://search.naver.com/search.naver?query=음원차트", headers=headers, proxies=self.proxies, timeout=30, verify=False)
+                res.raise_for_status()
+                soup = BeautifulSoup(res.text, 'html.parser')
+                
+                # 네이버 검색 결과 메인 영역의 텍스트 추출
+                main_pack = soup.find(id='main_pack')
+                if main_pack:
+                    return main_pack.get_text(separator=' | ', strip=True)[:4000]
+                return soup.get_text(separator=' | ', strip=True)[:4000]
+            except Exception as e:
+                print(f"❌ 네이버 대체 검색마저 실패했습니다: {e}")
+                return ""
 
-                elif target == "nielsen":
+        elif target == "nielsen":
+            for attempt in range(max_retries):
+                try:
                     res = requests.get("https://search.naver.com/search.naver?query=주간+예능+시청률", headers=headers, proxies=self.proxies, timeout=30, verify=False)
                     res.raise_for_status()
                     soup = BeautifulSoup(res.text, 'html.parser')
                     return soup.find('table').get_text(separator=' | ', strip=True)[:4000]
-                    
-            except Exception as e:
-                print(f"⚠️ Scraping Attempt {attempt + 1} Error ({target}): {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(3) # 실패 시 3초 대기 후 재시도
+                except Exception as e:
+                    print(f"⚠️ Scraping Attempt {attempt + 1} Error ({target}): {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(3)
+            return ""
+            
         return ""
 
     def process_chart(self, category: str, context: str):
