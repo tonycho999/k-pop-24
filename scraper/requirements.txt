@@ -1,7 +1,7 @@
-groq
-supabase
 requests
 beautifulsoup4
-pytz
-python-dotenv
+playwright
 google-genai
+groq
+supabase
+pytz
