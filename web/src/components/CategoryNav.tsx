@@ -10,7 +10,8 @@ export default function CategoryNav({ active, setCategory }: CategoryNavProps) {
   const categories = [
     { id: 'All', label: 'All Trends' },      // 화면: All Trends, 실제값: All
     { id: 'K-Pop', label: 'K-POP' },         // 화면: K-POP, 실제값: K-Pop (DB와 일치)
-    { id: 'K-Actor', label: 'K-Actor' },
+    { id: 'K-Drama', label: 'K-Drama' },     // ✨ K-Actor 대신 K-Drama 추가
+    { id: 'K-Movie', label: 'K-Movie' },     // ✨ K-Actor 대신 K-Movie 추가
     { id: 'K-Entertain', label: 'K-Entertain' },
     { id: 'K-Culture', label: 'K-Culture' },
   ];
