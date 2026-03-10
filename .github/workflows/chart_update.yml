@@ -32,8 +32,9 @@ jobs:
           PROXY_PORT: ${{ secrets.PROXY_PORT }}
           PROXY_USER: ${{ secrets.PROXY_USER }}
           PROXY_PASS: ${{ secrets.PROXY_PASS }}
-          # 💡 [수정] 제미나이 키 딱 1개만 깔끔하게 연동
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # 💡 TMDB 글로벌 공식 API 키 연결
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
         run: |
           cd scraper
           python -u main.py chart
