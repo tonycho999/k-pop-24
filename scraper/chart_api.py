@@ -53,9 +53,9 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (네이버 검색 + 제미나이 기사 작성)
+# 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 좋아요 보존 로직 적용)
     def _update_k_culture_magazine(self):
-        print("  🚀 Starting K-Culture Magazine Auto-Generation...")
+        print("  🚀 Starting K-Culture Magazine Delta Update...")
         if not self.naver_id or not self.naver_secret:
             print("  ❌ Error: NAVER_CLIENT_ID or NAVER_CLIENT_SECRET is missing.")
             return
@@ -66,7 +66,6 @@ class ChartAPI:
             print("  ❌ Error: SUPABASE_URL or SUPABASE_KEY is missing.")
             return
 
-        # Supabase 직접 통신을 위한 헤더 세팅
         supa_headers = {
             "apikey": supabase_key,
             "Authorization": f"Bearer {supabase_key}",
@@ -78,7 +77,6 @@ class ChartAPI:
             "X-Naver-Client-Secret": self.naver_secret
         }
 
-        # 카테고리별 네이버 뉴스 검색 키워드
         categories = {
             'k-food': '편의점 신상 OR 먹거리 유행 OR 디저트 인기',
             'k-beauty': '올리브영 인기 OR 뷰티 트렌드 OR 화장품 신제품',
@@ -87,73 +85,106 @@ class ChartAPI:
         }
 
         for sub_cat, query in categories.items():
-            print(f"  [{sub_cat}] Fetching news & generating trends...")
+            print(f"\n  [{sub_cat}] Fetching news & analyzing trends...")
             try:
-                # 1. 네이버 뉴스 검색 API 호출
+                # 0. 기존 DB에서 현재 Top 10 데이터 가져오기 (비교용)
+                get_url = f"{supabase_url}/rest/v1/live_news?category=eq.{sub_cat}&select=id,title,summary,score,likes"
+                old_res = requests.get(get_url, headers=supa_headers)
+                old_items = old_res.json() if old_res.status_code == 200 else []
+                
+                # 기존 타이틀을 딕셔너리로 저장하여 매칭에 사용
+                old_dict = {item['title']: item for item in old_items}
+                old_titles_list = list(old_dict.keys())
+
+                # 1. 네이버 뉴스 검색 API 호출 (한국어 원문 수집)
                 news_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(query)}&display=20&sort=sim"
                 news_res = requests.get(news_url, headers=naver_headers, timeout=10)
                 news_res.raise_for_status()
                 items = news_res.json().get('items', [])
 
-                # 뉴스 본문의 HTML 태그 깔끔하게 제거
-                snippets = []
-                for item in items:
-                    title = re.sub(r'<[^>]+>', '', item['title'])
-                    desc = re.sub(r'<[^>]+>', '', item['description'])
-                    snippets.append({"title": title, "desc": desc})
+                snippets = [{"title": re.sub(r'<[^>]+>', '', i['title']), "desc": re.sub(r'<[^>]+>', '', i['description'])} for i in items]
 
-                # 2. 제미나이(Gemini)에게 영문 기사 작성 지시
+                # 2. 제미나이(Gemini)에게 스마트 델타 업데이트 지시
                 prompt = f"""
-                You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat}.
-                Identify the Top 10 hottest trend items/topics in Korea right now.
-                Return ONLY a valid JSON array of exactly 10 objects.
-                Format for each object:
+                You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 10 hottest trends.
+                
+                CRITICAL RULE FOR TITLES:
+                Here are the previous Top 10 trend titles: {old_titles_list}
+                If a current trend is about the EXACT SAME TOPIC as one of the previous titles, you MUST use the EXACT SAME string from the previous titles list. Do not rephrase it.
+                If it is a completely new trend, create a new Catchy English Title.
+
+                Return ONLY a valid JSON array of exactly 10 objects. Format:
                 {{
-                    "title": "Catchy English Title (e.g., 'Dubai Chocolate Craze')",
-                    "summary": "2-3 sentences in English explaining what the item is and why it's popular in Korea.",
+                    "title": "Exact old title OR Catchy new English title",
+                    "summary": "2-3 sentences in English explaining what the item is and why it's popular.",
                     "keyword": "A short exact Korean noun for image search (e.g., '두바이 초콜릿')",
                     "score": <integer from 100 (1st) down to 91 (10th)>
                 }}
                 News snippets: {json.dumps(snippets, ensure_ascii=False)}
                 """
+                
                 ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                 text = ai_res.text.replace("```json", "").replace("```", "").strip()
                 trends = json.loads(text)
 
-                # 3. 네이버 이미지 API로 썸네일 수집 및 DB 저장용 데이터 조립
-                records = []
+                # 3. 데이터 비교 및 델타 업데이트 실행
+                active_ids = [] # 차트에 남을 기존 아이템 ID 기록용
+
                 for t in trends[:10]:
-                    keyword = t.get('keyword', '')
-                    img_url = ""
-                    
-                    if keyword:
-                        img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(keyword)}&display=1&sort=sim"
-                        img_res = requests.get(img_search_url, headers=naver_headers, timeout=5)
-                        if img_res.status_code == 200:
-                            img_items = img_res.json().get('items', [])
-                            if img_items:
-                                img_url = img_items[0].get('link', '')
+                    title = t.get('title', 'Unknown Trend')
+                    new_summary = t.get('summary', '')
+                    new_score = t.get('score', 0)
 
-                    records.append({
-                        "category": sub_cat,
-                        "title": t.get('title', 'Unknown Trend'),
-                        "summary": t.get('summary', ''),
-                        "image_url": img_url,
-                        "score": t.get('score', 0),
-                        "likes": 0
-                    })
+                    if title in old_dict:
+                        # [유지 & 업데이트] 기존 차트에 있던 트렌드 (좋아요 보존, 네이버 이미지 검색 생략)
+                        old_item = old_dict[title]
+                        item_id = old_item['id']
+                        active_ids.append(item_id)
+                        
+                        # 내용(Summary)이나 순위(Score)가 바뀌었을 때만 DB에 PATCH 요청 (API 비용 최적화)
+                        if old_item['summary'] != new_summary or old_item['score'] != new_score:
+                            patch_data = {"summary": new_summary, "score": new_score}
+                            requests.patch(f"{supabase_url}/rest/v1/live_news?id=eq.{item_id}", headers=supa_headers, json=patch_data)
+                            print(f"      🔄 Updated (Content/Rank changed): {title}")
+                        else:
+                            print(f"      ➖ Kept (No change): {title}")
+                            
+                    else:
+                        # [신규 진입] 완전히 새로운 트렌드 (네이버 이미지 검색 진행 후 POST)
+                        keyword = t.get('keyword', '')
+                        img_url = ""
+                        if keyword:
+                            img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(keyword)}&display=1&sort=sim"
+                            img_res = requests.get(img_search_url, headers=naver_headers, timeout=5)
+                            if img_res.status_code == 200 and img_res.json().get('items'):
+                                img_url = img_res.json()['items'][0].get('link', '')
 
-                # 4. Supabase DB 업데이트 (기존 카테고리 데이터 삭제 후 새 기사 삽입)
-                requests.delete(f"{supabase_url}/rest/v1/live_news?category=eq.{sub_cat}", headers=supa_headers)
-                requests.post(f"{supabase_url}/rest/v1/live_news", headers=supa_headers, json=records)
+                        post_data = {
+                            "category": sub_cat,
+                            "title": title,
+                            "summary": new_summary,
+                            "image_url": img_url,
+                            "score": new_score,
+                            "likes": 0
+                        }
+                        requests.post(f"{supabase_url}/rest/v1/live_news", headers=supa_headers, json=post_data)
+                        print(f"      ✨ New Entry: {title}")
 
-                print(f"    ✅ Saved 10 AI generated articles for {sub_cat}")
-                time.sleep(3) # API 과부하 방지를 위한 3초 휴식
+                # 4. 차트 아웃 (10위 밖으로 밀려난 예전 트렌드 삭제)
+                old_ids = [item['id'] for item in old_items]
+                out_ids = [str(i) for i in old_ids if i not in active_ids]
+                
+                if out_ids:
+                    del_url = f"{supabase_url}/rest/v1/live_news?id=in.({','.join(out_ids)})"
+                    requests.delete(del_url, headers=supa_headers)
+                    print(f"      🗑️ Dropped {len(out_ids)} outdated items.")
+
+                time.sleep(3) # 과부하 방지
 
             except Exception as e:
                 print(f"    ❌ Error processing {sub_cat}: {e}")
 
-        print("  🎉 K-Culture Magazine Auto-Generation Complete!")
+        print("  🎉 K-Culture Magazine Delta Update Complete!")
 
     # 🤖 AI 영문 일괄 번역기 (K-Pop, K-Movie 등 기존 차트용)
     def _translate_chart_titles(self, chart_data, category):
