@@ -7,22 +7,25 @@ from naver_api import NaverNewsAPI
 from chart_api import ChartAPI
 
 def run_news(db):
-    # [뉴스 모드] 1시간마다 1개의 카테고리만 로테이션 수집
+    # [뉴스 모드] 4시간마다 실행되어 4개 카테고리 전부 한 번에 업데이트 (k-culture 제외)
     kst = pytz.timezone('Asia/Seoul')
     now_kst = datetime.now(kst)
-    hour = now_kst.hour
 
-    categories = ['k-pop', 'k-movie', 'k-drama', 'k-entertain', 'k-culture']
-    target_category = categories[hour % 5]
+    # 💡 [핵심 수정] k-culture는 차트 봇이 전담하므로 제외, 4개만 남김
+    categories = ['k-pop', 'k-movie', 'k-drama', 'k-entertain']
 
     print("=" * 60)
     print(f"🕒 [NEWS KST Time] {now_kst.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"📰 [Target Category] {target_category.upper()}")
+    print("📰 [Target Categories] ALL (4 Categories Batch Mode)")
     print("=" * 60)
     
     news_api = NaverNewsAPI(db)
-    news_api.run_pipeline(target_category)
-    print("\n✅ Hourly News Automation Job Completed.")
+    
+    # 💡 [핵심 수정] 1개만 고르던 로직을 지우고, 4개를 연속으로 모두 실행!
+    for cat in categories:
+        news_api.run_pipeline(cat)
+        
+    print("\n✅ 4-Hour News Automation Job Completed.")
 
 def run_chart(db):
     # [차트 모드] 12시간마다 실행되어 5개 카테고리 전부 한 번에 업데이트
