@@ -33,6 +33,7 @@ jobs:
           PROXY_USER: ${{ secrets.PROXY_USER }}
           PROXY_PASS: ${{ secrets.PROXY_PASS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           # 💡 TMDB 글로벌 공식 API 키 연결
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
         run: |
