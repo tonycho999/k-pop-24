@@ -5,7 +5,6 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import pytz
 import urllib3
-import xml.etree.ElementTree as ET
 from google import genai
 
 # SSL 프록시 접속 경고창 영구 숨김 처리
@@ -98,7 +97,7 @@ class ChartAPI:
                 chart.append({
                     "rank": int(m['rank']),
                     "title": m['movieNm'],
-                    "info": f"Daily: {int(m['audiCnt']):,}", # 💡 [수정] "Daily Audience" -> "Daily: 숫자" 로 극단적 축약
+                    "info": f"Daily: {int(m['audiCnt']):,}", # 💡 극단적 축약
                     "score": 101 - int(m['rank'])
                 })
             return chart
@@ -121,7 +120,7 @@ class ChartAPI:
                     chart.append({
                         "rank": rank,
                         "title": title_el.text.strip(),
-                        "info": f"Rating: {rate_el.text.strip()}", # 💡 [수정] 짧고 명확하게
+                        "info": f"Rating: {rate_el.text.strip()}", # 💡 짧고 명확하게
                         "score": 101 - rank
                     })
                     rank += 1
@@ -175,7 +174,7 @@ class ChartAPI:
                     chart.append({
                         "rank": rank,
                         "title": title_el.text.strip(),
-                        "info": f"By {artist_el.text.strip()}", # 💡 [수정] "Artist: OOO" -> "By OOO"
+                        "info": f"By {artist_el.text.strip()}", # 💡 "Artist:" -> "By"
                         "score": 101 - rank
                     })
                     rank += 1
@@ -212,55 +211,43 @@ class ChartAPI:
             print(f"  ❌ All Plans Failed for Music: {e}")
             return []
 
-    # 🌍 K-Culture: 구글 트렌드 (Plan A -> B -> C)
+    # 🌍 K-Culture: 시그널(Signal.bz) 실시간 검색어 (네이버 실검 대체, Plan A -> B -> C)
     def _get_culture_trends(self):
-        url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=KR"
+        url = "https://signal.bz/news"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
 
-        def parse_xml(xml_content):
-            try:
-                root = ET.fromstring(xml_content)
-            except:
-                # Playwright가 HTML로 감싸서 반환할 경우를 대비한 BeautifulSoup 파싱
-                soup = BeautifulSoup(xml_content, 'html.parser')
-                items = soup.find_all('item')
-                chart = []
-                rank = 1
-                for item in items[:10]:
-                    title = item.find('title').text
-                    traffic = item.find('ht:approx_traffic')
-                    info = f"Hits: {traffic.text}" if traffic else "Hot" # 💡 [수정] "Searches: 10K" -> "Hits: 10K"
-                    chart.append({"rank": rank, "title": title, "info": info, "score": 101 - rank})
-                    rank += 1
-                return chart
-
-            items = root.findall('.//item')
+        def parse_html(html_text):
+            soup = BeautifulSoup(html_text, 'html.parser')
+            items = soup.select('.rank-layer .rank-text')
             chart = []
             rank = 1
             for item in items[:10]:
-                title = item.find('title').text
-                traffic = item.find('{https://trends.google.com/trends/trendingsearches/daily}approx_traffic')
-                info = f"Hits: {traffic.text.replace('+', '')}" if traffic is not None else "Hot" # 💡 [수정] 기호 제거
-                chart.append({"rank": rank, "title": title, "info": info, "score": 101 - rank})
+                title = item.text.strip()
+                chart.append({
+                    "rank": rank,
+                    "title": title,
+                    "info": "Real-time Trend",
+                    "score": 101 - rank
+                })
                 rank += 1
             return chart
 
-        # 🛡️ Plan A
+        # 🛡️ Plan A: 순정 IP
         try:
             res = requests.get(url, headers=headers, timeout=10)
-            chart = parse_xml(res.content)
+            chart = parse_html(res.text)
             if chart: return chart
         except: pass
 
-        # 🕵️‍♂️ Plan B
+        # 🕵️‍♂️ Plan B: 프록시 우회
         print("  🕵️ Plan B (Proxy) for Culture Trends...")
         try:
             res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
-            chart = parse_xml(res.content)
+            chart = parse_html(res.text)
             if chart: return chart
         except: pass
 
-        # 🚜 Plan C
+        # 🚜 Plan C: 투명 브라우저 + 프록시
         print("  🚜 Plan C (Playwright) for Culture Trends...")
         try:
             from playwright.sync_api import sync_playwright
@@ -269,9 +256,9 @@ class ChartAPI:
                 page = browser.new_page(user_agent=headers["User-Agent"])
                 page.goto(url, timeout=20000)
                 page.wait_for_timeout(2000)
-                content = page.content()
+                html = page.content()
                 browser.close()
-                return parse_xml(content)
+                return parse_html(html)
         except Exception as e:
             print(f"  ❌ All Plans Failed for Culture Trends: {e}")
             return []
