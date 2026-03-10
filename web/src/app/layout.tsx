@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import Footer from '@/components/Footer';
+import Script from 'next/script'; // ✅ 구글 애널리틱스를 위한 Script 임포트 추가
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -46,6 +47,22 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
+        {/* ✅ 구글 애널리틱스 스크립트 추가 시작 */}
+        <Script
+          src="https://www.googletagmanager.com/gtag/js?id=G-1ZLZ32GLJD"
+          strategy="afterInteractive"
+        />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+
+            gtag('config', 'G-1ZLZ32GLJD');
+          `}
+        </Script>
+        {/* ✅ 구글 애널리틱스 스크립트 추가 끝 */}
+        
         <main className="min-h-screen">
           {children}
         </main>
