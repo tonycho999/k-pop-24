@@ -206,5 +206,3 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
     </div>
   );
 }
-
-수정할 부분만 수정하고 그외 절대 수정불가.
