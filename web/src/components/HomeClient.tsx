@@ -61,7 +61,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 2. 카테고리 변경 핸들러 (핵심 수정 부분)
+  // 2. 카테고리 변경 핸들러 (✅ K-Culture 데이터 Fetch 분기 처리 완료)
   const handleCategoryChange = useCallback(async (newCategory: string) => {
     setCategory(newCategory);
     setLoading(true);
@@ -70,19 +70,22 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
       let query = supabase.from('live_news').select('*');
 
       if (newCategory === 'All') {
-        // 전체보기: 점수(score) 높은 순
-        query = query.order('score', { ascending: false });
+        // 전체보기
+        query = query.order('score', { ascending: false }).limit(30);
+      } else if (newCategory === 'K-Culture') {
+        // ✅ K-Culture는 4개 세부 라이프스타일 카테고리를 한 번에 가져옴 (40개)
+        query = query
+          .in('category', ['k-food', 'k-beauty', 'k-fashion', 'k-lifestyle'])
+          .order('score', { ascending: false })
+          .limit(40);
       } else {
-        // ✅ [핵심 수정] UI는 'K-Pop'이지만 DB는 'k-pop'이므로 소문자 변환 필수!
+        // 기타 개별 카테고리
         const dbCategory = newCategory.toLowerCase();
-        
         query = query
           .eq('category', dbCategory)
-          .order('score', { ascending: false }); // 랭킹 대신 점수순 정렬
+          .order('score', { ascending: false })
+          .limit(30);
       }
-
-      // 30개 제한
-      query = query.limit(30);
 
       const { data, error } = await query;
 
@@ -146,10 +149,6 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     });
   };
 
-  // 로그인 안 한 유저에게는 1개만 보여주기 (블러 처리용)
-  // 이미 API에서 필터링해서 가져왔으므로 여기서는 추가 필터링 없이 그대로 사용하거나,
-  // 'All' 상태에서 클라이언트 사이드 필터링이 필요하다면 아래 로직 유지.
-  // 현재 로직: category state와 상관없이 news state는 이미 fetch된 데이터임.
   const displayedNews = user ? news : news.slice(0, 1);
 
   return (
@@ -172,11 +171,13 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-6 w-full">
-          <div className="col-span-1 md:col-span-3 relative w-full">
+          {/* ✅ K-Culture일 경우 사이드바 자리를 차지하며 전체 폭(md:col-span-4)으로 확장됩니다. */}
+          <div className={`relative w-full ${category === 'K-Culture' ? 'col-span-1 md:col-span-4' : 'col-span-1 md:col-span-3'}`}>
             <NewsFeed 
               news={displayedNews} 
               loading={loading || isTranslating} 
               onOpen={setSelectedArticle} 
+              category={category} // ✅ 카테고리 상태값 전달
             />
             
             {/* 로그인 안 했을 때 블러 처리 영역 */}
@@ -205,9 +206,12 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
             )}
           </div>
           
-          <div className="hidden md:block col-span-1">
-            <Sidebar news={news} category={category} />
-          </div>
+          {/* ✅ K-Culture가 아닐 때만 사이드바를 노출합니다. */}
+          {category !== 'K-Culture' && (
+            <div className="hidden md:block col-span-1">
+              <Sidebar news={news} category={category} />
+            </div>
+          )}
         </div>
       </div>
 
