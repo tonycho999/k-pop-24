@@ -161,6 +161,16 @@ class NaverNewsAPI:
         # Step 4 & 5. 📝 심층 취재, 채점, 카테고리 검열, 이미지 생존 검증
         # =========================================================
         print(f"  📝 Step 4: Deep Dive & Article Generation for {len(validated_names)} targets...")
+        
+        # 💡 [확장된 카테고리 룰] 연예계 공식 활동 전반으로 범위 대폭 확대!
+        category_rules = {
+            'k-pop': 'music releases, concerts, fan meetings, music charts, official idol group activities, agency announcements, music show appearances, and official promotional events (photoshoots, brand endorsements).',
+            'k-movie': 'movie casting, film production, box office results, theatrical releases, film festivals, actor interviews, movie promotional events (press cons, red carpets), and official actor activities.',
+            'k-drama': 'drama/OTT series casting, TV broadcasting, viewer ratings, plot details, drama awards, script readings, drama OSTs, and actor interviews about their roles.',
+            'k-entertain': 'variety shows, reality TV, comedy programs, TV or YouTube talk shows (e.g., web entertainment), MC/hosting activities, and entertainer interviews.'
+        }
+        strict_rule = category_rules.get(category, 'professional entertainment activities.')
+
         final_results = []
 
         for name in validated_names:
@@ -183,7 +193,7 @@ class NaverNewsAPI:
                 except:
                     pass
             
-            articles = valid_articles[:3] # 철저한 검문소를 통과한 진짜 최신 기사 3개
+            articles = valid_articles[:3]
 
             if not articles:
                 print(f"      ⏭️ No news within 24 hours. Skipping {name}.")
@@ -199,8 +209,16 @@ class NaverNewsAPI:
                     c_res = requests.get(art['link'], headers=headers, timeout=5, verify=False)
                     soup = BeautifulSoup(c_res.text, 'html.parser')
                     
-                    body = soup.select_one("#dic_area, #articeBody, .article_body")
-                    if body: content_pool += body.get_text(separator=' ', strip=True)[:1000] + " \n"
+                    # 💡 [본문 긁어오기 강화] 연예, 스포츠, 일반 뉴스 상자 모두 포함
+                    body = soup.select_one("#dic_area, #artc_body, #articleBody, .article_body, .news_end, .end_body_wrp")
+                    if body: 
+                        content_pool += body.get_text(separator=' ', strip=True)[:1000] + " \n"
+                    else:
+                        # 💡 [백업 플랜] 상자가 없으면 <p> 태그라도 긁어오기
+                        paragraphs = soup.find_all('p')
+                        backup_text = " ".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 20])
+                        if backup_text:
+                            content_pool += backup_text[:1000] + " \n"
                     
                     if not best_img_url:
                         meta_img = soup.find("meta", property="og:image")
@@ -218,18 +236,23 @@ class NaverNewsAPI:
                 print(f"      ⏭️ Not enough content. Skipping {name}.")
                 continue
 
-            # 💡 [핵심 방어막] CF, 광고, 카테고리 오작동 방지용 프롬프트
+            # 💡 [핵심 프롬프트 업데이트] 한글 강제, 본문 영어 번역, 인지도(Fame) 기반 채점, 사생활/사건사고 배제
             write_prompt = f"""
             You are a strict, factual English K-Entertainment news editor.
             Read the extracted news text about '{name}' and write a summary.
             
             CRITICAL RULES:
-            1. Title Format MUST BE: `[Korean Name, Group Name (if any)] English Title`
-            2. Fact ONLY: No expert analysis, no opinions. Keep proper nouns and numbers exactly as in the original.
-            3. Length: 3 to 6 sentences.
-            4. Assign a Score (50 to 100) based on the impact/importance of the news.
-            5. RELEVANCE CHECK (CRITICAL): The current target category is '{category}'. 
-               If the news is about a commercial (CF), product endorsement, simple SNS update, or entirely unrelated to '{category}' (e.g., an actor releasing a song, or a singer acting in a movie but the category is k-pop), you MUST set "is_valid_category": false. Otherwise, true.
+            1. Title Format: MUST BE EXACTLY `[{name}] English Title`. Do NOT translate '{name}' in the brackets. Keep the brackets exactly as `[{name}]`.
+            2. Language: The summary body MUST be 100% in English. Translate all movie/drama titles and proper nouns to English. DO NOT output any Korean characters in the "summary" field.
+            3. Length: 3 to 5 sentences.
+            4. SCORING (50-100): Score based PRIMARILY on the GLOBAL FAME/POPULARITY of '{name}'.
+               - A-list / World-class stars (e.g., BTS, Top Actors): 90~100
+               - Well-known stars: 75~89
+               - Rookies, unknown/minor actors: 50~74.
+            5. RELEVANCE CHECK (CRITICAL - READ CAREFULLY): 
+               The current target category is '{category}'.
+               This category accepts news about: {strict_rule}
+               If the news is PURELY about unrelated private life (e.g., crimes, home invasions, accidents, real estate) without ANY connection to their professional entertainment career, or entirely about a different field (e.g., a singer acting in a movie but the category is k-pop), you MUST set "is_valid_category": false. Otherwise, true.
             6. Output valid JSON ONLY.
             
             Content:
@@ -238,8 +261,8 @@ class NaverNewsAPI:
             JSON Format:
             {{
                 "is_valid_category": true,
-                "title": "[Name, Group] Title...",
-                "summary": "Summary...",
+                "title": "[{name}] Title in English...",
+                "summary": "Summary in English...",
                 "score": 85
             }}
             """
@@ -247,9 +270,9 @@ class NaverNewsAPI:
                 ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=write_prompt)
                 data = json.loads(ai_res.text.replace("```json", "").replace("```", "").strip())
                 
-                # 카테고리에 안 맞으면 가차 없이 스킵!
+                # 카테고리에 안 맞거나 단순 사생활이면 가차 없이 스킵!
                 if not data.get("is_valid_category", True):
-                    print(f"      ⏭️ Irrelevant to {category} (e.g. CF, wrong field). Skipping {name}.")
+                    print(f"      ⏭️ Irrelevant to {category} (e.g. Personal life, CF, wrong field). Skipping {name}.")
                     continue
                 
                 score = int(data.get("score", 70))
