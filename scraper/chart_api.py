@@ -53,7 +53,7 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-# 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 좋아요 보존 로직 적용)
+    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 좋아요 보존 로직 적용)
     def _update_k_culture_magazine(self):
         print("  🚀 Starting K-Culture Magazine Delta Update...")
         if not self.naver_id or not self.naver_secret:
@@ -134,6 +134,7 @@ class ChartAPI:
                     title = t.get('title', 'Unknown Trend')
                     new_summary = t.get('summary', '')
                     new_score = t.get('score', 0)
+                    keyword = t.get('keyword', '') # 💡 DB에 넣기 위해 빼둠
 
                     if title in old_dict:
                         # [유지 & 업데이트] 기존 차트에 있던 트렌드 (좋아요 보존, 네이버 이미지 검색 생략)
@@ -144,31 +145,55 @@ class ChartAPI:
                         # 내용(Summary)이나 순위(Score)가 바뀌었을 때만 DB에 PATCH 요청 (API 비용 최적화)
                         if old_item['summary'] != new_summary or old_item['score'] != new_score:
                             patch_data = {"summary": new_summary, "score": new_score}
-                            requests.patch(f"{supabase_url}/rest/v1/live_news?id=eq.{item_id}", headers=supa_headers, json=patch_data)
-                            print(f"      🔄 Updated (Content/Rank changed): {title}")
+                            patch_res = requests.patch(f"{supabase_url}/rest/v1/live_news?id=eq.{item_id}", headers=supa_headers, json=patch_data)
+                            
+                            # DB 업데이트 실패 시 원인 출력
+                            if patch_res.status_code >= 400:
+                                print(f"      ❌ DB Update Error ({title}): {patch_res.text}")
+                            else:
+                                print(f"      🔄 Updated (Content/Rank changed): {title}")
                         else:
                             print(f"      ➖ Kept (No change): {title}")
                             
                     else:
                         # [신규 진입] 완전히 새로운 트렌드 (네이버 이미지 검색 진행 후 POST)
-                        keyword = t.get('keyword', '')
                         img_url = ""
                         if keyword:
-                            img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(keyword)}&display=1&sort=sim"
+                            # 💡 후보 이미지를 3장 가져와서 살아있는 것 확인
+                            img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(keyword)}&display=3&sort=sim"
                             img_res = requests.get(img_search_url, headers=naver_headers, timeout=5)
-                            if img_res.status_code == 200 and img_res.json().get('items'):
-                                img_url = img_res.json()['items'][0].get('link', '')
+                            
+                            if img_res.status_code == 200:
+                                img_items = img_res.json().get('items', [])
+                                for img_item in img_items:
+                                    candidate_url = img_item.get('link', '')
+                                    try:
+                                        # 죽은 이미지(404, 403) 거르기 위한 헤더 테스트
+                                        check = requests.head(candidate_url, timeout=2, verify=False)
+                                        if check.status_code == 200:
+                                            img_url = candidate_url
+                                            break # 정상적인 이미지를 찾았으면 테스트 중지
+                                    except:
+                                        continue # 에러 나면 다음 이미지로 넘어감
 
+                        # DB 스키마에 맞춰 keyword와 link 추가
                         post_data = {
                             "category": sub_cat,
+                            "keyword": keyword, 
                             "title": title,
                             "summary": new_summary,
+                            "link": "", # 빈 값이라도 보내서 Not Null 에러 우회
                             "image_url": img_url,
                             "score": new_score,
                             "likes": 0
                         }
-                        requests.post(f"{supabase_url}/rest/v1/live_news", headers=supa_headers, json=post_data)
-                        print(f"      ✨ New Entry: {title}")
+                        post_res = requests.post(f"{supabase_url}/rest/v1/live_news", headers=supa_headers, json=post_data)
+                        
+                        # DB 인서트 실패 시 원인 출력
+                        if post_res.status_code >= 400:
+                            print(f"      ❌ DB Insert Error ({title}): {post_res.text}")
+                        else:
+                            print(f"      ✨ New Entry: {title}")
 
                 # 4. 차트 아웃 (10위 밖으로 밀려난 예전 트렌드 삭제)
                 old_ids = [item['id'] for item in old_items]
