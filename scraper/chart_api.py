@@ -192,7 +192,7 @@ class ChartAPI:
 
     # 🌍 4. K-Culture: 구글 트렌드 공식 RSS (한국 일일 인기 검색어)
     def _get_culture_trends(self):
-        url = "https://trends.google.co.kr/trends/trendingsearches/daily/rss?geo=KR"
+        url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=KR"
         
         try:
             res = requests.get(url, timeout=10)
