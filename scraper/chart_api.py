@@ -195,7 +195,7 @@ class ChartAPI:
         url = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=KR"
         
         try:
-            res = requests.get(url, timeout=10)
+            res = requests.get(url, headers=self.headers, timeout=10)
             res.raise_for_status()
             
             import xml.etree.ElementTree as ET
