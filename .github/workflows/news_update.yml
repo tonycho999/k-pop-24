@@ -2,8 +2,8 @@ name: News Update (4H)
 
 on:
   workflow_dispatch:
-#  schedule:
-#    - cron: '11 */4 * * *'
+  schedule:
+    - cron: '11 */4 * * *'
 
 jobs:
   run-news-scraper:
