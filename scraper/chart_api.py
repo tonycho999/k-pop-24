@@ -40,9 +40,11 @@ class ChartAPI:
         if category == 'k-movie':
             results = self._get_kobis_box_office()
         elif category == 'k-drama':
-            results = self._get_naver_ratings("드라마 시청률")
+            # 💡 [핵심 변경] 시청률 대신 '드라마 화제성 순위 (펀덱스)' 타겟팅
+            results = self._get_naver_buzz_ranking("드라마 화제성 순위")
         elif category == 'k-entertain':
-            results = self._get_naver_ratings("예능 시청률")
+            # 💡 [핵심 변경] 시청률 대신 '예능 화제성 순위 (펀덱스)' 타겟팅
+            results = self._get_naver_buzz_ranking("예능 화제성 순위")
         elif category == 'k-pop':
             results = self._get_music_chart()
         elif category == 'k-culture':
@@ -55,20 +57,18 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-    # 🤖 AI 영문 일괄 번역기 (가수명 포맷 통일 로직 추가)
+    # 🤖 AI 영문 일괄 번역기
     def _translate_chart_titles(self, chart_data, category):
         if not hasattr(self, 'ai_client') or not self.ai_client:
             return chart_data
 
-        # 💡 [핵심] 제목(title)뿐만 아니라 부가정보(info)도 같이 넘겨서 번역/포맷팅 진행
         items_to_translate = [{"title": item['title'], "info": item['info']} for item in chart_data]
         
         prompt = f"""
         You are an expert K-Culture translator. Translate the following JSON list of items into natural, trendy English.
         - 'title': Translate Korean into natural English. Keep proper nouns Romanized.
         - 'info': If it is an artist name starting with 'By' (K-Pop category), you MUST unify the format strictly to 'By English Name (Korean Name)'. 
-          Example: 'By IVE (아이브)', 'By BLACKPINK (블랙핑크)', 'By HWASA (화사)', 'By Han Roro (한로로)'. 
-          For non-music categories (Daily:, Rating:, Real-time Trend), leave the 'info' text exactly as it is.
+          For non-music categories (Daily:, Buzz:, Real-time Trend), leave the 'info' text exactly as it is.
         - Must return ONLY a valid JSON array of objects containing 'title' and 'info' keys.
         
         Items to translate:
@@ -79,7 +79,6 @@ class ChartAPI:
             text = ai_res.text.replace("```json", "").replace("```", "").strip()
             translated_items = json.loads(text)
             
-            # 번역되고 정제된 title과 info를 기존 데이터에 덮어씌우기
             for i, item in enumerate(chart_data):
                 if i < len(translated_items):
                     item['title'] = translated_items[i].get('title', item['title'])
@@ -110,24 +109,28 @@ class ChartAPI:
             return chart
         except: return []
 
-    # 📺 드라마/예능: 네이버 시청률 크롤링 (Plan A -> B -> C)
-    def _get_naver_ratings(self, query):
+    # 📺 드라마/예능: 네이버 펀덱스(GoodData) 화제성 순위 크롤링 (Plan A -> B -> C)
+    def _get_naver_buzz_ranking(self, query):
         url = f"https://search.naver.com/search.naver?query={query}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
 
         def parse_html(html_text):
             soup = BeautifulSoup(html_text, 'html.parser')
-            rows = soup.select('table.rate_table_info tbody tr') or soup.select('.tv_rating_table tbody tr') or soup.select('.list_info li')
+            # 💡 [핵심] 펀덱스 화제성 순위를 잡기 위한 강력한 다중 셀렉터
+            rows = soup.select('.list_info li') or soup.select('table.rate_table_info tbody tr') or soup.select('.tv_rating_table tbody tr') or soup.select('ul.lst_type li')
             chart = []
             rank = 1
             for row in rows[:10]:
-                title_el = row.select_one('.title a, .name a, th a')
-                rate_el = row.select_one('.percent, .rate, td.rate')
-                if title_el and rate_el:
+                title_el = row.select_one('.title a, .name a, th a, .info_title a, .tit')
+                rate_el = row.select_one('.percent, .rate, td.rate, .sub_text, .figure')
+                if title_el:
+                    title = title_el.text.strip()
+                    # 💡 Rating 대신 Buzz(화제성 점유율)로 표기 변경
+                    info = f"Buzz: {rate_el.text.strip()}" if rate_el else "Hot Buzz" 
                     chart.append({
                         "rank": rank,
-                        "title": title_el.text.strip(),
-                        "info": f"Rating: {rate_el.text.strip()}", 
+                        "title": title,
+                        "info": info,
                         "score": 101 - rank
                     })
                     rank += 1
