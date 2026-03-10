@@ -74,7 +74,7 @@ const headerInfo = useMemo(() => {
       case 'K-Drama': return { title: 'Top TV Ratings', icon: <Tv size={18} /> };   // ✨ 드라마 시청률 랭킹용
       case 'K-Movie': return { title: 'Box Office Top 10', icon: <Film size={18} /> }; // ✨ 영화 박스오피스용
       case 'K-Entertain': return { title: 'Variety Show Trends', icon: <Flame size={18} /> };
-      case 'K-Culture': return { title: "K-Culture Hot Picks", icon: <MapPin size={18} /> };
+      case 'K-Culture': return { title: "Real-time Search Trends", icon: <MapPin size={18} /> };
       default: return { title: 'Total Trend Ranking', icon: <TrendingUp size={18} /> };
     }
   }, [category]);
