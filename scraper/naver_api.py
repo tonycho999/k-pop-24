@@ -2,228 +2,275 @@ import os
 import json
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
+import pytz
+import urllib3
+from urllib.parse import quote
 from google import genai
+
+# SSL 프록시 접속 경고창 영구 숨김 처리
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class NaverNewsAPI:
     def __init__(self, db_client):
         self.db = db_client
+        
+        # API 키 세팅
+        self.naver_id = os.environ.get("NAVER_CLIENT_ID")
+        self.naver_secret = os.environ.get("NAVER_CLIENT_SECRET")
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
+        
         if self.gemini_key:
             self.ai_client = genai.Client(api_key=self.gemini_key)
 
-        # 💡 프록시 로드
-        self.proxy_host = os.environ.get("PROXY_HOST")
-        self.proxy_port = os.environ.get("PROXY_PORT")
-        self.proxy_user = os.environ.get("PROXY_USER")
-        self.proxy_pass = os.environ.get("PROXY_PASS")
-        
-        self.proxies = None
-        if self.proxy_host and self.proxy_port and self.proxy_user and self.proxy_pass:
-            proxy_url = f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}"
-            self.proxies = {
-                "http": proxy_url,
-                "https": proxy_url
-            }
-
-    def get_target_url(self, category):
-        # 💡 [핵심 수정] K-Culture는 chart_api.py의 AI 매거진 에디터가 전담하므로 여기서 삭제 완료!
-        urls = {
-            'k-pop': 'https://m.entertain.naver.com/music',
-            'k-movie': 'https://m.entertain.naver.com/movie',
-            'k-drama': 'https://m.entertain.naver.com/tv',
-            'k-entertain': 'https://m.entertain.naver.com/ranking'
+        self.naver_headers = {
+            "X-Naver-Client-Id": self.naver_id,
+            "X-Naver-Client-Secret": self.naver_secret
         }
-        return urls.get(category, 'https://m.entertain.naver.com/ranking')
 
     def run_pipeline(self, category):
-        target_url = self.get_target_url(category)
+        print(f"\n🚀 [AI Newsroom] Starting Pipeline for category: {category}")
         
-        # 1. 듀얼 엔진 스크래핑
-        articles = self._scrape_top_30_links(target_url)
-        if not articles:
-            print("  ❌ Fatal Error: Could not retrieve any articles.")
+        # 1. 시간 인지
+        kst = pytz.timezone('Asia/Seoul')
+        now_kst = datetime.now(kst)
+        print(f"  🕒 Current KST Time: {now_kst.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        if not self.naver_id or not self.naver_secret:
+            print("  ❌ Error: NAVER_CLIENT_ID or NAVER_CLIENT_SECRET missing.")
             return
 
-        existing_records = []
+        # =========================================================
+        # Step 1. 🧹 듀얼 DB 청소 (24시간 & 7일 컷오프)
+        # =========================================================
+        print("  🧹 Step 1: Cleaning up old database records...")
         try:
-            res = self.db.client.table("live_news").select("id, link").eq("category", category).execute()
-            existing_records = res.data if res.data else []
+            one_day_ago = (now_kst - timedelta(days=1)).isoformat()
+            seven_days_ago = (now_kst - timedelta(days=7)).isoformat()
+            
+            # live_news: 24시간 지난 데이터 삭제
+            self.db.client.table("live_news").delete().lt("created_at", one_day_ago).execute()
+            # search_archive: 7일 지난 데이터 삭제
+            self.db.client.table("search_archive").delete().lt("created_at", seven_days_ago).execute()
+            print("    ✅ Cleanup complete.")
         except Exception as e:
-            print(f"  ⚠️ Existing DB check failed: {e}")
+            print(f"    ⚠️ DB Cleanup Error: {e}")
 
-        existing_links = {rec['link']: rec['id'] for rec in existing_records}
-        new_results = []
-        current_top_links = set()
+        # =========================================================
+        # Step 2. 🚫 블랙리스트(최근 20명) 추출
+        # =========================================================
+        print("  🚫 Step 2: Fetching blacklist (Recent 20 names)...")
+        blacklist = []
+        try:
+            res = self.db.client.table("live_news").select("keyword").eq("category", category).order("created_at", desc=True).limit(20).execute()
+            if res.data:
+                blacklist = [item['keyword'] for item in res.data if item.get('keyword')]
+            print(f"    ✅ Blacklist size: {len(blacklist)} names.")
+        except Exception as e:
+            print(f"    ⚠️ Blacklist Fetch Error: {e}")
 
-        print(f"  🔍 Processing articles for '{category}'...")
-        processed_count = 0  # 💡 30개 강제 할당 카운터
-
-        for article in articles:
-            if processed_count >= 30: break
-            url = article['link']
-
-            if url in existing_links:
-                processed_count += 1
-                rank = processed_count
-                target_score = 100 - rank 
-                current_top_links.add(url)
-
-                rec_id = existing_links[url]
-                try:
-                    self.db.client.table("live_news").update({"score": target_score}).eq("id", rec_id).execute()
-                    print(f"    🔄 [Maintained] Rank {rank}: DB Score updated to {target_score}.")
-                except:
-                    pass
-            else:
-                # 썸네일/본문 없으면 카운터 올리지 않고 스킵
-                content, image_url = self._scrape_article_content(url)
-
-                if not content or not image_url:
-                    print(f"      ⏭️ Skipped: Missing Thumbnail or Content. ({url})")
-                    continue
-
-                processed_count += 1
-                rank = processed_count
-                target_score = 100 - rank 
-                current_top_links.add(url)
-
-                print(f"    ✨ [New Intake] Rank {rank}: Fetching content for AI... ({url})")
-                ai_data = self._generate_ai_summary(content, category, url, image_url, target_score)
-                if ai_data:
-                    new_results.append(ai_data)
-                    print(f"      ✅ AI Summarized: {ai_data['title']}")
-
-        if new_results:
-            self.db.save_news_results(category, new_results)
-
-        drop_ids = [rec['id'] for rec in existing_records if rec['link'] not in current_top_links]
-        if drop_ids:
-            try:
-                self.db.client.table("live_news").delete().in_("id", drop_ids).execute()
-                print(f"  🧹 [Purge] Deleted {len(drop_ids)} old articles.")
-            except:
-                pass
-
-    def _scrape_top_30_links(self, url):
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": "https://m.naver.com/"
+        # =========================================================
+        # Step 3. 📡 광역 스캔 및 새로운 10명 발굴 (작품명 금지)
+        # =========================================================
+        base_queries = {
+            'k-pop': '아이돌 OR 걸그룹 OR 보이그룹 OR 가요계 OR K팝',
+            'k-movie': '한국영화 OR 영화배우 OR 충무로 OR 극장가',
+            'k-drama': '한국드라마 OR 드라마배우 OR 넷플릭스 한국',
+            'k-entertain': '예능프로그램 OR 방송인 OR 코미디언'
         }
-        articles = []
+        query = base_queries.get(category, '연예계')
 
-        print("  🕵️ Initiating Plan A with Proxy...")
+        print(f"  📡 Step 3: Scanning latest 100 news articles for '{query}'...")
+        search_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(query)}&display=100&sort=date"
         try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, timeout=15, verify=False)
+            res = requests.get(search_url, headers=self.naver_headers, timeout=10)
             res.raise_for_status()
-            soup = BeautifulSoup(res.text, 'html.parser')
-            
-            links = [a for a in soup.find_all('a', href=True) if 'article' in a['href'] or 'read' in a['href']]
-            seen = set()
-            for a in links:
-                href = a['href']
-                if not href.startswith('http'):
-                    href = "https://m.entertain.naver.com" + href if 'entertain' in url else "https://n.news.naver.com" + href
-                if href not in seen:
-                    seen.add(href)
-                    articles.append({'link': href})
-
-            if len(articles) >= 10:
-                print(f"  🟢 Plan A Success: Found {len(articles)} articles.")
-                return articles
+            raw_news = res.json().get('items', [])
         except Exception as e:
-            print(f"  ⚠️ Plan A failed: {e}")
+            print(f"    ❌ Naver API Error: {e}")
+            return
 
-        print("  🚜 Initiating Plan B (Headless Browser)...")
-        try:
-            from playwright.sync_api import sync_playwright
-            
-            proxy_settings = None
-            if self.proxy_host:
-                proxy_settings = {
-                    "server": f"http://{self.proxy_host}:{self.proxy_port}",
-                    "username": self.proxy_user,
-                    "password": self.proxy_pass
-                }
+        snippets = [{"title": n['title'], "desc": n['description']} for n in raw_news]
 
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, proxy=proxy_settings)
-                page = browser.new_page(user_agent=headers["User-Agent"])
-                page.goto(url, timeout=20000)
-                page.wait_for_timeout(2000) 
-                html = page.content()
-                browser.close()
-
-            soup = BeautifulSoup(html, 'html.parser')
-            links = [a for a in soup.find_all('a', href=True) if 'article' in a['href'] or 'read' in a['href']]
-            seen = set()
-            articles = []
-            for a in links:
-                href = a['href']
-                if not href.startswith('http'):
-                    href = "https://m.entertain.naver.com" + href if 'entertain' in url else "https://n.news.naver.com" + href
-                if href not in seen:
-                    seen.add(href)
-                    articles.append({'link': href})
-            
-            print(f"  🟢 Plan B Success: Found {len(articles)} articles.")
-            return articles
-        except Exception as e:
-            print(f"  ❌ Plan B Failed: {e}")
-
-        return articles
-
-    def _scrape_article_content(self, url):
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
-        try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, timeout=15, allow_redirects=True, verify=False)
-            soup = BeautifulSoup(res.text, 'html.parser')
-
-            meta_img = soup.find("meta", property="og:image")
-            img_url = meta_img["content"].strip() if meta_img and meta_img.get("content") else None
-            blacklist = ["dummy", "naver_logo", "navernews", "default", "blank", "no_image", "news_logo"]
-            if img_url and any(bad in img_url.lower() for bad in blacklist):
-                img_url = None
-
-            body = soup.select_one("#dic_area, #articeBody, .article_body, .news_end")
-            text = body.get_text(separator=' ', strip=True) if body else soup.get_text(separator=' ', strip=True)[:3000]
-
-            return text[:3500], img_url
-        except Exception:
-            return None, None
-
-    def _generate_ai_summary(self, content, category, url, image_url, score):
-        prompt = f'''
-        You are a highly strictly factual English news summarizer. 
-        Read the Korean article below and summarize it.
+        print("    🧠 Asking AI to extract 10 NEW celebrities...")
+        prompt_extract = f"""
+        Analyze these 100 recent Korean entertainment news snippets.
+        Extract exactly 10 names of the most trending PEOPLE (celebrities, singers, actors, groups).
         
         CRITICAL RULES:
-        1. Length: Must be between 3 to 10 sentences depending on importance.
-        2. FACT ONLY: Do NOT add expert analysis, your personal opinions, or extra commentary. 
-        3. PRESERVE NOUNS & NUMBERS: Keep all proper nouns (names of people/places/groups/works) and numbers (ages, money, dates) EXACTLY as they are, but translated naturally into English.
-        4. Output strictly in the following JSON format without markdown code blocks.
-
-        Article Content:
-        {content}
-
-        JSON Format:
-        {{
-            "title": "[English Translated Title]",
-            "summary": "Factual English Summary..."
-        }}
-        '''
+        1. ONLY extract REAL PEOPLE or IDOL GROUPS. Do NOT extract movie titles, drama titles, TV show names, or character names.
+        2. EXCLUDE these names entirely (Blacklist): {blacklist}
+        3. Return ONLY a valid JSON array of strings. Format: ["Name1", "Name2", ...]
+        
+        News snippets: {json.dumps(snippets[:100], ensure_ascii=False)}
+        """
         try:
-            ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt_extract)
             text = ai_res.text.replace("```json", "").replace("```", "").strip()
-            data = json.loads(text)
-
-            return {
-                "name": url, 
-                "title": data.get("title", "Untitled"),
-                "summary": data.get("summary", ""),
-                "link": url,
-                "image_url": image_url,
-                "score": score
-            }
+            candidate_names = json.loads(text)
         except Exception as e:
-            print(f"      ❌ AI Error: {e}")
-            return None
+            print(f"    ❌ AI Extraction Error: {e}")
+            return
+
+        # =========================================================
+        # Step 3.5. 📚 celebrity_dict 크로스 체크 및 자가 학습
+        # =========================================================
+        print(f"  📚 Step 3.5: Cross-checking {len(candidate_names)} names with celebrity_dict...")
+        validated_names = []
+        try:
+            dict_res = self.db.client.table("celebrity_dict").select("name").execute()
+            existing_celebs = [item['name'] for item in dict_res.data] if dict_res.data else []
+
+            for name in candidate_names[:10]:
+                if name in existing_celebs:
+                    validated_names.append(name)
+                    print(f"    ✔️ [PASS] Existing celebrity: {name}")
+                else:
+                    # DB에 없는 이름 -> AI 검증
+                    verify_prompt = f"Is '{name}' a real, currently active Korean celebrity, singer, actor, or idol group? Answer ONLY with valid JSON: {{\"is_celeb\": true or false}}"
+                    v_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=verify_prompt)
+                    v_data = json.loads(v_res.text.replace("```json", "").replace("```", "").strip())
+                    
+                    if v_data.get("is_celeb"):
+                        # 신규 연예인으로 판명 -> pending 상태로 DB 추가
+                        self.db.client.table("celebrity_dict").insert({"name": name, "default_category": "pending"}).execute()
+                        validated_names.append(name)
+                        print(f"    ✨ [NEW] Learned and added new celebrity: {name}")
+                    else:
+                        print(f"    🗑️ [DROP] Discarded non-celebrity/trash data: {name}")
+        except Exception as e:
+            print(f"    ⚠️ Cross-check Error: {e}")
+            validated_names = candidate_names[:10] # 에러 시 일단 진행
+
+        if not validated_names:
+            print("  ❌ No valid celebrities found to process. Exiting current run.")
+            return
+
+        # =========================================================
+        # Step 4 & 5. 📝 심층 취재, 50~100점 채점, 이미지 생존 검증
+        # =========================================================
+        print(f"  📝 Step 4: Deep Dive & Article Generation for {len(validated_names)} targets...")
+        final_results = []
+
+        for name in validated_names:
+            print(f"\n    🔍 Investigating: {name}")
+            # 해당 인물로 네이버 뉴스 핀포인트 검색 (최신 3개)
+            p_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(name)}&display=3&sort=sim"
+            try:
+                p_res = requests.get(p_url, headers=self.naver_headers, timeout=10)
+                articles = p_res.json().get('items', [])
+            except:
+                continue
+
+            if not articles:
+                continue
+
+            content_pool = ""
+            best_img_url = ""
+            main_link = articles[0]['link']
+
+            # 본문 텍스트와 이미지 추출 (BeautifulSoup)
+            headers = {"User-Agent": "Mozilla/5.0"}
+            for art in articles:
+                try:
+                    c_res = requests.get(art['link'], headers=headers, timeout=5, verify=False)
+                    soup = BeautifulSoup(c_res.text, 'html.parser')
+                    
+                    # 텍스트 추출
+                    body = soup.select_one("#dic_area, #articeBody, .article_body")
+                    if body: content_pool += body.get_text(separator=' ', strip=True)[:1000] + " \n"
+                    
+                    # 🛡️ Step 5. 이미지 핑 테스트
+                    if not best_img_url:
+                        meta_img = soup.find("meta", property="og:image")
+                        if meta_img and meta_img.get("content"):
+                            candidate_img = meta_img["content"].strip()
+                            blacklist_img = ["dummy", "naver_logo", "default", "no_image"]
+                            if not any(bad in candidate_img.lower() for bad in blacklist_img):
+                                # 핑 테스트 (0.5초)
+                                check = requests.head(candidate_img, timeout=1, verify=False)
+                                if check.status_code == 200:
+                                    best_img_url = candidate_img
+                except:
+                    continue
+
+            if len(content_pool) < 100:
+                print(f"      ⏭️ Not enough content. Skipping {name}.")
+                continue
+
+            # AI 편집장 기사 작성 및 채점
+            write_prompt = f"""
+            You are a strict, factual English K-Entertainment news editor.
+            Read the extracted news text about '{name}' and write a summary.
+            
+            RULES:
+            1. Title Format MUST BE: `[Korean Name, Group Name (if any)] English Title`
+            2. Fact ONLY: No expert analysis, no opinions. Keep proper nouns and numbers exactly as in the original.
+            3. Length: 3 to 6 sentences.
+            4. Assign a Score (50 to 100) based on the impact/importance of the news (100 = huge scandal/mega hit, 50 = daily SNS update).
+            5. Output valid JSON ONLY.
+            
+            Content:
+            {content_pool}
+            
+            JSON Format:
+            {{
+                "title": "[Name, Group] Title...",
+                "summary": "Summary...",
+                "score": 85
+            }}
+            """
+            try:
+                ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=write_prompt)
+                data = json.loads(ai_res.text.replace("```json", "").replace("```", "").strip())
+                
+                score = int(data.get("score", 70))
+                # 점수 보정 (50~100)
+                score = max(50, min(100, score))
+
+                final_results.append({
+                    "category": category,
+                    "keyword": name, # 블랙리스트 추출용 기준
+                    "title": data.get("title", f"[{name}] Untitled"),
+                    "summary": data.get("summary", ""),
+                    "link": main_link,
+                    "image_url": best_img_url,
+                    "score": score,
+                    "likes": 0
+                })
+                print(f"      ✅ Generated: {data.get('title')} (Score: {score})")
+            except Exception as e:
+                print(f"      ❌ Article Gen Error for {name}: {e}")
+
+        # =========================================================
+        # Step 6. 💾 듀얼 DB 저장 및 '최대 50개' 용량 통제
+        # =========================================================
+        if final_results:
+            print(f"  💾 Step 6: Saving {len(final_results)} articles to databases...")
+            try:
+                # 1. search_archive 저장 (역사 보관용)
+                self.db.client.table("search_archive").insert(final_results).execute()
+                
+                # 2. live_news 저장 (메인용)
+                self.db.client.table("live_news").insert(final_results).execute()
+                print("    ✅ Insertion complete.")
+
+                # 3. 최대 50개 용량 통제 로직
+                count_res = self.db.client.table("live_news").select("id", count="exact").eq("category", category).execute()
+                total_count = count_res.count
+
+                if total_count and total_count > 50:
+                    excess = total_count - 50
+                    print(f"    ⚠️ Capacity limit exceeded ({total_count}/50). Purging {excess} lowest scored items...")
+                    
+                    # 점수가 가장 낮은 기사들 조회
+                    low_res = self.db.client.table("live_news").select("id").eq("category", category).order("score", asc=True).limit(excess).execute()
+                    if low_res.data:
+                        drop_ids = [item['id'] for item in low_res.data]
+                        self.db.client.table("live_news").delete().in_("id", drop_ids).execute()
+                        print(f"    🗑️ Purged {len(drop_ids)} low-score items.")
+
+            except Exception as e:
+                print(f"    ❌ DB Save/Purge Error: {e}")
+
+        print(f"🎉 [AI Newsroom] Pipeline for '{category}' successfully completed!")
