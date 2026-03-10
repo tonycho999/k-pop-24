@@ -19,7 +19,9 @@ class ChartAPI:
         if self.gemini_key:
             self.ai_client = genai.Client(api_key=self.gemini_key)
         
-        self.proxy_host = os.environ.get("PROXY_HOST")
+        # 💡 [핵심 수정] PROXY_HOST에 http:// 가 중복으로 들어가는 것을 방지 (자동 세척)
+        raw_host = os.environ.get("PROXY_HOST", "").replace("http://", "").replace("https://", "")
+        self.proxy_host = raw_host
         self.proxy_port = os.environ.get("PROXY_PORT")
         self.proxy_user = os.environ.get("PROXY_USER")
         self.proxy_pass = os.environ.get("PROXY_PASS")
@@ -35,15 +37,20 @@ class ChartAPI:
                 "password": self.proxy_pass
             }
 
+        # 💡 [핵심 수정] 봇 차단을 막기 위한 사람 완벽 위장 헤더
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        }
+
     def update_chart(self, category):
         results = []
         if category == 'k-movie':
             results = self._get_kobis_box_office()
         elif category == 'k-drama':
-            # 💡 [핵심 변경] 시청률 대신 '드라마 화제성 순위 (펀덱스)' 타겟팅
             results = self._get_naver_buzz_ranking("드라마 화제성 순위")
         elif category == 'k-entertain':
-            # 💡 [핵심 변경] 시청률 대신 '예능 화제성 순위 (펀덱스)' 타겟팅
             results = self._get_naver_buzz_ranking("예능 화제성 순위")
         elif category == 'k-pop':
             results = self._get_music_chart()
@@ -109,14 +116,12 @@ class ChartAPI:
             return chart
         except: return []
 
-    # 📺 드라마/예능: 네이버 펀덱스(GoodData) 화제성 순위 크롤링 (Plan A -> B -> C)
+    # 📺 드라마/예능: 네이버 펀덱스 화제성 순위 크롤링 (Plan A -> B -> C)
     def _get_naver_buzz_ranking(self, query):
         url = f"https://search.naver.com/search.naver?query={query}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
-
+        
         def parse_html(html_text):
             soup = BeautifulSoup(html_text, 'html.parser')
-            # 💡 [핵심] 펀덱스 화제성 순위를 잡기 위한 강력한 다중 셀렉터
             rows = soup.select('.list_info li') or soup.select('table.rate_table_info tbody tr') or soup.select('.tv_rating_table tbody tr') or soup.select('ul.lst_type li')
             chart = []
             rank = 1
@@ -125,31 +130,27 @@ class ChartAPI:
                 rate_el = row.select_one('.percent, .rate, td.rate, .sub_text, .figure')
                 if title_el:
                     title = title_el.text.strip()
-                    # 💡 Rating 대신 Buzz(화제성 점유율)로 표기 변경
                     info = f"Buzz: {rate_el.text.strip()}" if rate_el else "Hot Buzz" 
-                    chart.append({
-                        "rank": rank,
-                        "title": title,
-                        "info": info,
-                        "score": 101 - rank
-                    })
+                    chart.append({"rank": rank, "title": title, "info": info, "score": 101 - rank})
                     rank += 1
             return chart
 
         # 🛡️ Plan A
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            res = requests.get(url, headers=self.headers, timeout=10)
             chart = parse_html(res.text)
             if chart: return chart
-        except: pass
+        except Exception as e:
+            print(f"    ⚠️ Plan A Failed: {e}")
 
         # 🕵️‍♂️ Plan B
         print(f"  🕵️ Plan B (Proxy) for {query}...")
         try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
+            res = requests.get(url, headers=self.headers, proxies=self.proxies, verify=False, timeout=15)
             chart = parse_html(res.text)
             if chart: return chart
-        except: pass
+        except Exception as e:
+            print(f"    ⚠️ Plan B Failed: {e}")
 
         # 🚜 Plan C
         print(f"  🚜 Plan C (Playwright) for {query}...")
@@ -157,7 +158,7 @@ class ChartAPI:
             from playwright.sync_api import sync_playwright
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True, proxy=self.playwright_proxy)
-                page = browser.new_page(user_agent=headers["User-Agent"])
+                page = browser.new_page(user_agent=self.headers["User-Agent"])
                 page.goto(url, timeout=20000)
                 page.wait_for_timeout(2000)
                 html = page.content()
@@ -170,8 +171,7 @@ class ChartAPI:
     # 🎵 K-POP: 벅스(Bugs) 뮤직 실시간 차트 (Plan A -> B -> C)
     def _get_music_chart(self):
         url = "https://music.bugs.co.kr/chart"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
-
+        
         def parse_html(html_text):
             soup = BeautifulSoup(html_text, 'html.parser')
             songs = soup.select('table.list.trackList tbody tr')
@@ -192,18 +192,20 @@ class ChartAPI:
 
         # 🛡️ Plan A
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            res = requests.get(url, headers=self.headers, timeout=10)
             chart = parse_html(res.text)
             if chart: return chart
-        except: pass
+        except Exception as e:
+            print(f"    ⚠️ Plan A Failed: {e}")
 
         # 🕵️‍♂️ Plan B
         print("  🕵️ Plan B (Proxy) for Music Chart...")
         try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
+            res = requests.get(url, headers=self.headers, proxies=self.proxies, verify=False, timeout=15)
             chart = parse_html(res.text)
             if chart: return chart
-        except: pass
+        except Exception as e:
+            print(f"    ⚠️ Plan B Failed: {e}")
 
         # 🚜 Plan C
         print("  🚜 Plan C (Playwright) for Music Chart...")
@@ -211,7 +213,7 @@ class ChartAPI:
             from playwright.sync_api import sync_playwright
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True, proxy=self.playwright_proxy)
-                page = browser.new_page(user_agent=headers["User-Agent"])
+                page = browser.new_page(user_agent=self.headers["User-Agent"])
                 page.goto(url, timeout=20000)
                 page.wait_for_timeout(2000)
                 html = page.content()
@@ -224,18 +226,16 @@ class ChartAPI:
     # 🌍 K-Culture: 시그널(Signal.bz) 실시간 검색어 (Plan A -> B -> C)
     def _get_culture_trends(self):
         url = "https://signal.bz/news"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
-
+        
         def parse_html(html_text):
             soup = BeautifulSoup(html_text, 'html.parser')
             items = soup.select('.rank-layer .rank-text')
             chart = []
             rank = 1
             for item in items[:10]:
-                title = item.text.strip()
                 chart.append({
                     "rank": rank,
-                    "title": title,
+                    "title": item.text.strip(),
                     "info": "Real-time Trend",
                     "score": 101 - rank
                 })
@@ -244,18 +244,20 @@ class ChartAPI:
 
         # 🛡️ Plan A
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            res = requests.get(url, headers=self.headers, timeout=10)
             chart = parse_html(res.text)
             if chart: return chart
-        except: pass
+        except Exception as e:
+            print(f"    ⚠️ Plan A Failed: {e}")
 
         # 🕵️‍♂️ Plan B
         print("  🕵️ Plan B (Proxy) for Culture Trends...")
         try:
-            res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
+            res = requests.get(url, headers=self.headers, proxies=self.proxies, verify=False, timeout=15)
             chart = parse_html(res.text)
             if chart: return chart
-        except: pass
+        except Exception as e:
+            print(f"    ⚠️ Plan B Failed: {e}")
 
         # 🚜 Plan C
         print("  🚜 Plan C (Playwright) for Culture Trends...")
@@ -263,7 +265,7 @@ class ChartAPI:
             from playwright.sync_api import sync_playwright
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True, proxy=self.playwright_proxy)
-                page = browser.new_page(user_agent=headers["User-Agent"])
+                page = browser.new_page(user_agent=self.headers["User-Agent"])
                 page.goto(url, timeout=20000)
                 page.wait_for_timeout(2000)
                 html = page.content()
