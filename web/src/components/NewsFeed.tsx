@@ -3,6 +3,7 @@
 import { LiveNewsItem } from '@/types';
 import { Clock, ThumbsUp, ArrowRight } from 'lucide-react';
 import Image from 'next/image';
+import AdsterraNative from '@/components/AdsterraNative'; // ✅ 추가됨: 네이티브 배너 임포트
 
 interface NewsFeedProps {
   news: LiveNewsItem[];
@@ -30,7 +31,7 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
     );
   }
 
-  // ✅ [핵심 추가] K-Culture 탭일 경우 전용 4단 매거진 레이아웃 렌더링
+  // ✅ K-Culture 탭일 경우 전용 4단 매거진 레이아웃 렌더링
   if (category === 'K-Culture') {
     const cultureCategories = ['k-food', 'k-beauty', 'k-fashion', 'k-lifestyle'];
 
@@ -119,7 +120,8 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
         // 기존 <= 6 을 <= 8 로 변경! 
         const isMedium = displayRank > 2 && displayRank <= 5;
 
-        return (
+        // 💡 1. 기존에 바로 반환하던 기사 카드를 하나의 변수(articleCard)로 분리
+        const articleCard = (
           <div 
             key={item.id}
             onClick={() => onOpen(item)}
@@ -202,6 +204,22 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
             </div>
           </div>
         );
+
+        // 💡 2. 5번째 기사 (큰 카드 2개 + 중간 카드 3개 조합이 끝난 시점) 직후에 광고 삽입
+        if (index === 4) {
+          return (
+            <div key={`ad-wrapper-${item.id}`} className="contents">
+              {articleCard}
+              {/* 가로 전체 폭(col-span-6)을 차지하도록 광고 영역 할당 */}
+              <div className="col-span-1 md:col-span-6 w-full">
+                <AdsterraNative />
+              </div>
+            </div>
+          );
+        }
+
+        // 광고가 들어가지 않는 나머지 기사들은 그대로 반환
+        return articleCard;
       })}
     </div>
   );
