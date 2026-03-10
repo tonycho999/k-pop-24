@@ -26,12 +26,12 @@ class NaverNewsAPI:
             }
 
     def get_target_url(self, category):
+        # 💡 [핵심 수정] K-Culture는 chart_api.py의 AI 매거진 에디터가 전담하므로 여기서 삭제 완료!
         urls = {
             'k-pop': 'https://m.entertain.naver.com/music',
             'k-movie': 'https://m.entertain.naver.com/movie',
             'k-drama': 'https://m.entertain.naver.com/tv',
-            'k-entertain': 'https://m.entertain.naver.com/ranking',
-            'k-culture': 'https://m.news.naver.com/rankingList'
+            'k-entertain': 'https://m.entertain.naver.com/ranking'
         }
         return urls.get(category, 'https://m.entertain.naver.com/ranking')
 
