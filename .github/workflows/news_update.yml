@@ -1,9 +1,9 @@
-name: Hourly News Update (1H)
+name: News Update (4H)
 
 on:
   workflow_dispatch:
 #  schedule:
-#    - cron: '11 * * * *'
+#    - cron: '11 */4 * * *'
 
 jobs:
   run-news-scraper:
@@ -32,6 +32,9 @@ jobs:
           PROXY_PORT: ${{ secrets.PROXY_PORT }}
           PROXY_USER: ${{ secrets.PROXY_USER }}
           PROXY_PASS: ${{ secrets.PROXY_PASS }}
+          # 💡 [핵심 추가] 네이버 뉴스 API 키 주입
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: |
           cd scraper
           python -u main.py news
