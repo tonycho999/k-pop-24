@@ -13,7 +13,7 @@ export default function CategoryNav({ active, setCategory }: CategoryNavProps) {
     { id: 'K-Drama', label: 'K-Drama' },     // ✨ K-Actor 대신 K-Drama 추가
     { id: 'K-Movie', label: 'K-Movie' },     // ✨ K-Actor 대신 K-Movie 추가
     { id: 'K-Entertain', label: 'K-Entertain' },
-    { id: 'K-Culture', label: 'K-Culture' },
+    { id: 'K-Culture', label: 'TRENDS' },
   ];
 
   return (
