@@ -51,7 +51,7 @@ class ChartAPI:
         elif category == 'k-entertain':
             results = self._get_tmdb_ranking(is_drama=False) # 💡 TMDB API 호출 (예능)
         elif category == 'k-pop':
-            results = self._get_music_chart()
+            results = self._get_music_chart() # 💡 유튜브 API 호출 (음악)
         elif category == 'k-culture':
             results = self._get_culture_trends()
 
@@ -73,7 +73,7 @@ class ChartAPI:
         You are an expert K-Culture translator. Translate the following JSON list of items into natural, trendy English.
         - 'title': Translate Korean into natural English. Keep proper nouns Romanized.
         - 'info': If it is an artist name starting with 'By' (K-Pop category), you MUST unify the format strictly to 'By English Name (Korean Name)'. 
-          For non-music categories (Daily:, Pop:, Real-time Trend), leave the 'info' text exactly as it is.
+          For non-music categories (Daily:, Pop:, Views:, Real-time Trend), leave the 'info' text exactly as it is.
         - Must return ONLY a valid JSON array of objects containing 'title' and 'info' keys.
         
         Items to translate:
@@ -145,55 +145,45 @@ class ChartAPI:
             print(f"  ❌ TMDB API Error: {e}")
             return []
 
-    # 🎵 K-POP: 벅스(Bugs) 뮤직 실시간 차트 (Plan A -> B -> C)
+    # 🎵 K-POP: 유튜브(YouTube) Data API v3 - 한국 인기 급상승 음악 Top 10
     def _get_music_chart(self):
-        url = "https://music.bugs.co.kr/chart"
-        def parse_html(html_text):
-            soup = BeautifulSoup(html_text, 'html.parser')
-            songs = soup.select('table.list.trackList tbody tr')
+        youtube_key = os.environ.get("YOUTUBE_API_KEY")
+        if not youtube_key:
+            print("  ❌ Error: YOUTUBE_API_KEY is missing.")
+            return []
+
+        # 💡 videoCategoryId=10 (음악 카테고리), regionCode=KR (한국), chart=mostPopular (인기 급상승)
+        url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&regionCode=KR&videoCategoryId=10&maxResults=10&key={youtube_key}"
+        
+        try:
+            res = requests.get(url, timeout=10)
+            res.raise_for_status()
+            items = res.json().get('items', [])
+            
             chart = []
             rank = 1
-            for song in songs[:10]:
-                title_el = song.select_one('p.title a')
-                artist_el = song.select_one('p.artist a')
-                if title_el and artist_el:
-                    chart.append({
-                        "rank": rank,
-                        "title": title_el.text.strip(),
-                        "info": f"By {artist_el.text.strip()}",
-                        "score": 101 - rank
-                    })
-                    rank += 1
+            for item in items:
+                snippet = item.get('snippet', {})
+                stats = item.get('statistics', {})
+                
+                title = snippet.get('title', 'Unknown')
+                channel_name = snippet.get('channelTitle', 'Unknown') # 아티스트/채널명
+                views = int(stats.get('viewCount', 0)) # 조회수
+                
+                # 조회수를 보기 좋게 포맷팅 (예: 1,500,000)
+                formatted_views = f"{views:,}"
+                
+                chart.append({
+                    "rank": rank,
+                    "title": title,
+                    "info": f"By {channel_name} (Views: {formatted_views})", 
+                    "score": 101 - rank
+                })
+                rank += 1
             return chart
-
-        try:
-            res = requests.get(url, headers=self.headers, timeout=10)
-            chart = parse_html(res.text)
-            if chart: return chart
+            
         except Exception as e:
-            print(f"    ⚠️ Plan A Failed: {e}")
-
-        print("  🕵️ Plan B (Proxy) for Music Chart...")
-        try:
-            res = requests.get(url, headers=self.headers, proxies=self.proxies, verify=False, timeout=15)
-            chart = parse_html(res.text)
-            if chart: return chart
-        except Exception as e:
-            print(f"    ⚠️ Plan B Failed: {e}")
-
-        print("  🚜 Plan C (Playwright) for Music Chart...")
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, proxy=self.playwright_proxy)
-                page = browser.new_page(user_agent=self.headers["User-Agent"])
-                page.goto(url, timeout=20000)
-                page.wait_for_timeout(2000)
-                html = page.content()
-                browser.close()
-                return parse_html(html)
-        except Exception as e:
-            print(f"  ❌ All Plans Failed for Music: {e}")
+            print(f"  ❌ YouTube API Error: {e}")
             return []
 
     # 🌍 K-Culture: 시그널(Signal.bz) 실시간 검색어 (Plan A -> B -> C)
