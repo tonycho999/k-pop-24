@@ -55,34 +55,41 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-    # 🤖 AI 영문 일괄 번역기
+    # 🤖 AI 영문 일괄 번역기 (가수명 포맷 통일 로직 추가)
     def _translate_chart_titles(self, chart_data, category):
         if not hasattr(self, 'ai_client') or not self.ai_client:
             return chart_data
 
-        titles = [item['title'] for item in chart_data]
-        prompt = f"""
-        You are a K-Culture translator. Translate the following list of Korean titles (movies, tv shows, songs, or search trends) into natural English.
-        - Must return ONLY a valid JSON array of strings.
-        - Keep proper nouns Romanized.
+        # 💡 [핵심] 제목(title)뿐만 아니라 부가정보(info)도 같이 넘겨서 번역/포맷팅 진행
+        items_to_translate = [{"title": item['title'], "info": item['info']} for item in chart_data]
         
-        Titles to translate:
-        {json.dumps(titles, ensure_ascii=False)}
+        prompt = f"""
+        You are an expert K-Culture translator. Translate the following JSON list of items into natural, trendy English.
+        - 'title': Translate Korean into natural English. Keep proper nouns Romanized.
+        - 'info': If it is an artist name starting with 'By' (K-Pop category), you MUST unify the format strictly to 'By English Name (Korean Name)'. 
+          Example: 'By IVE (아이브)', 'By BLACKPINK (블랙핑크)', 'By HWASA (화사)', 'By Han Roro (한로로)'. 
+          For non-music categories (Daily:, Rating:, Real-time Trend), leave the 'info' text exactly as it is.
+        - Must return ONLY a valid JSON array of objects containing 'title' and 'info' keys.
+        
+        Items to translate:
+        {json.dumps(items_to_translate, ensure_ascii=False)}
         """
         try:
             ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             text = ai_res.text.replace("```json", "").replace("```", "").strip()
-            translated_titles = json.loads(text)
+            translated_items = json.loads(text)
             
+            # 번역되고 정제된 title과 info를 기존 데이터에 덮어씌우기
             for i, item in enumerate(chart_data):
-                if i < len(translated_titles):
-                    item['title'] = translated_titles[i]
+                if i < len(translated_items):
+                    item['title'] = translated_items[i].get('title', item['title'])
+                    item['info'] = translated_items[i].get('info', item['info'])
         except Exception as e:
             print(f"    ⚠️ AI Translation Error: {e}")
             
         return chart_data
 
-    # 🎬 영화: 영화진흥위원회(KOBIS) 박스오피스 API (공식 API이므로 단일 호출)
+    # 🎬 영화: 영화진흥위원회(KOBIS) 박스오피스 API
     def _get_kobis_box_office(self):
         if not self.kobis_key: return []
         kst = pytz.timezone('Asia/Seoul')
@@ -97,7 +104,7 @@ class ChartAPI:
                 chart.append({
                     "rank": int(m['rank']),
                     "title": m['movieNm'],
-                    "info": f"Daily: {int(m['audiCnt']):,}", # 💡 극단적 축약
+                    "info": f"Daily: {int(m['audiCnt']):,}", 
                     "score": 101 - int(m['rank'])
                 })
             return chart
@@ -120,20 +127,20 @@ class ChartAPI:
                     chart.append({
                         "rank": rank,
                         "title": title_el.text.strip(),
-                        "info": f"Rating: {rate_el.text.strip()}", # 💡 짧고 명확하게
+                        "info": f"Rating: {rate_el.text.strip()}", 
                         "score": 101 - rank
                     })
                     rank += 1
             return chart
 
-        # 🛡️ Plan A: 순정 IP
+        # 🛡️ Plan A
         try:
             res = requests.get(url, headers=headers, timeout=10)
             chart = parse_html(res.text)
             if chart: return chart
         except: pass
 
-        # 🕵️‍♂️ Plan B: 프록시 우회
+        # 🕵️‍♂️ Plan B
         print(f"  🕵️ Plan B (Proxy) for {query}...")
         try:
             res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
@@ -141,7 +148,7 @@ class ChartAPI:
             if chart: return chart
         except: pass
 
-        # 🚜 Plan C: 투명 브라우저 + 프록시
+        # 🚜 Plan C
         print(f"  🚜 Plan C (Playwright) for {query}...")
         try:
             from playwright.sync_api import sync_playwright
@@ -174,7 +181,7 @@ class ChartAPI:
                     chart.append({
                         "rank": rank,
                         "title": title_el.text.strip(),
-                        "info": f"By {artist_el.text.strip()}", # 💡 "Artist:" -> "By"
+                        "info": f"By {artist_el.text.strip()}",
                         "score": 101 - rank
                     })
                     rank += 1
@@ -211,7 +218,7 @@ class ChartAPI:
             print(f"  ❌ All Plans Failed for Music: {e}")
             return []
 
-    # 🌍 K-Culture: 시그널(Signal.bz) 실시간 검색어 (네이버 실검 대체, Plan A -> B -> C)
+    # 🌍 K-Culture: 시그널(Signal.bz) 실시간 검색어 (Plan A -> B -> C)
     def _get_culture_trends(self):
         url = "https://signal.bz/news"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"}
@@ -232,14 +239,14 @@ class ChartAPI:
                 rank += 1
             return chart
 
-        # 🛡️ Plan A: 순정 IP
+        # 🛡️ Plan A
         try:
             res = requests.get(url, headers=headers, timeout=10)
             chart = parse_html(res.text)
             if chart: return chart
         except: pass
 
-        # 🕵️‍♂️ Plan B: 프록시 우회
+        # 🕵️‍♂️ Plan B
         print("  🕵️ Plan B (Proxy) for Culture Trends...")
         try:
             res = requests.get(url, headers=headers, proxies=self.proxies, verify=False, timeout=15)
@@ -247,7 +254,7 @@ class ChartAPI:
             if chart: return chart
         except: pass
 
-        # 🚜 Plan C: 투명 브라우저 + 프록시
+        # 🚜 Plan C
         print("  🚜 Plan C (Playwright) for Culture Trends...")
         try:
             from playwright.sync_api import sync_playwright
