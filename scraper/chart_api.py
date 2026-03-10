@@ -1,7 +1,6 @@
 import os
 import json
 import requests
-from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import pytz
 import urllib3
@@ -14,12 +13,14 @@ class ChartAPI:
     def __init__(self, db):
         self.db = db
         self.kobis_key = os.environ.get("KOBIS_API_KEY") 
-        self.tmdb_key = os.environ.get("TMDB_API_KEY") # 💡 TMDB 키 로드
+        self.tmdb_key = os.environ.get("TMDB_API_KEY") 
         
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
         if self.gemini_key:
             self.ai_client = genai.Client(api_key=self.gemini_key)
         
+        # (참고: 이제 스크래핑을 하지 않으므로 프록시는 사실상 사용되지 않지만, 
+        # 기존 환경 변수 호환성을 위해 세팅만 남겨둡니다.)
         raw_host = os.environ.get("PROXY_HOST", "").replace("http://", "").replace("https://", "")
         self.proxy_host = raw_host
         self.proxy_port = os.environ.get("PROXY_PORT")
@@ -31,11 +32,6 @@ class ChartAPI:
         if self.proxy_host and self.proxy_port and self.proxy_user and self.proxy_pass:
             proxy_url = f"http://{self.proxy_user}:{self.proxy_pass}@{self.proxy_host}:{self.proxy_port}"
             self.proxies = {"http": proxy_url, "https": proxy_url}
-            self.playwright_proxy = {
-                "server": f"http://{self.proxy_host}:{self.proxy_port}",
-                "username": self.proxy_user,
-                "password": self.proxy_pass
-            }
 
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
@@ -47,11 +43,11 @@ class ChartAPI:
         if category == 'k-movie':
             results = self._get_kobis_box_office()
         elif category == 'k-drama':
-            results = self._get_tmdb_ranking(is_drama=True) # 💡 TMDB API 호출 (드라마)
+            results = self._get_tmdb_ranking(is_drama=True)
         elif category == 'k-entertain':
-            results = self._get_tmdb_ranking(is_drama=False) # 💡 TMDB API 호출 (예능)
+            results = self._get_tmdb_ranking(is_drama=False)
         elif category == 'k-pop':
-            results = self._get_music_chart() # 💡 유튜브 API 호출 (음악)
+            results = self._get_music_chart()
         elif category == 'k-culture':
             results = self._get_culture_trends()
 
@@ -73,7 +69,7 @@ class ChartAPI:
         You are an expert K-Culture translator. Translate the following JSON list of items into natural, trendy English.
         - 'title': Translate Korean into natural English. Keep proper nouns Romanized.
         - 'info': If it is an artist name starting with 'By' (K-Pop category), you MUST unify the format strictly to 'By English Name (Korean Name)'. 
-          For non-music categories (Daily:, Pop:, Views:, Real-time Trend), leave the 'info' text exactly as it is.
+          For non-music categories (Daily:, Pop:, Views:, Search:), leave the 'info' text exactly as it is.
         - Must return ONLY a valid JSON array of objects containing 'title' and 'info' keys.
         
         Items to translate:
@@ -93,7 +89,7 @@ class ChartAPI:
             
         return chart_data
 
-    # 🎬 영화: 영화진흥위원회(KOBIS) 박스오피스 API
+    # 🎬 1. K-Movie: 영화진흥위원회(KOBIS) 박스오피스 API
     def _get_kobis_box_office(self):
         if not self.kobis_key: return []
         kst = pytz.timezone('Asia/Seoul')
@@ -114,18 +110,28 @@ class ChartAPI:
             return chart
         except: return []
 
-    # 📺 드라마/예능: 글로벌 1위 TMDB 공식 API 연동 (에러율 0%)
+    # 📺 2. K-Drama & K-Entertain: TMDB 공식 API (최신 방영작 날짜 필터링 적용!)
     def _get_tmdb_ranking(self, is_drama=True):
         if not self.tmdb_key:
             print("  ❌ Error: TMDB_API_KEY is missing.")
             return []
             
+        kst = pytz.timezone('Asia/Seoul')
+        today = datetime.now(kst)
+        
         if is_drama:
+            # 드라마: 최근 6개월 이내 첫 방영
+            six_months_ago = (today - timedelta(days=120)).strftime('%Y-%m-%d')
             genre_filter = "&without_genres=10764,10767,10763"
+            date_filter = f"&first_air_date.gte={six_months_ago}"
         else:
+            # 예능: 최근 1개월 이내 새 에피소드 방영
+            one_month_ago = (today - timedelta(days=30)).strftime('%Y-%m-%d')
+            today_str = today.strftime('%Y-%m-%d')
             genre_filter = "&with_genres=10764|10767"
+            date_filter = f"&air_date.gte={one_month_ago}&air_date.lte={today_str}"
 
-        url = f"https://api.themoviedb.org/3/discover/tv?api_key={self.tmdb_key}&with_original_language=ko{genre_filter}&sort_by=popularity.desc&language=ko-KR"
+        url = f"https://api.themoviedb.org/3/discover/tv?api_key={self.tmdb_key}&with_original_language=ko{genre_filter}{date_filter}&sort_by=popularity.desc&language=ko-KR"
         
         try:
             res = requests.get(url, timeout=10).json()
@@ -145,14 +151,13 @@ class ChartAPI:
             print(f"  ❌ TMDB API Error: {e}")
             return []
 
-    # 🎵 K-POP: 유튜브(YouTube) Data API v3 - 한국 인기 급상승 음악 Top 10
+    # 🎵 3. K-POP: 유튜브(YouTube) Data API v3 (인기 급상승 음악)
     def _get_music_chart(self):
         youtube_key = os.environ.get("YOUTUBE_API_KEY")
         if not youtube_key:
             print("  ❌ Error: YOUTUBE_API_KEY is missing.")
             return []
 
-        # 💡 videoCategoryId=10 (음악 카테고리), regionCode=KR (한국), chart=mostPopular (인기 급상승)
         url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&regionCode=KR&videoCategoryId=10&maxResults=10&key={youtube_key}"
         
         try:
@@ -167,10 +172,9 @@ class ChartAPI:
                 stats = item.get('statistics', {})
                 
                 title = snippet.get('title', 'Unknown')
-                channel_name = snippet.get('channelTitle', 'Unknown') # 아티스트/채널명
-                views = int(stats.get('viewCount', 0)) # 조회수
+                channel_name = snippet.get('channelTitle', 'Unknown') 
+                views = int(stats.get('viewCount', 0)) 
                 
-                # 조회수를 보기 좋게 포맷팅 (예: 1,500,000)
                 formatted_views = f"{views:,}"
                 
                 chart.append({
@@ -186,50 +190,36 @@ class ChartAPI:
             print(f"  ❌ YouTube API Error: {e}")
             return []
 
-    # 🌍 K-Culture: 시그널(Signal.bz) 실시간 검색어 (Plan A -> B -> C)
+    # 🌍 4. K-Culture: 구글 트렌드 공식 RSS (한국 일일 인기 검색어)
     def _get_culture_trends(self):
-        url = "https://signal.bz/news"
-        def parse_html(html_text):
-            soup = BeautifulSoup(html_text, 'html.parser')
-            items = soup.select('.rank-layer .rank-text')
+        url = "https://trends.google.co.kr/trends/trendingsearches/daily/rss?geo=KR"
+        
+        try:
+            res = requests.get(url, timeout=10)
+            res.raise_for_status()
+            
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(res.text)
+            
             chart = []
             rank = 1
-            for item in items[:10]:
+            for item in root.findall('.//item')[:10]:
+                title = item.find('title').text
+                
+                traffic_info = "Hot Trend"
+                for child in item:
+                    if 'approx_traffic' in child.tag:
+                        traffic_info = f"Search: {child.text}"
+                        
                 chart.append({
                     "rank": rank,
-                    "title": item.text.strip(),
-                    "info": "Real-time Trend",
+                    "title": title,
+                    "info": traffic_info, 
                     "score": 101 - rank
                 })
                 rank += 1
             return chart
-
-        try:
-            res = requests.get(url, headers=self.headers, timeout=10)
-            chart = parse_html(res.text)
-            if chart: return chart
+            
         except Exception as e:
-            print(f"    ⚠️ Plan A Failed: {e}")
-
-        print("  🕵️ Plan B (Proxy) for Culture Trends...")
-        try:
-            res = requests.get(url, headers=self.headers, proxies=self.proxies, verify=False, timeout=15)
-            chart = parse_html(res.text)
-            if chart: return chart
-        except Exception as e:
-            print(f"    ⚠️ Plan B Failed: {e}")
-
-        print("  🚜 Plan C (Playwright) for Culture Trends...")
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, proxy=self.playwright_proxy)
-                page = browser.new_page(user_agent=self.headers["User-Agent"])
-                page.goto(url, timeout=20000)
-                page.wait_for_timeout(2000)
-                html = page.content()
-                browser.close()
-                return parse_html(html)
-        except Exception as e:
-            print(f"  ❌ All Plans Failed for Culture Trends: {e}")
+            print(f"  ❌ Google Trends Error: {e}")
             return []
