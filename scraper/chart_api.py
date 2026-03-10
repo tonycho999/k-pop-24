@@ -118,7 +118,7 @@ class ChartAPI:
                     "title": "Exact old title OR Catchy new English title",
                     "summary": "2-3 sentences in English explaining what the item is and why it's popular.",
                     "keyword": "A short exact Korean noun for image search (e.g., '두바이 초콜릿')",
-                    "score": <integer from 100 (1st) down to 91 (10th)>
+                    "score": <integer from 80 (1st) down to 71 (10th)>
                 }}
                 News snippets: {json.dumps(snippets, ensure_ascii=False)}
                 """
