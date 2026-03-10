@@ -58,7 +58,7 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-    # 🤖 AI 영문 일괄 번역기
+    # 🤖 AI 영문 일괄 번역기 및 데이터 클리너 (K-Pop 타이틀/아티스트 완벽 분리 적용)
     def _translate_chart_titles(self, chart_data, category):
         if not hasattr(self, 'ai_client') or not self.ai_client:
             return chart_data
@@ -66,13 +66,23 @@ class ChartAPI:
         items_to_translate = [{"title": item['title'], "info": item['info']} for item in chart_data]
         
         prompt = f"""
-        You are an expert K-Culture translator. Translate the following JSON list of items into natural, trendy English.
-        - 'title': Translate Korean into natural English. Keep proper nouns Romanized.
-        - 'info': If it is an artist name starting with 'By' (K-Pop category), you MUST unify the format strictly to 'By English Name (Korean Name)'. 
-          For non-music categories (Daily:, Pop:, Views:, Search:), leave the 'info' text exactly as it is.
-        - Must return ONLY a valid JSON array of objects containing 'title' and 'info' keys.
+        You are an expert K-Culture data cleaner and translator. 
+        Current Category: {category}
         
-        Items to translate:
+        Translate and format the following JSON list based on these strict rules:
+
+        IF Category is 'k-pop':
+        1. CLEAN TITLE: Extract ONLY the pure song title. Remove any artist names, "(Prod. by...)", "(feat...)", "[MV]", "(Official Video)", or "Artist - Title" formats from the 'title'.
+        2. FIX ARTIST IN INFO: If the 'info' contains generic text like "Release - Topic" or the channel name is incorrect, extract the REAL artist name from the raw title and replace it.
+        3. FORMAT INFO: Format the 'info' strictly as "By English Artist Name (Korean Name) (Views: X,XXX)". NEVER delete the Views number.
+
+        IF Category is NOT 'k-pop':
+        1. 'title': Translate Korean to natural English. Keep proper nouns Romanized.
+        2. 'info': DO NOT change the 'info' text at all. Leave it exactly as it is.
+
+        Must return ONLY a valid JSON array of objects containing 'title' and 'info' keys.
+        
+        Items to translate/clean:
         {json.dumps(items_to_translate, ensure_ascii=False)}
         """
         try:
