@@ -47,9 +47,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        {/* ✅ 구글 애널리틱스 스크립트 추가 시작 */}
+        {/* ✅ 구글 애널리틱스 스크립트 추가 시작 (새로운 ID 반영 완료) */}
         <Script
-          src="https://www.googletagmanager.com/gtag/js?id=G-1ZLZ32GLJD"
+          src="https://www.googletagmanager.com/gtag/js?id=G-1E4WN8MZ9N"
           strategy="afterInteractive"
         />
         <Script id="google-analytics" strategy="afterInteractive">
@@ -58,7 +58,7 @@ export default function RootLayout({
             function gtag(){dataLayer.push(arguments);}
             gtag('js', new Date());
 
-            gtag('config', 'G-1ZLZ32GLJD');
+            gtag('config', 'G-1E4WN8MZ9N');
           `}
         </Script>
         {/* ✅ 구글 애널리틱스 스크립트 추가 끝 */}
