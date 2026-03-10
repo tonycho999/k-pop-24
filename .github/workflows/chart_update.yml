@@ -1,4 +1,4 @@
-name: Top10 Charts Update (6H)
+name: Top10 Charts Update (12H)
 
 on:
   workflow_dispatch:
@@ -36,6 +36,9 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           # 💡 TMDB 글로벌 공식 API 키 연결
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          # 💡 [핵심 추가] 네이버 데이터랩 & 뉴스 검색 매거진용 API 키
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: |
           cd scraper
           python -u main.py chart
