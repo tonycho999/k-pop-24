@@ -105,8 +105,7 @@ class NaverNewsAPI:
         prompt_frequency = f"""
         Analyze the following Korean news article titles.
         Extract all REAL Korean celebrity names (actors, singers, idols) mentioned in these titles and count exactly how many titles each name appears in.
-        - IMPORTANT: Extract specific individual names (e.g., '지민', '장원영') rather than just group names if the title is about an individual.
-        - EXCLUDE general terms, MCs, or comedians if the category is 'k-pop'.
+        - IMPORTANT: Extract the group name and individual name in the title separately.
         
         Return a valid JSON array of the top 20 most frequently mentioned names, sorted by count (highest first).
         Format: [{{"name": "Celebrity Name", "count": 10}}, ...]
@@ -200,21 +199,21 @@ class NaverNewsAPI:
             # Step 7. 🤖 AI 철통 검증 및 정밀 영문 요약 (엄격한 팩트 제어)
             # =========================================================
             write_prompt = f"""
-            You are a strict, objective K-Entertainment news reporter analyzing news about '{name}'.
+            You are a rigorous and objective K-entertainment news reporter analyzing news about '{name}'.
+
+            Do not include any AI-generated translations in your article.
+
+            (Valid news articles only) Article Writing Rules:
+            1. Title Format: Must use the following format: `[{{Korean_Name}}] English Title`
+                - Example: `[지민] Dominates Global Charts with New Song`
+
+            2. Summary: Summarize only the facts in the text (3-10 lines).
+                - Expert interpretations, opinions, and nonsense (meaningless or irrelevant content) are strictly prohibited.
+
+            3. Data Preservation: Retain all numbers (dates, amounts, rankings) and proper nouns exactly as they appear in the original text.
             
-            CRITICAL DISCARD RULE (ABORT IMMEDIATELY IF MET):
-            If the text lacks actual news content, or is mostly website disclaimers, copyright notices, or "AI automatic recognition" system messages, YOU MUST OUTPUT EXACTLY THIS:
-            {{"category": "discard", "main_subject": "", "title": "", "summary": "", "score": 0}}
-            DO NOT write meta-titles. Just output discard.
-            
-            RULES FOR WRITING (ONLY IF VALID NEWS):
-            1. TITLE FORMAT: You MUST use this exact format: `[{{True_Korean_Name}}] English Headline`
-               - Example: `[지민] Jimin Sweeps Global Charts with New Solo Track`
-            2. FACT-ONLY SUMMARY: Summarize ONLY the facts present in the text (3-10 lines).
-               - ABSOLUTELY NO expert interpretations, NO added opinions, NO "잡소리" (nonsense/filler text).
-            3. PRESERVE DATA: Keep all numbers (dates, amounts, rankings) and proper nouns EXACTLY as they appear in the original text.
             4. CATEGORY: '{target_category}'
-               - If the person is an Actor/Actress but the target is 'k-pop', change the category to 'k-drama' or 'k-movie'.
+               - It doesn't matter which category the person is in, but rather classify the article by checking which category it is in..
             
             Content to summarize:
             {content_pool}
