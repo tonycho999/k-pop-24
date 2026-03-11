@@ -1,6 +1,8 @@
 import os
 import json
 import requests
+import html
+import re
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import pytz
@@ -30,11 +32,11 @@ class NaverNewsAPI:
         }
 
     def run_pipeline(self, target_category):
-        print(f"\n🚀 [AI Newsroom] Starting Pipeline (Search base: {target_category})")
+        print(f"\n🚀 [AI Newsroom] Starting Ultimate 8-Step Pipeline (Base: {target_category})")
         
         kst = pytz.timezone('Asia/Seoul')
         now_kst = datetime.now(kst)
-        time_limit = now_kst - timedelta(hours=24) # 💡 정확히 24시간 전 데드라인
+        time_limit = now_kst - timedelta(hours=24)
         print(f"  🕒 Current KST Time: {now_kst.strftime('%Y-%m-%d %H:%M:%S')}")
 
         if not self.naver_id or not self.naver_secret:
@@ -42,107 +44,117 @@ class NaverNewsAPI:
             return
 
         # =========================================================
-        # Step 1. 🧹 DB 청소 (24시간 & 7일 컷오프)
+        # Step 1. 🧹 DB 청소 및 '4시간 쿨타임' 명단 확보
         # =========================================================
-        print("  🧹 Step 1: Cleaning up old database records...")
+        print("  🧹 Step 1: Cleaning DB and Fetching 4-Hour Cooldown List...")
+        cooldown_list = []
         try:
+            # 1) 24시간/7일 지난 옛날 기사 삭제
             one_day_ago = (now_kst - timedelta(days=1)).isoformat()
             seven_days_ago = (now_kst - timedelta(days=7)).isoformat()
             self.db.client.table("live_news").delete().lt("created_at", one_day_ago).execute()
             self.db.client.table("search_archive").delete().lt("created_at", seven_days_ago).execute()
+
+            # 2) 💡 최근 4시간 이내에 작성된 연예인 명단 (도배 방지 블랙리스트)
+            four_hours_ago = (now_kst - timedelta(hours=4)).isoformat()
+            cooldown_res = self.db.client.table("live_news").select("keyword").gte("created_at", four_hours_ago).execute()
+            if cooldown_res.data:
+                cooldown_list = list(set([item['keyword'] for item in cooldown_res.data if item.get('keyword')]))
+            print(f"    🛡️ 4-Hour Cooldown active for {len(cooldown_list)} celebrities.")
         except Exception as e:
-            print(f"    ⚠️ DB Cleanup Error: {e}")
+            print(f"    ⚠️ DB Cleanup/Cooldown Error: {e}")
 
         # =========================================================
-        # Step 2. 🚫 글로벌 블랙리스트 (모든 카테고리 최근 40명 통합)
+        # Step 2. 📡 다중 키워드 광역 스캔 (제목만 싹쓸이 & 중복 제거)
         # =========================================================
-        print("  🚫 Step 2: Fetching global blacklist (Recent 40 names)...")
-        blacklist = []
-        try:
-            res = self.db.client.table("live_news").select("keyword").order("created_at", desc=True).limit(40).execute()
-            if res.data:
-                blacklist = [item['keyword'] for item in res.data if item.get('keyword')]
-        except Exception as e:
-            print(f"    ⚠️ Blacklist Fetch Error: {e}")
-
-        # =========================================================
-        # Step 3. 📡 광역 스캔 및 새로운 20명 발굴 (한글 강제, 수량 확장)
-        # =========================================================
-        base_queries = {
-            'k-pop': '아이돌 | 걸그룹 | 보이그룹 | 컴백 | 신곡 | 콘서트',
-            'k-movie': '한국영화 | 영화배우 | 박스오피스 | 무대인사 | 시사회',
-            'k-drama': '한국드라마 | 드라마배우 | 시청률 | 넷플릭스 | 캐스팅',
-            'k-entertain': '예능프로그램 | 예능인 | 코미디언 | 유재석 | 관찰예능'
+        print(f"  📡 Step 2: Multi-Query Broad Scan for '{target_category}'...")
+        multi_queries_map = {
+            'k-pop': ['보이그룹', '걸그룹', '아이돌', '솔로가수', '신인그룹'],
+            'k-movie': ['영화', '배우', '영화감독'],
+            'k-drama': ['드라마', '안방극장'],
+            'k-entertain': ['예능']
         }
-        query = base_queries.get(target_category, '연예계')
+        queries_to_run = multi_queries_map.get(target_category, ['연예계'])
 
-        search_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(query)}&display=100&sort=date"
-        valid_snippets = []
-        try:
-            res = requests.get(search_url, headers=self.naver_headers, timeout=10)
-            raw_news = res.json().get('items', [])
-            for n in raw_news:
-                try:
+        unique_titles = set() # 💡 기사 내용, 링크 없이 오직 '제목'만 수집하여 중복 제거
+
+        for q in queries_to_run:
+            search_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(q)}&display=100&sort=date"
+            try:
+                res = requests.get(search_url, headers=self.naver_headers, timeout=5)
+                raw_news = res.json().get('items', [])
+                for n in raw_news:
                     pub_date = parsedate_to_datetime(n['pubDate']).astimezone(kst)
                     if pub_date >= time_limit:
-                        valid_snippets.append({"title": n['title'], "desc": n['description']})
-                except:
-                    pass
-        except Exception as e:
-            return
-
-        if not valid_snippets:
-            return
-
-        print(f"    🧠 Asking AI to extract 20 NEW celebrities...")
+                        # HTML 태그(<b>, &quot; 등) 깔끔하게 제거
+                        clean_title = re.sub(r'<[^>]+>', '', html.unescape(n['title']))
+                        unique_titles.add(clean_title)
+            except:
+                continue
         
-        # 💡 [핵심 방어 1 & 확장] 무조건 한글 강제 + 20명 발굴
-        prompt_extract = f"""
-        Extract exactly 20 names of trending PEOPLE (celebrities, singers, actors) from these snippets.
-        RULES:
-        1. REAL PEOPLE ONLY. No movie/drama titles.
-        2. EXCLUDE BLACKLIST: {blacklist}
-        3. MUST BE IN KOREAN: The extracted names MUST be in Korean characters ONLY (e.g., ["유재석", "아이유"]). DO NOT translate any names to English.
-        4. OUTPUT FORMAT: valid JSON array of strings `["Name1", "Name2", ...]`
+        title_list = list(unique_titles)
+        if not title_list:
+            print("    ⏭️ No titles collected. Skipping.")
+            return
+        print(f"    ✅ Collected {len(title_list)} unique article titles in the last 24h.")
+
+        # =========================================================
+        # Step 3 & 4. 📊 기사 제목 빈도수 추출 및 트렌드 Top 20 선정
+        # =========================================================
+        print(f"  📊 Step 3 & 4: Analyzing Title Frequencies for Top 20 Trend...")
         
-        Snippets: {json.dumps(valid_snippets[:100], ensure_ascii=False)}
+        prompt_frequency = f"""
+        Analyze the following Korean news article titles.
+        Extract all REAL Korean celebrity names (actors, singers, idols) mentioned in these titles and count exactly how many titles each name appears in.
+        - IMPORTANT: Extract specific individual names (e.g., '지민', '장원영') rather than just group names if the title is about an individual.
+        - EXCLUDE general terms, MCs, or comedians if the category is 'k-pop'.
+        
+        Return a valid JSON array of the top 20 most frequently mentioned names, sorted by count (highest first).
+        Format: [{{"name": "Celebrity Name", "count": 10}}, ...]
+        
+        Titles to analyze:
+        {json.dumps(title_list, ensure_ascii=False)}
         """
+        
         try:
-            ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt_extract)
-            candidate_names = json.loads(ai_res.text.replace("```json", "").replace("```", "").strip())
+            ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt_frequency)
+            top_20_data = json.loads(ai_res.text.replace("```json", "").replace("```", "").strip())
         except Exception as e:
+            print(f"    ❌ Frequency Analysis Error: {e}")
             return
 
         # =========================================================
-        # Step 3.5. 📚 celebrity_dict 크로스 체크
+        # Step 5. 🛡️ 쿨타임 필터링 및 최종 Top 10 확정
         # =========================================================
-        validated_names = []
-        try:
-            dict_res = self.db.client.table("celebrity_dict").select("name").execute()
-            existing_celebs = [item['name'] for item in dict_res.data] if dict_res.data else []
+        print(f"  🛡️ Step 5: Applying Cooldown Filter & Selecting Top 10...")
+        final_targets = []
+        
+        for item in top_20_data:
+            name = item.get("name")
+            count = item.get("count")
+            if not name: continue
+            
+            # 💡 4시간 이내에 이미 작성된 연예인은 가차 없이 패스!
+            if name in cooldown_list:
+                print(f"    ⏭️ Skipping '{name}' (On 4-hour cooldown)")
+                continue
+                
+            final_targets.append(name)
+            if len(final_targets) == 10: # 최종 10명만 선발
+                break
 
-            for name in candidate_names[:20]: # 💡 20명 검증
-                if name in existing_celebs:
-                    validated_names.append(name)
-                else:
-                    verify_prompt = f"Is '{name}' a real Korean celebrity? JSON ONLY: {{\"is_celeb\": true or false}}"
-                    v_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=verify_prompt)
-                    if json.loads(v_res.text.replace("```json", "").replace("```", "").strip()).get("is_celeb"):
-                        self.db.client.table("celebrity_dict").insert({"name": name, "default_category": "pending"}).execute()
-                        validated_names.append(name)
-        except:
-            validated_names = candidate_names[:20]
+        print(f"    🎯 Final Top 10 Targets: {final_targets}")
 
         # =========================================================
-        # Step 4. 📝 심층 취재 (진짜 주인공 식별 + 자동 분류 + 이미지 강제)
+        # Step 6. 🔍 핀셋 심층 검색 (Deep Search - 링크, 이미지, 본문 확보)
         # =========================================================
-        print(f"  📝 Step 4: Deep Dive & True Protagonist Identification for {len(validated_names)} targets...")
+        print(f"  🔍 Step 6: Deep Searching for {len(final_targets)} Final Targets...")
         final_results = []
 
-        for name in validated_names:
-            print(f"\n    🔍 Investigating: {name}")
-            
-            p_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(name)}&display=10&sort=sim"
+        for name in final_targets:
+            print(f"\n    🔎 Deep Dive: {name}")
+            # 이름으로 직접 검색하여 정확도 높은 핵심 기사 수집 (sim 정렬)
+            p_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(name)}&display=5&sort=sim"
             try:
                 p_res = requests.get(p_url, headers=self.naver_headers, timeout=10)
                 raw_articles = p_res.json().get('items', [])
@@ -152,14 +164,12 @@ class NaverNewsAPI:
             valid_articles = [art for art in raw_articles if parsedate_to_datetime(art['pubDate']).astimezone(kst) >= time_limit][:3]
 
             if not valid_articles:
-                print(f"      ⏭️ No recent news. Skipping.")
+                print(f"      ⏭️ No deep articles found. Skipping.")
                 continue
 
             content_pool = ""
             best_img_url = ""
-            
-            # ✅ 진짜로 추가 확인 완료!
-            main_link = valid_articles[0]['link']
+            main_link = valid_articles[0]['link'] # 💡 UI용 기사 링크 확보
 
             headers = {"User-Agent": "Mozilla/5.0"}
             for art in valid_articles:
@@ -174,7 +184,7 @@ class NaverNewsAPI:
                         backup_text = " ".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 20])
                         if backup_text: content_pool += backup_text[:1000] + " \n"
                     
-                    if not best_img_url:
+                    if not best_img_url: # 💡 UI용 고화질 이미지 확보
                         meta_img = soup.find("meta", property="og:image")
                         if meta_img and meta_img.get("content"):
                             candidate_img = meta_img["content"].strip()
@@ -184,39 +194,31 @@ class NaverNewsAPI:
                 except:
                     continue
 
-            if len(content_pool) < 100:
-                print(f"      ⏭️ Not enough content. Skipping.")
+            if len(content_pool) < 100 or not best_img_url:
+                print(f"      ⏭️ Insufficient content or no image. Skipping.")
                 continue
 
-            if not best_img_url:
-                print(f"      ⏭️ No valid image found. Skipping {name} to prevent UI error.")
-                continue
-
-            # 💡 [핵심 수정] AI 프롬프트 강화: 진짜 주인공 찾기 지시
+            # =========================================================
+            # Step 7. 🤖 AI 철통 검증 및 정밀 영문 요약 (엄격한 규칙 적용)
+            # =========================================================
             write_prompt = f"""
-            You are a sharp K-Entertainment news editor. The article was found using keyword '{name}', but YOU MUST DETERMINE the TRUE main protagonist.
+            You are a strict, objective K-Entertainment news editor analyzing news about '{name}'.
             
-            STEP 1: IDENTIFY TRUE PROTAGONIST
-            Read the text. If '{name}' is just passively mentioned (e.g., their old song is used) and another active actor/singer (e.g., Shin Se-kyung) is the main focus, pick the active person. Extract the TRUE main protagonist's name in Korean ONLY (e.g., 신세경).
+            RULES FOR WRITING:
+            1. TRUE PROTAGONIST TITLE: If the article is specifically about a group member (e.g., Jimin of BTS), you MUST use the member's individual name in the brackets, NOT the group name.
+               - Format: `[{{True_Korean_Name}}] English Title...` (e.g., `[지민] Jimin Releases New Solo Track`)
+            2. LENGTH: Write 3 to 10 lines of English summary, depending on the article's length.
+            3. FACT-ONLY: Summarize ONLY the facts present in the text. Absolutely NO AI interpretations, NO expert analysis, and NO added opinions.
+            4. PRESERVE DATA: Keep all numbers (dates, amounts, rankings) and proper nouns EXACTLY as they appear in the original text.
+            5. CATEGORY: '{target_category}'
             
-            STEP 2: FILTERING GARBAGE
-            If the news is purely a product advertisement (CF), SEO spam, or non-celebrity corporate news, output ONLY: {{"category": "discard"}}
-            
-            STEP 3: SMART CATEGORY ASSIGNMENT
-            Assign the BEST category based on the TRUE PROTAGONIST's profession or the news event: 'k-pop', 'k-movie', 'k-drama', or 'k-entertain'.
-            
-            STEP 4: WRITING & SCORING
-            Write an English title format: `[{{main_subject}}] English Title...` (Use the TRUE protagonist's name in Korean inside brackets).
-            Write a 3-5 sentence English summary (NO Korean).
-            Score 50-100 based on GLOBAL FAME and SHOCK VALUE.
-            
-            Content:
+            Content to summarize:
             {content_pool}
             
             Output valid JSON ONLY:
             {{
-                "main_subject": "True Korean Name (e.g. 신세경)",
-                "category": "k-pop" | "k-movie" | "k-drama" | "k-entertain" | "discard",
+                "main_subject": "True Korean Name (e.g. 지민)",
+                "category": "{target_category}",
                 "title": "[{{main_subject}}] ...",
                 "summary": "...",
                 "score": 85
@@ -226,18 +228,12 @@ class NaverNewsAPI:
                 ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=write_prompt)
                 data = json.loads(ai_res.text.replace("```json", "").replace("```", "").strip())
                 
-                assigned_cat = data.get("category", "discard").lower()
-                if assigned_cat not in ['k-pop', 'k-movie', 'k-drama', 'k-entertain']:
-                    print(f"      ⏭️ [DISCARDED] Garbage/CF filtered.")
-                    continue
-                
-                # 💡 진짜 주인공 이름 추출 (못 찾았으면 원래 검색어 유지)
                 actual_subject = data.get("main_subject", name).strip()
                 score = max(50, min(100, int(data.get("score", 70))))
 
                 final_results.append({
-                    "category": assigned_cat,
-                    "keyword": actual_subject, # DB의 keyword를 실제 주인공으로 저장!
+                    "category": target_category,
+                    "keyword": actual_subject,
                     "title": data.get("title", f"[{actual_subject}] Untitled"),
                     "summary": data.get("summary", ""),
                     "link": main_link,
@@ -245,44 +241,42 @@ class NaverNewsAPI:
                     "score": score,
                     "likes": 0
                 })
-                print(f"      ✅ Saved to [{assigned_cat.upper()}]: {data.get('title')} (Real Subject: {actual_subject})")
+                print(f"      ✅ AI Generated: {data.get('title')} (Score: {score})")
             except Exception as e:
-                print(f"      ❌ Article Gen Error for {name}: {e}")
+                print(f"      ❌ AI Generation Error for {name}: {e}")
 
         # =========================================================
-        # Step 6. 💾 듀얼 DB 저장 (중복 기사 덮어쓰기 및 용량 통제)
+        # Step 8. 💾 DB 저장 및 UI 최적화 ([이름] 기준 덮어쓰기)
         # =========================================================
         if final_results:
-            print(f"  💾 Step 6: Deduplicating and Saving {len(final_results)} articles to databases...")
+            print(f"  💾 Step 8: Saving to DB and Deduplicating based on [Name]...")
             try:
-                # 💡 [핵심 수정] 새 기사들의 실제 주인공 목록 추출
+                # 💡 [핵심 구현] 방금 생성된 기사의 진짜 이름(actual_subject) 목록 추출
                 incoming_subjects = list(set([item['keyword'] for item in final_results]))
                 
-                # 1. 기존 DB(live_news)에서 이 주인공들의 예전 기사를 전부 삭제 (최신 기사로 교체하기 위함)
+                # DB에 이미 똑같은 '이름' 태그를 가진 옛날 기사가 있으면 모조리 삭제 (덮어쓰기)
                 if incoming_subjects:
-                    print(f"    🗑️ Deleting old overlapping articles for: {incoming_subjects}")
+                    print(f"    🗑️ Deleting existing articles for names: {incoming_subjects}")
                     self.db.client.table("live_news").delete().in_("keyword", incoming_subjects).execute()
 
-                # 2. 새 기사들을 DB에 Insert (이제 완벽한 최신 기사 1개만 남음)
+                # 새 기사 저장
                 self.db.client.table("search_archive").insert(final_results).execute()
                 self.db.client.table("live_news").insert(final_results).execute()
-                print("    ✅ Insertion complete (Duplicates resolved).")
+                print("    ✅ Insertion complete.")
 
-                # 카테고리별 50개 초과분 정리 (기존 로직 유지)
-                affected_categories = set([item['category'] for item in final_results])
-                for cat in affected_categories:
-                    count_res = self.db.client.table("live_news").select("id", count="exact").eq("category", cat).execute()
-                    total_count = count_res.count
+                # 카테고리별 50개 한도 통제 유지
+                count_res = self.db.client.table("live_news").select("id", count="exact").eq("category", target_category).execute()
+                total_count = count_res.count
 
-                    if total_count and total_count > 50:
-                        excess = total_count - 50
-                        print(f"    ⚠️ [{cat.upper()}] Capacity exceeded. Purging {excess} oldest items...")
-                        low_res = self.db.client.table("live_news").select("id").eq("category", cat).order("created_at", asc=True).limit(excess).execute()
-                        if low_res.data:
-                            drop_ids = [item['id'] for item in low_res.data]
-                            self.db.client.table("live_news").delete().in_("id", drop_ids).execute()
+                if total_count and total_count > 50:
+                    excess = total_count - 50
+                    print(f"    ⚠️ Capacity exceeded. Purging {excess} oldest items...")
+                    low_res = self.db.client.table("live_news").select("id").eq("category", target_category).order("created_at", asc=True).limit(excess).execute()
+                    if low_res.data:
+                        drop_ids = [item['id'] for item in low_res.data]
+                        self.db.client.table("live_news").delete().in_("id", drop_ids).execute()
 
             except Exception as e:
                 print(f"    ❌ DB Save Error: {e}")
 
-        print(f"🎉 [AI Newsroom] Pipeline (Base: {target_category}) successfully completed!")
+        print(f"🎉 [AI Newsroom] Ultimate Pipeline (Base: {target_category}) successfully completed!")
