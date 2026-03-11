@@ -205,7 +205,8 @@ class NaverNewsAPI:
 
             (Valid news articles only) Article Writing Rules:
             1. Title Format: Must use the following format: `[{{Korean_Name}}] English Title`
-                - Example: `[지민] Dominates Global Charts with New Song`
+                - Example for individual : `[지민] Dominates Global Charts with New Song`
+                - Example for group : `[방탄소년단] Dominates Global Charts with New Song`
 
             2. Summary: Summarize only the facts in the text (3-10 lines).
                 - Expert interpretations, opinions, and nonsense (meaningless or irrelevant content) are strictly prohibited.
