@@ -134,9 +134,9 @@ class NaverNewsAPI:
             validated_names = candidate_names[:20]
 
         # =========================================================
-        # Step 4. 📝 심층 취재 (사생활 수용 + 자동 분류 + 이미지 강제)
+        # Step 4. 📝 심층 취재 (진짜 주인공 식별 + 자동 분류 + 이미지 강제)
         # =========================================================
-        print(f"  📝 Step 4: Deep Dive & Smart Crossover Sorting for {len(validated_names)} targets...")
+        print(f"  📝 Step 4: Deep Dive & True Protagonist Identification for {len(validated_names)} targets...")
         final_results = []
 
         for name in validated_names:
@@ -157,7 +157,7 @@ class NaverNewsAPI:
 
             content_pool = ""
             best_img_url = ""
-            main_link = valid_articles[0]['link']
+            main_link = valid_articles['link'] # 💡 리스트 인덱싱 버그 수정 완료!
 
             headers = {"User-Agent": "Mozilla/5.0"}
             for art in valid_articles:
@@ -186,34 +186,36 @@ class NaverNewsAPI:
                 print(f"      ⏭️ Not enough content. Skipping.")
                 continue
 
-            # 💡 [핵심 방어 2] 이미지가 단 하나도 없으면 가차 없이 버림 (엑스박스 원천 차단)
             if not best_img_url:
                 print(f"      ⏭️ No valid image found. Skipping {name} to prevent UI error.")
                 continue
 
+            # 💡 [핵심 수정] AI 프롬프트 강화: 진짜 주인공 찾기 지시
             write_prompt = f"""
-            You are a K-Entertainment news editor analyzing news about '{name}'.
+            You are a sharp K-Entertainment news editor. The article was found using keyword '{name}', but YOU MUST DETERMINE the TRUE main protagonist.
             
-            STEP 1: FILTERING GARBAGE (COST SAVING)
+            STEP 1: IDENTIFY TRUE PROTAGONIST
+            Read the text. If '{name}' is just passively mentioned (e.g., their old song is used) and another active actor/singer (e.g., Shin Se-kyung) is the main focus, pick the active person. Extract the TRUE main protagonist's name in Korean ONLY (e.g., 신세경).
+            
+            STEP 2: FILTERING GARBAGE
             If the news is purely a product advertisement (CF), SEO spam, or non-celebrity corporate news, output ONLY: {{"category": "discard"}}
             
-            STEP 2: SMART CATEGORY ASSIGNMENT (ALLOW PRIVATE LIFE)
-            If it's valid entertainment news (INCLUDING dating, marriage, scandals, crimes, military enlistment, etc.), assign the BEST category:
-            - TRACK A (Project-based): If the news is about a specific project, use its category (e.g., Singer appearing on a Variety Show -> 'k-entertain').
-            - TRACK B (Personal Life / Scandals fallback): If the news is about their private life/scandal, assign it to the category of their MAIN PROFESSION (e.g., an Idol's dating news -> 'k-pop', an Actor's scandal -> 'k-drama' or 'k-movie').
+            STEP 3: SMART CATEGORY ASSIGNMENT
+            Assign the BEST category based on the TRUE PROTAGONIST's profession or the news event: 'k-pop', 'k-movie', 'k-drama', or 'k-entertain'.
             
-            STEP 3: WRITING & SCORING
-            Write an English title `[{name}] English Title` (Do NOT translate '{name}' inside the brackets).
+            STEP 4: WRITING & SCORING
+            Write an English title format: `[{{main_subject}}] English Title...` (Use the TRUE protagonist's name in Korean inside brackets).
             Write a 3-5 sentence English summary (NO Korean).
-            Score 50-100 based on GLOBAL FAME and SHOCK VALUE (Major scandals/dating of famous stars get 90-100).
+            Score 50-100 based on GLOBAL FAME and SHOCK VALUE.
             
             Content:
             {content_pool}
             
             Output valid JSON ONLY:
             {{
+                "main_subject": "True Korean Name (e.g. 신세경)",
                 "category": "k-pop" | "k-movie" | "k-drama" | "k-entertain" | "discard",
-                "title": "[{name}] ...",
+                "title": "[{{main_subject}}] ...",
                 "summary": "...",
                 "score": 85
             }}
@@ -224,45 +226,56 @@ class NaverNewsAPI:
                 
                 assigned_cat = data.get("category", "discard").lower()
                 if assigned_cat not in ['k-pop', 'k-movie', 'k-drama', 'k-entertain']:
-                    print(f"      ⏭️ [DISCARDED] Garbage/CF filtered. Tokens saved!")
+                    print(f"      ⏭️ [DISCARDED] Garbage/CF filtered.")
                     continue
                 
+                # 💡 진짜 주인공 이름 추출 (못 찾았으면 원래 검색어 유지)
+                actual_subject = data.get("main_subject", name).strip()
                 score = max(50, min(100, int(data.get("score", 70))))
 
                 final_results.append({
                     "category": assigned_cat,
-                    "keyword": name,
-                    "title": data.get("title", f"[{name}] Untitled"),
+                    "keyword": actual_subject, # DB의 keyword를 실제 주인공으로 저장!
+                    "title": data.get("title", f"[{actual_subject}] Untitled"),
                     "summary": data.get("summary", ""),
                     "link": main_link,
                     "image_url": best_img_url,
                     "score": score,
                     "likes": 0
                 })
-                print(f"      ✅ Saved to [{assigned_cat.upper()}]: {data.get('title')} (Score: {score})")
+                print(f"      ✅ Saved to [{assigned_cat.upper()}]: {data.get('title')} (Real Subject: {actual_subject})")
             except Exception as e:
                 print(f"      ❌ Article Gen Error for {name}: {e}")
 
         # =========================================================
-        # Step 6. 💾 듀얼 DB 저장 및 '각 카테고리별 최대 50개' 용량 통제
+        # Step 6. 💾 듀얼 DB 저장 (중복 기사 덮어쓰기 및 용량 통제)
         # =========================================================
         if final_results:
-            print(f"  💾 Step 6: Saving {len(final_results)} articles to databases...")
+            print(f"  💾 Step 6: Deduplicating and Saving {len(final_results)} articles to databases...")
             try:
+                # 💡 [핵심 수정] 새 기사들의 실제 주인공 목록 추출
+                incoming_subjects = list(set([item['keyword'] for item in final_results]))
+                
+                # 1. 기존 DB(live_news)에서 이 주인공들의 예전 기사를 전부 삭제 (최신 기사로 교체하기 위함)
+                if incoming_subjects:
+                    print(f"    🗑️ Deleting old overlapping articles for: {incoming_subjects}")
+                    self.db.client.table("live_news").delete().in_("keyword", incoming_subjects).execute()
+
+                # 2. 새 기사들을 DB에 Insert (이제 완벽한 최신 기사 1개만 남음)
                 self.db.client.table("search_archive").insert(final_results).execute()
                 self.db.client.table("live_news").insert(final_results).execute()
-                print("    ✅ Insertion complete.")
+                print("    ✅ Insertion complete (Duplicates resolved).")
 
+                # 카테고리별 50개 초과분 정리 (기존 로직 유지)
                 affected_categories = set([item['category'] for item in final_results])
-                
                 for cat in affected_categories:
                     count_res = self.db.client.table("live_news").select("id", count="exact").eq("category", cat).execute()
                     total_count = count_res.count
 
                     if total_count and total_count > 50:
                         excess = total_count - 50
-                        print(f"    ⚠️ [{cat.upper()}] Capacity exceeded. Purging {excess} items...")
-                        low_res = self.db.client.table("live_news").select("id").eq("category", cat).order("score", asc=True).limit(excess).execute()
+                        print(f"    ⚠️ [{cat.upper()}] Capacity exceeded. Purging {excess} oldest items...")
+                        low_res = self.db.client.table("live_news").select("id").eq("category", cat).order("created_at", asc=True).limit(excess).execute()
                         if low_res.data:
                             drop_ids = [item['id'] for item in low_res.data]
                             self.db.client.table("live_news").delete().in_("id", drop_ids).execute()
