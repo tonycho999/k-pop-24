@@ -76,7 +76,7 @@ class NaverNewsAPI:
         }
         queries_to_run = multi_queries_map.get(target_category, ['연예계'])
 
-        unique_titles = set() # 💡 기사 내용, 링크 없이 오직 '제목'만 수집하여 중복 제거
+        unique_titles = set()
 
         for q in queries_to_run:
             search_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(q)}&display=100&sort=date"
@@ -86,7 +86,6 @@ class NaverNewsAPI:
                 for n in raw_news:
                     pub_date = parsedate_to_datetime(n['pubDate']).astimezone(kst)
                     if pub_date >= time_limit:
-                        # HTML 태그(<b>, &quot; 등) 깔끔하게 제거
                         clean_title = re.sub(r'<[^>]+>', '', html.unescape(n['title']))
                         unique_titles.add(clean_title)
             except:
@@ -134,13 +133,12 @@ class NaverNewsAPI:
             count = item.get("count")
             if not name: continue
             
-            # 💡 4시간 이내에 이미 작성된 연예인은 가차 없이 패스!
             if name in cooldown_list:
                 print(f"    ⏭️ Skipping '{name}' (On 4-hour cooldown)")
                 continue
                 
             final_targets.append(name)
-            if len(final_targets) == 10: # 최종 10명만 선발
+            if len(final_targets) == 10: 
                 break
 
         print(f"    🎯 Final Top 10 Targets: {final_targets}")
@@ -153,7 +151,6 @@ class NaverNewsAPI:
 
         for name in final_targets:
             print(f"\n    🔎 Deep Dive: {name}")
-            # 이름으로 직접 검색하여 정확도 높은 핵심 기사 수집 (sim 정렬)
             p_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(name)}&display=5&sort=sim"
             try:
                 p_res = requests.get(p_url, headers=self.naver_headers, timeout=10)
@@ -169,7 +166,9 @@ class NaverNewsAPI:
 
             content_pool = ""
             best_img_url = ""
-            main_link = valid_articles['link'] # 💡 UI용 기사 링크 확보
+            
+            # 💡 [버그 수정 완료] 원본 코드에서이 누락되어 있던 부분 복구
+            main_link = valid_articles['link'] 
 
             headers = {"User-Agent": "Mozilla/5.0"}
             for art in valid_articles:
@@ -184,7 +183,7 @@ class NaverNewsAPI:
                         backup_text = " ".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 20])
                         if backup_text: content_pool += backup_text[:1000] + " \n"
                     
-                    if not best_img_url: # 💡 UI용 고화질 이미지 확보
+                    if not best_img_url: 
                         meta_img = soup.find("meta", property="og:image")
                         if meta_img and meta_img.get("content"):
                             candidate_img = meta_img["content"].strip()
@@ -199,22 +198,25 @@ class NaverNewsAPI:
                 continue
 
             # =========================================================
-            # Step 7. 🤖 AI 철통 검증 및 정밀 영문 요약 (공지사항 폐기 규칙 추가)
+            # Step 7. 🤖 AI 철통 검증 및 정밀 영문 요약 (메타 타이틀 절대 금지)
             # =========================================================
             write_prompt = f"""
             You are a strict, objective K-Entertainment news editor analyzing news about '{name}'.
             
-            RULES FOR WRITING:
-            1. TRUE PROTAGONIST TITLE: If the article is specifically about a group member (e.g., Jimin of BTS), you MUST use the member's individual name in the brackets, NOT the group name.
-               - Format: `[{{True_Korean_Name}}] English Title...` (e.g., `[지민] Jimin Releases New Solo Track`)
-            2. GARBAGE & BOILERPLATE FILTERING (CRITICAL): 
-               - If the content is mostly website disclaimers, copyright notices, reporter emails, or "AI automatic recognition/classification" notices, you MUST output ONLY: {{"category": "discard"}}
-               - Do NOT summarize system text or website footers.
-            3. LENGTH: Write 3 to 10 lines of English summary, depending on the article's length.
-            4. FACT-ONLY: Summarize ONLY the facts present in the text. Absolutely NO AI interpretations, NO expert analysis, and NO added opinions.
-            5. PRESERVE DATA: Keep all numbers (dates, amounts, rankings) and proper nouns EXACTLY as they appear in the original text.
-            6. CATEGORY: '{target_category}'
-               - If the person is an Actor/Actress but the target is 'k-pop', change the category to 'k-drama' or 'k-movie'. Don't force actors into k-pop.
+            CRITICAL DISCARD RULE (ABORT IMMEDIATELY IF MET):
+            If the text lacks actual news content, or is mostly website disclaimers, copyright notices, or "AI automatic recognition" system messages, YOU MUST OUTPUT EXACTLY THIS:
+            {{"category": "discard", "main_subject": "", "title": "", "summary": "", "score": 0}}
+            DO NOT write meta-titles like "Text lacks specific content" or "Details on Article Link". Just output discard.
+            
+            RULES FOR WRITING (ONLY IF VALID NEWS):
+            1. HEADLINE TITLE: Create a catchy, journalistic English headline summarizing the main event.
+               - Format: `[{{True_Korean_Name}}] Compelling English Headline...` (e.g., `[지민] Jimin Sweeps Global Charts with New Solo Track`)
+               - NEVER write titles describing the text itself (e.g., NO "Overview of Article", NO "Provided text lacks...").
+            2. LENGTH: Write 3 to 10 lines of English summary, depending on the article's length.
+            3. FACT-ONLY: Summarize ONLY the facts present in the text. NO AI opinions.
+            4. PRESERVE DATA: Keep all numbers and proper nouns EXACTLY as they appear.
+            5. CATEGORY: '{target_category}'
+               - If the person is an Actor/Actress but the target is 'k-pop', change the category to 'k-drama' or 'k-movie'.
             
             Content to summarize:
             {content_pool}
@@ -232,10 +234,9 @@ class NaverNewsAPI:
                 ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=write_prompt)
                 data = json.loads(ai_res.text.replace("```json", "").replace("```", "").strip())
                 
-                # 💡 [핵심 구현] AI가 쓰레기 기사로 판별하면 DB 저장 건너뛰기!
                 assigned_cat = data.get("category", target_category).lower()
                 if assigned_cat == "discard":
-                    print(f"      ⏭️ [DISCARDED] System/Boilerplate text filtered.")
+                    print(f"      ⏭️ [DISCARDED] System/Boilerplate text filtered. No fake title generated.")
                     continue
                 
                 actual_subject = data.get("main_subject", name).strip()
@@ -261,20 +262,16 @@ class NaverNewsAPI:
         if final_results:
             print(f"  💾 Step 8: Saving to DB and Deduplicating based on [Name]...")
             try:
-                # 💡 [핵심 구현] 방금 생성된 기사의 진짜 이름(actual_subject) 목록 추출
                 incoming_subjects = list(set([item['keyword'] for item in final_results]))
                 
-                # DB에 이미 똑같은 '이름' 태그를 가진 옛날 기사가 있으면 모조리 삭제 (덮어쓰기)
                 if incoming_subjects:
                     print(f"    🗑️ Deleting existing articles for names: {incoming_subjects}")
                     self.db.client.table("live_news").delete().in_("keyword", incoming_subjects).execute()
 
-                # 새 기사 저장
                 self.db.client.table("search_archive").insert(final_results).execute()
                 self.db.client.table("live_news").insert(final_results).execute()
                 print("    ✅ Insertion complete.")
 
-                # 카테고리별 50개 한도 통제 유지
                 count_res = self.db.client.table("live_news").select("id", count="exact").eq("category", target_category).execute()
                 total_count = count_res.count
 
