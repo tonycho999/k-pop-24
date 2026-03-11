@@ -53,7 +53,7 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 좋아요 보존 로직 적용)
+    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 10개 항시 유지 로직 적용)
     def _update_k_culture_magazine(self):
         print("  🚀 Starting K-Culture Magazine Delta Update...")
         if not self.naver_id or not self.naver_secret:
@@ -128,26 +128,22 @@ class ChartAPI:
                 trends = json.loads(text)
 
                 # 3. 데이터 비교 및 델타 업데이트 실행
-                active_ids = [] # 차트에 남을 기존 아이템 ID 기록용
-
                 for t in trends[:10]:
                     title = t.get('title', 'Unknown Trend')
                     new_summary = t.get('summary', '')
                     new_score = t.get('score', 0)
-                    keyword = t.get('keyword', '') # 💡 DB에 넣기 위해 빼둠
+                    keyword = t.get('keyword', '') 
 
                     if title in old_dict:
-                        # [유지 & 업데이트] 기존 차트에 있던 트렌드 (좋아요 보존, 네이버 이미지 검색 생략)
+                        # [유지 & 업데이트] 기존 차트에 있던 트렌드
                         old_item = old_dict[title]
                         item_id = old_item['id']
-                        active_ids.append(item_id)
                         
-                        # 내용(Summary)이나 순위(Score)가 바뀌었을 때만 DB에 PATCH 요청 (API 비용 최적화)
+                        # 내용이나 순위가 바뀌었을 때만 DB에 PATCH 요청
                         if old_item['summary'] != new_summary or old_item['score'] != new_score:
                             patch_data = {"summary": new_summary, "score": new_score}
                             patch_res = requests.patch(f"{supabase_url}/rest/v1/live_news?id=eq.{item_id}", headers=supa_headers, json=patch_data)
                             
-                            # DB 업데이트 실패 시 원인 출력
                             if patch_res.status_code >= 400:
                                 print(f"      ❌ DB Update Error ({title}): {patch_res.text}")
                             else:
@@ -156,10 +152,9 @@ class ChartAPI:
                             print(f"      ➖ Kept (No change): {title}")
                             
                     else:
-                        # [신규 진입] 완전히 새로운 트렌드 (네이버 이미지 검색 진행 후 POST)
+                        # [신규 진입] 완전히 새로운 트렌드
                         img_url = ""
                         if keyword:
-                            # 💡 후보 이미지를 3장 가져와서 살아있는 것 확인
                             img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(keyword)}&display=3&sort=sim"
                             img_res = requests.get(img_search_url, headers=naver_headers, timeout=5)
                             
@@ -168,43 +163,54 @@ class ChartAPI:
                                 for img_item in img_items:
                                     candidate_url = img_item.get('link', '')
                                     try:
-                                        # 죽은 이미지(404, 403) 거르기 위한 헤더 테스트
                                         check = requests.head(candidate_url, timeout=2, verify=False)
                                         if check.status_code == 200:
                                             img_url = candidate_url
-                                            break # 정상적인 이미지를 찾았으면 테스트 중지
+                                            break 
                                     except:
-                                        continue # 에러 나면 다음 이미지로 넘어감
+                                        continue 
 
-                        # DB 스키마에 맞춰 keyword와 link 추가
                         post_data = {
                             "category": sub_cat,
                             "keyword": keyword, 
                             "title": title,
                             "summary": new_summary,
-                            "link": "", # 빈 값이라도 보내서 Not Null 에러 우회
+                            "link": "",
                             "image_url": img_url,
                             "score": new_score,
                             "likes": 0
                         }
                         post_res = requests.post(f"{supabase_url}/rest/v1/live_news", headers=supa_headers, json=post_data)
                         
-                        # DB 인서트 실패 시 원인 출력
                         if post_res.status_code >= 400:
                             print(f"      ❌ DB Insert Error ({title}): {post_res.text}")
                         else:
                             print(f"      ✨ New Entry: {title}")
 
-                # 4. 차트 아웃 (10위 밖으로 밀려난 예전 트렌드 삭제)
-                old_ids = [item['id'] for item in old_items]
-                out_ids = [str(i) for i in old_ids if i not in active_ids]
-                
-                if out_ids:
-                    del_url = f"{supabase_url}/rest/v1/live_news?id=in.({','.join(out_ids)})"
-                    requests.delete(del_url, headers=supa_headers)
-                    print(f"      🗑️ Dropped {len(out_ids)} outdated items.")
+                # 4. 💡 10개 한도 룰 적용: 새로운 항목이 추가되어 10개가 넘었을 경우, 가장 오래된 것부터 삭제
+                try:
+                    count_url = f"{supabase_url}/rest/v1/live_news?category=eq.{sub_cat}&select=id"
+                    current_res = requests.get(count_url, headers=supa_headers)
+                    if current_res.status_code == 200:
+                        current_items = current_res.json()
+                        total_count = len(current_items)
+                        
+                        if total_count > 10:
+                            excess = total_count - 10
+                            # 가장 오래된 데이터(created_at 오름차순) 순으로 초과분만큼 ID 가져오기
+                            oldest_url = f"{supabase_url}/rest/v1/live_news?category=eq.{sub_cat}&select=id&order=created_at.asc&limit={excess}"
+                            oldest_res = requests.get(oldest_url, headers=supa_headers)
+                            
+                            if oldest_res.status_code == 200:
+                                drop_ids = [str(item['id']) for item in oldest_res.json()]
+                                if drop_ids:
+                                    del_url = f"{supabase_url}/rest/v1/live_news?id=in.({','.join(drop_ids)})"
+                                    requests.delete(del_url, headers=supa_headers)
+                                    print(f"      🗑️ Dropped {excess} oldest items to maintain exactly 10.")
+                except Exception as e:
+                    print(f"      ⚠️ Cleanup Error: {e}")
 
-                time.sleep(3) # 과부하 방지
+                time.sleep(3) 
 
             except Exception as e:
                 print(f"    ❌ Error processing {sub_cat}: {e}")
