@@ -167,7 +167,7 @@ class NaverNewsAPI:
             content_pool = ""
             best_img_url = ""
             
-            main_link = valid_articles['link'] 
+            main_link = valid_articles[0]['link'] 
 
             headers = {"User-Agent": "Mozilla/5.0"}
             for art in valid_articles:
