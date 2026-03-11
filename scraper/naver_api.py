@@ -169,7 +169,7 @@ class NaverNewsAPI:
 
             content_pool = ""
             best_img_url = ""
-            main_link = valid_articles[0]['link'] # 💡 UI용 기사 링크 확보
+            main_link = valid_articles['link'] # 💡 UI용 기사 링크 확보
 
             headers = {"User-Agent": "Mozilla/5.0"}
             for art in valid_articles:
@@ -199,7 +199,7 @@ class NaverNewsAPI:
                 continue
 
             # =========================================================
-            # Step 7. 🤖 AI 철통 검증 및 정밀 영문 요약 (엄격한 규칙 적용)
+            # Step 7. 🤖 AI 철통 검증 및 정밀 영문 요약 (공지사항 폐기 규칙 추가)
             # =========================================================
             write_prompt = f"""
             You are a strict, objective K-Entertainment news editor analyzing news about '{name}'.
@@ -207,18 +207,22 @@ class NaverNewsAPI:
             RULES FOR WRITING:
             1. TRUE PROTAGONIST TITLE: If the article is specifically about a group member (e.g., Jimin of BTS), you MUST use the member's individual name in the brackets, NOT the group name.
                - Format: `[{{True_Korean_Name}}] English Title...` (e.g., `[지민] Jimin Releases New Solo Track`)
-            2. LENGTH: Write 3 to 10 lines of English summary, depending on the article's length.
-            3. FACT-ONLY: Summarize ONLY the facts present in the text. Absolutely NO AI interpretations, NO expert analysis, and NO added opinions.
-            4. PRESERVE DATA: Keep all numbers (dates, amounts, rankings) and proper nouns EXACTLY as they appear in the original text.
-            5. CATEGORY: '{target_category}'
+            2. GARBAGE & BOILERPLATE FILTERING (CRITICAL): 
+               - If the content is mostly website disclaimers, copyright notices, reporter emails, or "AI automatic recognition/classification" notices, you MUST output ONLY: {{"category": "discard"}}
+               - Do NOT summarize system text or website footers.
+            3. LENGTH: Write 3 to 10 lines of English summary, depending on the article's length.
+            4. FACT-ONLY: Summarize ONLY the facts present in the text. Absolutely NO AI interpretations, NO expert analysis, and NO added opinions.
+            5. PRESERVE DATA: Keep all numbers (dates, amounts, rankings) and proper nouns EXACTLY as they appear in the original text.
+            6. CATEGORY: '{target_category}'
+               - If the person is an Actor/Actress but the target is 'k-pop', change the category to 'k-drama' or 'k-movie'. Don't force actors into k-pop.
             
             Content to summarize:
             {content_pool}
             
             Output valid JSON ONLY:
             {{
-                "main_subject": "True Korean Name (e.g. 지민)",
-                "category": "{target_category}",
+                "main_subject": "True Korean Name",
+                "category": "{target_category}" | "k-movie" | "k-drama" | "discard",
                 "title": "[{{main_subject}}] ...",
                 "summary": "...",
                 "score": 85
@@ -228,11 +232,17 @@ class NaverNewsAPI:
                 ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=write_prompt)
                 data = json.loads(ai_res.text.replace("```json", "").replace("```", "").strip())
                 
+                # 💡 [핵심 구현] AI가 쓰레기 기사로 판별하면 DB 저장 건너뛰기!
+                assigned_cat = data.get("category", target_category).lower()
+                if assigned_cat == "discard":
+                    print(f"      ⏭️ [DISCARDED] System/Boilerplate text filtered.")
+                    continue
+                
                 actual_subject = data.get("main_subject", name).strip()
                 score = max(50, min(100, int(data.get("score", 70))))
 
                 final_results.append({
-                    "category": target_category,
+                    "category": assigned_cat,
                     "keyword": actual_subject,
                     "title": data.get("title", f"[{actual_subject}] Untitled"),
                     "summary": data.get("summary", ""),
