@@ -157,7 +157,9 @@ class NaverNewsAPI:
 
             content_pool = ""
             best_img_url = ""
-            main_link = valid_articles['link'] # 💡 리스트 인덱싱 버그 수정 완료!
+            
+            # ✅ 진짜로 추가 확인 완료!
+            main_link = valid_articles[0]['link']
 
             headers = {"User-Agent": "Mozilla/5.0"}
             for art in valid_articles:
