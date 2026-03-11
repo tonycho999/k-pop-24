@@ -167,7 +167,6 @@ class NaverNewsAPI:
             content_pool = ""
             best_img_url = ""
             
-            # 💡 [버그 수정 완료] 원본 코드에서이 누락되어 있던 부분 복구
             main_link = valid_articles['link'] 
 
             headers = {"User-Agent": "Mozilla/5.0"}
@@ -198,24 +197,23 @@ class NaverNewsAPI:
                 continue
 
             # =========================================================
-            # Step 7. 🤖 AI 철통 검증 및 정밀 영문 요약 (메타 타이틀 절대 금지)
+            # Step 7. 🤖 AI 철통 검증 및 정밀 영문 요약 (엄격한 팩트 제어)
             # =========================================================
             write_prompt = f"""
-            You are a strict, objective K-Entertainment news editor analyzing news about '{name}'.
+            You are a strict, objective K-Entertainment news reporter analyzing news about '{name}'.
             
             CRITICAL DISCARD RULE (ABORT IMMEDIATELY IF MET):
             If the text lacks actual news content, or is mostly website disclaimers, copyright notices, or "AI automatic recognition" system messages, YOU MUST OUTPUT EXACTLY THIS:
             {{"category": "discard", "main_subject": "", "title": "", "summary": "", "score": 0}}
-            DO NOT write meta-titles like "Text lacks specific content" or "Details on Article Link". Just output discard.
+            DO NOT write meta-titles. Just output discard.
             
             RULES FOR WRITING (ONLY IF VALID NEWS):
-            1. HEADLINE TITLE: Create a catchy, journalistic English headline summarizing the main event.
-               - Format: `[{{True_Korean_Name}}] Compelling English Headline...` (e.g., `[지민] Jimin Sweeps Global Charts with New Solo Track`)
-               - NEVER write titles describing the text itself (e.g., NO "Overview of Article", NO "Provided text lacks...").
-            2. LENGTH: Write 3 to 10 lines of English summary, depending on the article's length.
-            3. FACT-ONLY: Summarize ONLY the facts present in the text. NO AI opinions.
-            4. PRESERVE DATA: Keep all numbers and proper nouns EXACTLY as they appear.
-            5. CATEGORY: '{target_category}'
+            1. TITLE FORMAT: You MUST use this exact format: `[{{True_Korean_Name}}] English Headline`
+               - Example: `[지민] Jimin Sweeps Global Charts with New Solo Track`
+            2. FACT-ONLY SUMMARY: Summarize ONLY the facts present in the text (3-10 lines).
+               - ABSOLUTELY NO expert interpretations, NO added opinions, NO "잡소리" (nonsense/filler text).
+            3. PRESERVE DATA: Keep all numbers (dates, amounts, rankings) and proper nouns EXACTLY as they appear in the original text.
+            4. CATEGORY: '{target_category}'
                - If the person is an Actor/Actress but the target is 'k-pop', change the category to 'k-drama' or 'k-movie'.
             
             Content to summarize:
@@ -235,24 +233,28 @@ class NaverNewsAPI:
                 data = json.loads(ai_res.text.replace("```json", "").replace("```", "").strip())
                 
                 assigned_cat = data.get("category", target_category).lower()
-                if assigned_cat == "discard":
-                    print(f"      ⏭️ [DISCARDED] System/Boilerplate text filtered. No fake title generated.")
+                actual_subject = data.get("main_subject", "").strip()
+                title = data.get("title", "").strip()
+                summary = data.get("summary", "").strip()
+
+                # 💡 [철통 방어 로직] 쓰레기 판정, 키워드 누락, 제목/내용 누락 시 DB 진입 차단!
+                if assigned_cat == "discard" or not actual_subject or not title or not summary:
+                    print(f"      ⏭️ [DISCARDED] System text or missing data. Dropping fake article.")
                     continue
                 
-                actual_subject = data.get("main_subject", name).strip()
                 score = max(50, min(100, int(data.get("score", 70))))
 
                 final_results.append({
                     "category": assigned_cat,
                     "keyword": actual_subject,
-                    "title": data.get("title", f"[{actual_subject}] Untitled"),
-                    "summary": data.get("summary", ""),
+                    "title": title,
+                    "summary": summary,
                     "link": main_link,
                     "image_url": best_img_url,
                     "score": score,
                     "likes": 0
                 })
-                print(f"      ✅ AI Generated: {data.get('title')} (Score: {score})")
+                print(f"      ✅ AI Generated: {title} (Score: {score})")
             except Exception as e:
                 print(f"      ❌ AI Generation Error for {name}: {e}")
 
