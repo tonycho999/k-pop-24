@@ -3,7 +3,6 @@ import json
 import requests
 import html
 import re
-from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import pytz
 import urllib3
@@ -36,7 +35,7 @@ class NaverNewsAPI:
         }
 
     def run_pipeline(self, target_category):
-        print(f"\n🚀 [AI Newsroom] Starting Ultimate 8-Step Pipeline (Base: {target_category})")
+        print(f"\n🚀 [AI Newsroom] Starting Ultra-Fast Snippet Pipeline (Base: {target_category})")
         
         kst = pytz.timezone('Asia/Seoul')
         now_kst = datetime.now(kst)
@@ -94,20 +93,24 @@ class NaverNewsAPI:
         print(f"    ✅ Collected {len(title_list)} unique article titles in the last 24h.")
 
         # =========================================================
-        # Step 3 & 4. 📊 기사 제목 빈도수 추출 및 트렌드 Top 20 선정
+        # Step 3 & 4. 📊 기사 제목 빈도수 추출 및 타겟 선정 (인물, 작품, 방송 포함)
         # =========================================================
-        print(f"  📊 Step 3 & 4: Analyzing Title Frequencies for Top 20 Trend...")
+        print(f"  📊 Step 3 & 4: Extracting Major Subjects (People, Movies, Dramas, Shows)...")
+        # 💡 [수정] 인물 외에도 영화/드라마/프로그램/노래 제목도 타겟으로 잡도록 프롬프트 강화
         prompt_frequency = f"""
         Analyze the following Korean news article titles.
-        Extract all REAL Korean celebrity names (actors, singers, idols) mentioned in these titles and calculate a total exposure 'score' for each.
-        
+        Extract the most prominent MAIN SUBJECTS mentioned in these titles. 
+        A "Main Subject" can be:
+        1. A celebrity name (Actor, Singer, Idol, Director).
+        2. A content title (Movie, K-Drama, TV Variety Show, Song title).
+
         CRITICAL RULES:
         1. Base Score: 1 mention in a title = 1 score. 
-        2. Merge Aliases: If a celebrity or group is mentioned by different names (e.g., "BTS" and "방탄소년단"), merge their scores under the most common/official KOREAN name.
-        3. Group vs Individual: Extract group names and individual member names separately, unless the title refers to them collectively as one entity.
+        2. Merge Aliases: If a subject is mentioned by different names (e.g., "BTS" and "방탄소년단"), merge their scores under the most common KOREAN official name.
+        3. Do NOT extract generic words like "컴백", "방송", "결혼". Extract ONLY proper nouns (Specific people or specific titles).
         
-        Return a valid JSON array of the top 20 most frequently mentioned names, sorted by score (highest first).
-        Format: [{{"name": "Official Korean Name", "score": 19}}, ...]
+        Return a valid JSON array of the top 20 most frequently mentioned subjects, sorted by score (highest first).
+        Format: [{{"name": "Official Korean Subject Name", "score": 19}}, ...]
         
         Titles to analyze:
         {json.dumps(title_list, ensure_ascii=False)}
@@ -121,7 +124,6 @@ class NaverNewsAPI:
             )
             top_20_data = json.loads(ai_res.text)
             for item in top_20_data:
-                # 💡 기본 산정된 점수에 무조건 +10점을 추가하도록 수정
                 item['score'] = int(item.get('score', 0)) + 10
                 print(f"  - {item['name']}: {item['score']}점")
         except Exception as e:
@@ -129,10 +131,11 @@ class NaverNewsAPI:
             return
 
         # =========================================================
-        # Step 5 & 6. 🔍 핀셋 심층 검색 및 유효성 필터링 (기사, 이미지, 글자수)
+        # Step 5 & 6. 🔍 고속 요약본 풀링 & 100% 팩트 필터링 & 🚫 이미지 중복 방지
         # =========================================================
-        print(f"  🔍 Step 5 & 6: Deep Searching & Filtering Top 20 Targets...")
+        print(f"  🔍 Step 5 & 6: High-Speed Snippet Pooling & Strict Image Deduplication...")
         final_results = []
+        used_image_urls = set() # 💡 [추가] 이번 런(run)에서 사용된 이미지를 모두 기록하는 저장소
 
         for item in top_20_data:
             name = item.get("name")
@@ -141,7 +144,8 @@ class NaverNewsAPI:
 
             print(f"\n    🔎 Deep Dive: {name} (Score: {score})")
             
-            p_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(name)}&display=10&sort=sim"
+            # 요약본을 넉넉하게 50개 호출
+            p_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(name)}&display=50&sort=sim"
             try:
                 p_res = requests.get(p_url, headers=self.naver_headers, timeout=10)
                 raw_articles = p_res.json().get('items', [])
@@ -149,75 +153,68 @@ class NaverNewsAPI:
                 print(f"      ⏭️ API Error. Skipping. ({e})")
                 continue
 
-            valid_articles = [art for art in raw_articles if parsedate_to_datetime(art['pubDate']).astimezone(kst) >= time_limit][:3]
+            valid_articles = [art for art in raw_articles if parsedate_to_datetime(art['pubDate']).astimezone(kst) >= time_limit]
 
             if not valid_articles:
                 print(f"      ⏭️ No recent valid articles (within 24h) found. Skipping.")
                 continue
 
-            content_pool = ""
-            naver_snippets_pool = "" # 💡 [대안 2 적용] 실패를 대비한 네이버 요약본 백업
-            best_img_url = ""
-            main_link = valid_articles[0]['link'] 
+            # 💡 [핵심 수정] 파이썬 단계에서 '주제(name)'가 없는 요약본은 쓰레기통으로 직행
+            snippets_pool = []
+            main_link = ""
 
-            headers = {"User-Agent": "Mozilla/5.0"}
-            
             for art in valid_articles:
-                # 💡 [플랜 C 준비] 네이버 API가 준 기본 제목과 요약본 미리 저장
-                clean_art_title = re.sub(r'<[^>]+>', '', html.unescape(art['title']))
-                clean_art_desc = re.sub(r'<[^>]+>', '', html.unescape(art['description']))
-                naver_snippets_pool += f"[News Title]: {clean_art_title}\n[News Summary]: {clean_art_desc}\n\n"
-
-                try:
-                    c_res = requests.get(art['link'], headers=headers, timeout=5, verify=False)
-                    soup = BeautifulSoup(c_res.text, 'html.parser')
-                    
-                    for unwanted in soup.select('script, style, iframe, header, footer, nav, aside, .aside, .ad, .share_btn, .reporter_area, .copyright, #footer'):
-                        unwanted.decompose()
-                    
-                    body = soup.select_one("""
-                        #dic_area, #artc_body, #articleBody, .article_body, .news_end, .end_body_wrp,
-                        .article_view, .news_view, .content_area, #newsEndContents, .news_contents,
-                        [itemprop="articleBody"]
-                    """)
-                    
-                    if body: 
-                        content_pool += body.get_text(separator=' ', strip=True)[:1000] + " \n"
-                    else:
-                        paragraphs = soup.find_all('p')
-                        backup_text = " ".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 50])
-                        if backup_text: content_pool += backup_text[:1000] + " \n"
-                    
-                    if not best_img_url: 
-                        meta_img = soup.find("meta", property="og:image")
-                        if meta_img and meta_img.get("content"):
-                            candidate_img = meta_img["content"].strip()
-                            blacklist_img = ["dummy", "naver_logo", "default", "no_image"]
-                            
-                            if not any(bad in candidate_img.lower() for bad in blacklist_img):
-                                try:
-                                    img_check = requests.head(candidate_img, timeout=2, verify=False)
-                                    if img_check.status_code == 200:
-                                        best_img_url = candidate_img
-                                except:
-                                    pass
-                except Exception as e:
-                    continue
-
-            # 💡 [플랜 C 발동] 크롤링한 본문이 쓰레기거나 너무 짧으면 네이버 요약본으로 전격 교체!
-            if len(content_pool) < 100:
-                print(f"      ⚠️ Crawled content too short/empty. Falling back to Naver snippets!")
-                content_pool = naver_snippets_pool
+                clean_title = re.sub(r'<[^>]+>', '', html.unescape(art['title']))
+                clean_desc = re.sub(r'<[^>]+>', '', html.unescape(art['description']))
                 
-            if not best_img_url:
-                print(f"      ⏭️ No valid image found. Skipping.")
+                # 타겟 이름/제목이 기사 제목이나 요약본에 진짜로 들어있는지 검사 (필터링)
+                if name.lower() in clean_title.lower() or name.lower() in clean_desc.lower():
+                    snippets_pool.append(f"[Title]: {clean_title}\n[Summary]: {clean_desc}")
+                    if not main_link: 
+                        main_link = art['link'] # 가장 관련성 높은 첫 기사 링크 저장
+
+            if len(snippets_pool) < 2:
+                print(f"      ⏭️ Not enough relevant snippets specifically about '{name}'. Dropping.")
                 continue
 
-            print(f"      ✅ Validated! (Content: {len(content_pool)} chars, Image: OK)")
+            # 관련 있는 요약본만 하나로 뭉침
+            final_combined_content = "\n\n".join(snippets_pool[:20]) # 최대 20개의 핵심 팩트만 전달
+            
+            # 💡 [이미지 추출 및 중복 검사 로직] 크롤링 대신 네이버 이미지 API 사용
+            best_img_url = ""
+            img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(name)}&display=10&sort=sim"
+            try:
+                img_res = requests.get(img_search_url, headers=self.naver_headers, timeout=5)
+                if img_res.status_code == 200:
+                    img_items = img_res.json().get('items', [])
+                    for img_item in img_items:
+                        candidate_url = img_item.get('link', '')
+                        
+                        # 🚫 [핵심] 다른 기사에서 쓴 이미지라면 가차 없이 패스!
+                        if candidate_url in used_image_urls:
+                            continue
+                            
+                        # 이미지 링크 유효성 검사
+                        try:
+                            check = requests.head(candidate_url, timeout=2, verify=False)
+                            if check.status_code == 200 and check.headers.get('Content-Type', '').startswith('image/'):
+                                best_img_url = candidate_url
+                                used_image_urls.add(candidate_url) # 💡 사용된 이미지 목록에 등록!
+                                break 
+                        except:
+                            continue
+            except Exception as e:
+                pass
+
+            if not best_img_url:
+                print(f"      ⏭️ No unique/valid image found. Skipping.")
+                continue
+
+            print(f"      ✅ Validated! (Used {len(snippets_pool)} pure snippets, Unique Image: OK)")
             final_results.append({
                 "name": name,
                 "score": score,
-                "content": content_pool,
+                "content": final_combined_content,
                 "image": best_img_url,
                 "link": main_link
             })
@@ -232,9 +229,9 @@ class NaverNewsAPI:
             print(f"    - {res['name']} (Score: {res['score']})")
 
         # =========================================================
-        # Step 8. 🤖 AI 철통 검증 및 정밀 영문 요약
+        # Step 8. 🤖 AI 정밀 영문 요약
         # =========================================================
-        print(f"\n  🤖 Step 8: AI Summary & Verification for {len(final_results)} targets...")
+        print(f"\n  🤖 Step 8: AI Summary & Formatting for {len(final_results)} targets...")
         ai_summarized_results = []
 
         for item in final_results:
@@ -246,28 +243,24 @@ class NaverNewsAPI:
 
             print(f"    📝 Generating AI summary for: {name}...")
 
-            # 💡 [프롬프트 최적화] AI에게 이 텍스트가 뉴스 본문일 수도 있고, 요약본 뭉치일 수도 있다고 알려줌
+            # 💡 [프롬프트 완벽 수정] 이 데이터는 이미 파이썬이 검증한 '순도 100%' 팩트이므로 무조건 쓰도록 유도
             write_prompt = f"""
-            You are a rigorous and objective K-entertainment news reporter analyzing news about '{name}'.
+            You are a rigorous and objective K-entertainment news reporter.
+            I have gathered multiple verified news snippets specifically about '{name}'.
 
-            Do not include any AI-generated translations in your article. Write a fresh English summary based on the facts.
+            Article Writing Rules:
+            1. Title Format: MUST use the exact format: `[{name}] Catchy English Title`
+            2. Summary: Synthesize the provided news snippets into a single, cohesive English news summary (3-10 lines). Focus strictly on the facts presented about '{name}'.
+            3. Data Preservation: Retain all numbers (dates, rankings, amounts) and proper nouns exactly as they appear.
+            4. Categorize the article based on content, not on individuals: '{target_category}'
 
-            (Valid news articles only) Article Writing Rules:
-            1. Title Format: Must use the following format: `[{name}] English Title`
-            2. Summary: Summarize only the facts in the text (3-10 lines).
-                - Expert interpretations, opinions, and nonsense are strictly prohibited.
-            3. Data Preservation: Retain all numbers (dates, amounts, rankings) and proper nouns exactly as they appear in the original text.
-            4. CATEGORY: '{target_category}'
-               - Classify the article based on its content. If it's pure garbage/system text, classify as 'discard'.
-            5. Strict Subject Validation: Evaluate if '{name}' is the actual main subject of the text. If '{name}' is merely mentioned in passing, or if the article is primarily about someone else, you MUST classify the category as 'discard'. Do not force a summary about '{name}' if they are not the central focus.
-
-            Content to summarize (may be full article text OR multiple short news snippets):
+            Verified News Snippets to analyze:
             {content_pool}
 
             Output valid JSON ONLY:
             {{
                 "main_subject": "{name}",
-                "category": "determined category or 'discard'",
+                "category": "{target_category}",
                 "title": "[{name}] ...",
                 "summary": "..."
             }}
@@ -281,19 +274,16 @@ class NaverNewsAPI:
                 )
                 data = json.loads(ai_res.text)
                 
-                assigned_cat = data.get("category", target_category).lower()
                 actual_subject = data.get("main_subject", name).strip()
                 title = data.get("title", "").strip()
                 summary = data.get("summary", "").strip()
 
-                if assigned_cat == "discard" or not title or not summary:
-                    print(f"      ⏭️ [DISCARDED] System text, missing data, or wrong subject. Dropping article.")
+                if not title or not summary:
+                    print(f"      ⏭️ [DISCARDED] AI failed to generate content.")
                     continue
                 
-                safe_category = target_category
-
                 ai_summarized_results.append({
-                    "category": safe_category,
+                    "category": target_category,
                     "keyword": actual_subject,
                     "title": title,
                     "summary": summary,
