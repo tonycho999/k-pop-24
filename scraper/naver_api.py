@@ -12,7 +12,7 @@ from google import genai
 from email.utils import parsedate_to_datetime
 
 # ✅ ModelManager 임포트 추가 (경로는 프로젝트 구조에 맞게 유지)
-from scraper.model_manager import ModelManager 
+from model_manager import ModelManager
 
 # SSL 프록시 접속 경고창 영구 숨김 처리
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
