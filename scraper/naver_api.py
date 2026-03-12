@@ -225,11 +225,6 @@ class NaverNewsAPI:
                 print(f"      ⏭️ No valid image found. Skipping.")
                 continue
 
-            # 💡 [정제 4] 수집된 본문 텍스트 안에 진짜 '타겟 연예인 이름'이 1번 이상 등장하는지 크로스체크!
-            if name not in content_pool:
-                print(f"      ⏭️ Target name '{name}' not found in the main body. Dropping fake article.")
-                continue
-
             # 모든 조건을 통과한 키워드만 리스트에 추가 (원래 스코어 유지)
             print(f"      ✅ Validated! ({len(valid_articles)} articles used, Content: {len(content_pool)} chars, Image: OK)")
             final_results.append({
