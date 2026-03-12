@@ -11,6 +11,9 @@ from urllib.parse import quote
 from google import genai
 from email.utils import parsedate_to_datetime
 
+# ✅ ModelManager 임포트 추가 (경로는 프로젝트 구조에 맞게 유지)
+from scraper.model_manager import ModelManager 
+
 # SSL 프록시 접속 경고창 영구 숨김 처리
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -25,6 +28,8 @@ class NaverNewsAPI:
         
         if self.gemini_key:
             self.ai_client = genai.Client(api_key=self.gemini_key)
+            # ✅ ModelManager 초기화 추가
+            self.model_manager = ModelManager(client=self.ai_client, provider="gemini")
 
         self.naver_headers = {
             "X-Naver-Client-Id": self.naver_id,
@@ -42,6 +47,10 @@ class NaverNewsAPI:
         if not self.naver_id or not self.naver_secret:
             print("  ❌ Error: NAVER API keys missing.")
             return
+
+        # ✅ 파이프라인 시작 시 최적의 모델을 한 번 가져와서 저장
+        self.best_model = self.model_manager.get_best_model() if hasattr(self, 'model_manager') else 'gemini-2.5-flash'
+        print(f"  🤖 Loaded Dynamic AI Model: {self.best_model}")
 
         # =========================================================
         # Step 1. 🕒 현재 시간 출력 및 🧹 DB 청소 (search_archive 7일 경과 데이터 삭제)
@@ -114,7 +123,7 @@ class NaverNewsAPI:
         
         try:
             ai_res = self.ai_client.models.generate_content(
-                model='gemini-2.5-flash', 
+                model=self.best_model, # ✅ 하드코딩 제거, 동적 모델 적용
                 contents=prompt_frequency,
                 # Using JSON schema to force the output structure and avoid parsing errors
                 generation_config={"response_mime_type": "application/json"} 
@@ -274,7 +283,7 @@ class NaverNewsAPI:
             try:
                 # JSON 응답 강제 (파싱 에러 방지)
                 ai_res = self.ai_client.models.generate_content(
-                    model='gemini-2.5-flash', 
+                    model=self.best_model, # ✅ 하드코딩 제거, 동적 모델 적용
                     contents=write_prompt,
                     generation_config={"response_mime_type": "application/json"}
                 )
@@ -308,8 +317,6 @@ class NaverNewsAPI:
                 
             except Exception as e:
                 print(f"      ❌ AI Generation Error for {name}: {e}")
-
-        # 모든 처리가 끝난 후 ai_summarized_results를 반환하거나 DB에 저장하면 됩니다.
 
         # =========================================================
         # Step 9. 💾 DB 저장 및 UI 최적화 ([카테고리+이름] 기준 덮어쓰기)
