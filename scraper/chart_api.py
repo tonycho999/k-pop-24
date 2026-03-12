@@ -58,7 +58,7 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 10개 항시 유지 & 아마존 키워드 추출)
+    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 10개 항시 유지 & 아마존 키워 추출)
     def _update_k_culture_magazine(self):
         print("  🚀 Starting K-Culture Magazine Delta Update with Amazon Monetization...")
         if not self.naver_id or not self.naver_secret:
@@ -142,6 +142,15 @@ class ChartAPI:
                 
                 # JSON 파싱
                 trends = json.loads(ai_res.text)
+
+                # 💡 [안전장치 추가] 딕셔너리로 응답이 왔다면 안쪽에 있는 리스트를 강제로 꺼냄
+                if isinstance(trends, dict):
+                    # 보통 딕셔너리 안에 밸류값으로 리스트가 들어있으므로 그것을 추출
+                    trends = next(iter(trends.values())) if trends else []
+                    
+                    # 혹시나 리스트가 아니라 단일 객체 하나만 덜렁 왔다면 리스트로 감싸줌
+                    if isinstance(trends, dict):
+                        trends = [trends]
 
                 # 3. 데이터 비교 및 델타 업데이트 실행
                 for t in trends[:10]:
