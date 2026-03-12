@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ThumbsUp, ThumbsDown, Share2, Calendar } from 'lucide-react';
+import { X, ThumbsUp, ThumbsDown, Share2, Calendar, ShoppingCart } from 'lucide-react'; // ✅ ShoppingCart 아이콘 추가
 /* ✅ Next.js Image 컴포넌트 추가 */
 import Image from 'next/image';
 
@@ -33,6 +33,9 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
       console.error('Error sharing:', err);
     }
   };
+
+  // 💡 [핵심 로직] 아마존 버튼을 보여줄 K-Culture 카테고리인지 확인
+  const isKCulture = ['k-food', 'k-beauty', 'k-fashion', 'k-lifestyle'].includes(article.category);
 
   return (
     <AnimatePresence>
@@ -91,7 +94,7 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
           {/* Body */}
           <div className="p-6 sm:p-8 overflow-y-auto flex-1 bg-white dark:bg-slate-900">
             
-            {/* ✅ 기존에 사진을 가리던 제목과 날짜를 하단 흰색 본문 영역으로 이동 (가독성 확보) */}
+            {/* 제목과 날짜 영역 */}
             <div className="mb-6 pb-6 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-3 mb-3">
                 <span className="px-2.5 py-1 bg-cyan-500 text-white text-[10px] font-black uppercase rounded-lg shadow-sm">
@@ -107,6 +110,7 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
               </h2>
             </div>
 
+            {/* AI 점수 및 공유 버튼 */}
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <span className="text-yellow-500 font-black text-lg">★ {article.score?.toFixed(1) || '0.0'}</span>
@@ -123,10 +127,28 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
               </div>
             </div>
 
+            {/* 본문(Summary) */}
             <p className="text-slate-600 dark:text-slate-300 text-lg leading-relaxed mb-8 whitespace-pre-wrap">
               {article.summary}
             </p>
 
+            {/* 💰 [아마존 제휴 마케팅 버튼] K-Culture 카테고리이면서 amazon_keyword가 있을 때만 렌더링 */}
+            {isKCulture && article.amazon_keyword && (
+              <div className="flex justify-center mb-10 mt-2">
+                <a 
+                  /* 💡 발급받으신 kculturetrend-20 ID가 여기에 들어갑니다! */
+                  href={`https://www.amazon.com/s?k=${encodeURIComponent(article.amazon_keyword)}&tag=kculturetrend-20`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-3 w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-[#FF9900] to-[#FFB84D] hover:from-[#e68a00] hover:to-[#ffa31a] text-slate-900 font-black text-lg rounded-2xl shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all duration-200"
+                >
+                  <ShoppingCart size={24} className="text-slate-900" />
+                  Shop "{article.amazon_keyword}" on Amazon
+                </a>
+              </div>
+            )}
+
+            {/* 좋아요/싫어요 투표 버튼 */}
             <div className="flex justify-center gap-6 pb-4">
               <button 
                 onClick={() => onVote(article.id, 'likes')}
@@ -148,6 +170,7 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
                 <span className="text-xs font-bold text-slate-400">{article.dislikes || 0}</span>
               </button>
             </div>
+            
           </div>
         </motion.div>
       </motion.div>
