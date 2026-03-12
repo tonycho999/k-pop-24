@@ -123,10 +123,9 @@ class NaverNewsAPI:
         
         try:
             ai_res = self.ai_client.models.generate_content(
-                model=self.best_model, # ✅ 하드코딩 제거, 동적 모델 적용
+                model=self.best_model, 
                 contents=prompt_frequency,
-                # Using JSON schema to force the output structure and avoid parsing errors
-                generation_config={"response_mime_type": "application/json"} 
+                config={"response_mime_type": "application/json"} # ✅ 이렇게 변경!
             )
             # Since we forced application/json, we can safely load it directly
             top_20_data = json.loads(ai_res.text)
@@ -283,9 +282,9 @@ class NaverNewsAPI:
             try:
                 # JSON 응답 강제 (파싱 에러 방지)
                 ai_res = self.ai_client.models.generate_content(
-                    model=self.best_model, # ✅ 하드코딩 제거, 동적 모델 적용
+                    model=self.best_model, 
                     contents=write_prompt,
-                    generation_config={"response_mime_type": "application/json"}
+                    config={"response_mime_type": "application/json"} # ✅ 이렇게 변경!
                 )
                 data = json.loads(ai_res.text)
                 
