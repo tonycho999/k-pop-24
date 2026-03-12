@@ -248,7 +248,7 @@ class NaverNewsAPI:
             1. Title Format: MUST use the exact format: `[{name}] Catchy English Title`
             2. Summary: Synthesize the provided news snippets into a single, cohesive English news summary (3-10 lines). Focus strictly on the facts presented about '{name}'.
             3. Data Preservation: Retain all numbers (dates, rankings, amounts) and proper nouns exactly as they appear.
-            4. CATEGORY: '{target_category}'
+            4. Categorize the article based on content, not on individuals: "{target_category}."
 
             Verified News Snippets to analyze:
             {content_pool}
