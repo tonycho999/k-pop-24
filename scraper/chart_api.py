@@ -9,6 +9,9 @@ import time
 from urllib.parse import quote
 from google import genai
 
+# ✅ ModelManager 같은 폴더에서 임포트 (경로 에러 방지)
+from model_manager import ModelManager 
+
 # SSL 프록시 접속 경고창 영구 숨김 처리
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -23,6 +26,8 @@ class ChartAPI:
         self.gemini_key = os.environ.get("GEMINI_API_KEY")
         if self.gemini_key:
             self.ai_client = genai.Client(api_key=self.gemini_key)
+            # ✅ ModelManager 초기화 (제미나이 공급자로 설정)
+            self.model_manager = ModelManager(client=self.ai_client, provider="gemini")
 
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
@@ -30,7 +35,7 @@ class ChartAPI:
         }
 
     def update_chart(self, category):
-        # 💡 [핵심 변경] K-Culture는 별도의 AI 매거진 파이프라인을 타고 live_news 테이블로 직행합니다.
+        # 💡 K-Culture는 별도의 AI 매거진 파이프라인을 타고 live_news 테이블로 직행합니다.
         if category == 'k-culture':
             self._update_k_culture_magazine()
             return
@@ -53,7 +58,7 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 10개 항시 유지 로직 적용 + 아마존 수익화 연동)
+    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 10개 항시 유지 & 아마존 키워드 추출)
     def _update_k_culture_magazine(self):
         print("  🚀 Starting K-Culture Magazine Delta Update with Amazon Monetization...")
         if not self.naver_id or not self.naver_secret:
@@ -76,6 +81,10 @@ class ChartAPI:
             "X-Naver-Client-Id": self.naver_id,
             "X-Naver-Client-Secret": self.naver_secret
         }
+
+        # ✅ 파이프라인 실행 시 동적으로 가장 좋은 모델 1개 선택
+        best_model = self.model_manager.get_best_model() if hasattr(self, 'model_manager') else 'gemini-2.5-flash'
+        print(f"  🤖 Loaded Dynamic AI Model: {best_model}")
 
         categories = {
             'k-food': '편의점 신상 OR 먹거리 유행 OR 디저트 인기',
@@ -104,7 +113,7 @@ class ChartAPI:
 
                 snippets = [{"title": re.sub(r'<[^>]+>', '', i['title']), "desc": re.sub(r'<[^>]+>', '', i['description'])} for i in items]
 
-                # ✅ 1. 제미나이(Gemini) 프롬프트에 아마존 키워드 추출 지시 추가!
+                # 2. 제미나이(Gemini) 프롬프트 (아마존 키워드 추출 포함)
                 prompt = f"""
                 You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 10 hottest trends.
                 
@@ -124,11 +133,11 @@ class ChartAPI:
                 News snippets: {json.dumps(snippets, ensure_ascii=False)}
                 """
                 
-                # JSON 응답 포맷 강제
+                # ✅ 신형 API 문법(`config=`) 및 동적 모델(`best_model`) 적용 완료!
                 ai_res = self.ai_client.models.generate_content(
-                    model='gemini-2.5-flash', 
+                    model=best_model, 
                     contents=prompt,
-                    generation_config={"response_mime_type": "application/json"}
+                    config={"response_mime_type": "application/json"}
                 )
                 
                 # JSON 파싱
@@ -141,18 +150,16 @@ class ChartAPI:
                     new_score = t.get('score', 0)
                     keyword = t.get('keyword', '') 
                     
-                    # ✅ 추출된 아마존 키워드 가져오기 (만약 AI가 안 만들면 기본 카테고리값 사용)
+                    # 아마존 키워드 가져오기
                     default_keyword = f"Korean {sub_cat.replace('k-', '')}"
                     amazon_keyword = t.get('amazon_keyword', default_keyword).strip()
 
                     if title in old_dict:
-                        # [유지 & 업데이트] 기존 차트에 있던 트렌드
+                        # [유지 & 업데이트]
                         old_item = old_dict[title]
                         item_id = old_item['id']
                         
-                        # 내용이나 순위가 바뀌었을 때만 DB에 PATCH 요청
                         if old_item['summary'] != new_summary or old_item['score'] != new_score:
-                            # ✅ 2. PATCH 요청 시 amazon_keyword 도 함께 업데이트하도록 추가!
                             patch_data = {
                                 "summary": new_summary, 
                                 "score": new_score,
@@ -168,7 +175,7 @@ class ChartAPI:
                             print(f"      ➖ Kept (No change): {title}")
                             
                     else:
-                        # [신규 진입] 완전히 새로운 트렌드
+                        # [신규 진입]
                         img_url = ""
                         if keyword:
                             img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(keyword)}&display=3&sort=sim"
@@ -186,7 +193,6 @@ class ChartAPI:
                                     except:
                                         continue 
 
-                        # ✅ 3. 새로운 기사를 넣을 때 amazon_keyword 를 DB에 같이 넣도록 추가!
                         post_data = {
                             "category": sub_cat,
                             "keyword": keyword, 
@@ -241,6 +247,9 @@ class ChartAPI:
 
         items_to_translate = [{"title": item['title'], "info": item['info']} for item in chart_data]
         
+        # ✅ 번역 파이프라인에도 동적 모델 적용
+        best_model = self.model_manager.get_best_model() if hasattr(self, 'model_manager') else 'gemini-2.5-flash'
+
         prompt = f"""
         You are an expert K-Culture data cleaner and translator. 
         Current Category: {category}
@@ -262,9 +271,13 @@ class ChartAPI:
         {json.dumps(items_to_translate, ensure_ascii=False)}
         """
         try:
-            ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-            text = ai_res.text.replace("```json", "").replace("```", "").strip()
-            translated_items = json.loads(text)
+            # ✅ 신형 문법 적용
+            ai_res = self.ai_client.models.generate_content(
+                model=best_model, 
+                contents=prompt,
+                config={"response_mime_type": "application/json"}
+            )
+            translated_items = json.loads(ai_res.text)
             
             for i, item in enumerate(chart_data):
                 if i < len(translated_items):
