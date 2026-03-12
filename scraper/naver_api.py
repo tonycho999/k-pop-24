@@ -121,6 +121,8 @@ class NaverNewsAPI:
             )
             top_20_data = json.loads(ai_res.text)
             for item in top_20_data:
+                # 💡 기본 산정된 점수에 무조건 +10점을 추가하도록 수정
+                item['score'] = int(item.get('score', 0)) + 10
                 print(f"  - {item['name']}: {item['score']}점")
         except Exception as e:
             print(f"    ❌ Frequency Analysis Error: {e}")
