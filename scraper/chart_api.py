@@ -104,7 +104,7 @@ class ChartAPI:
 
                 snippets = [{"title": re.sub(r'<[^>]+>', '', i['title']), "desc": re.sub(r'<[^>]+>', '', i['description'])} for i in items]
 
-                # 2. 제미나이(Gemini)에게 스마트 델타 업데이트 지시 (✅ 아마존 키워드 추출 추가)
+                # ✅ 1. 제미나이(Gemini) 프롬프트에 아마존 키워드 추출 지시 추가!
                 prompt = f"""
                 You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 10 hottest trends.
                 
@@ -124,14 +124,14 @@ class ChartAPI:
                 News snippets: {json.dumps(snippets, ensure_ascii=False)}
                 """
                 
-                # ✅ JSON 응답 포맷 강제 설정 추가
+                # JSON 응답 포맷 강제
                 ai_res = self.ai_client.models.generate_content(
                     model='gemini-2.5-flash', 
                     contents=prompt,
                     generation_config={"response_mime_type": "application/json"}
                 )
                 
-                # JSON 파싱 (문자열 정제 없이 바로 로드)
+                # JSON 파싱
                 trends = json.loads(ai_res.text)
 
                 # 3. 데이터 비교 및 델타 업데이트 실행
@@ -141,7 +141,7 @@ class ChartAPI:
                     new_score = t.get('score', 0)
                     keyword = t.get('keyword', '') 
                     
-                    # ✅ 추출된 아마존 키워드 가져오기 (없으면 기본값 설정)
+                    # ✅ 추출된 아마존 키워드 가져오기 (만약 AI가 안 만들면 기본 카테고리값 사용)
                     default_keyword = f"Korean {sub_cat.replace('k-', '')}"
                     amazon_keyword = t.get('amazon_keyword', default_keyword).strip()
 
@@ -152,7 +152,7 @@ class ChartAPI:
                         
                         # 내용이나 순위가 바뀌었을 때만 DB에 PATCH 요청
                         if old_item['summary'] != new_summary or old_item['score'] != new_score:
-                            # ✅ PATCH 데이터에 amazon_keyword 추가
+                            # ✅ 2. PATCH 요청 시 amazon_keyword 도 함께 업데이트하도록 추가!
                             patch_data = {
                                 "summary": new_summary, 
                                 "score": new_score,
@@ -186,7 +186,7 @@ class ChartAPI:
                                     except:
                                         continue 
 
-                        # ✅ POST 데이터에 amazon_keyword 추가
+                        # ✅ 3. 새로운 기사를 넣을 때 amazon_keyword 를 DB에 같이 넣도록 추가!
                         post_data = {
                             "category": sub_cat,
                             "keyword": keyword, 
@@ -196,7 +196,7 @@ class ChartAPI:
                             "image_url": img_url,
                             "score": new_score,
                             "likes": 0,
-                            "amazon_keyword": amazon_keyword
+                            "amazon_keyword": amazon_keyword 
                         }
                         post_res = requests.post(f"{supabase_url}/rest/v1/live_news", headers=supa_headers, json=post_data)
                         
@@ -205,7 +205,7 @@ class ChartAPI:
                         else:
                             print(f"      ✨ New Entry: {title} (Amazon: {amazon_keyword})")
 
-                # 4. 💡 10개 한도 룰 적용: 새로운 항목이 추가되어 10개가 넘었을 경우, 가장 오래된 것부터 삭제
+                # 4. 💡 10개 한도 룰 적용
                 try:
                     count_url = f"{supabase_url}/rest/v1/live_news?category=eq.{sub_cat}&select=id"
                     current_res = requests.get(count_url, headers=supa_headers)
@@ -215,7 +215,6 @@ class ChartAPI:
                         
                         if total_count > 10:
                             excess = total_count - 10
-                            # 가장 오래된 데이터(created_at 오름차순) 순으로 초과분만큼 ID 가져오기
                             oldest_url = f"{supabase_url}/rest/v1/live_news?category=eq.{sub_cat}&select=id&order=created_at.asc&limit={excess}"
                             oldest_res = requests.get(oldest_url, headers=supa_headers)
                             
