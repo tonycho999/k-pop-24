@@ -113,23 +113,32 @@ class ChartAPI:
 
                 snippets = [{"title": re.sub(r'<[^>]+>', '', i['title']), "desc": re.sub(r'<[^>]+>', '', i['description'])} for i in items]
 
-                # 2. 제미나이(Gemini) 프롬프트 (아마존 키워드 추출 포함)
+                # 2. 제미나이(Gemini) 프롬프트 (아마존 키워드 추출 포함) - 💡 여유 있게 15개 요청
                 prompt = f"""
-                You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 10 hottest trends.
+                You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 15 hottest trends.
+                
+                CRITICAL RULE FOR FILTERING:
+                You MUST ONLY extract trends that perfectly match the '{sub_cat}' category. 
+                If an article mentions '{sub_cat}' but its main focus shifts to another category (e.g., "expanding from food to fashion"), COMPLETELY IGNORE IT.
+                For example, if the category is 'k-food', completely IGNORE any news about fashion, cosmetics, or travel.
+                If there are not enough relevant trends, just return a smaller array. DO NOT invent or use unrelated news.
                 
                 CRITICAL RULE FOR TITLES:
                 Here are the previous Top 10 trend titles: {old_titles_list}
                 If a current trend is about the EXACT SAME TOPIC as one of the previous titles, you MUST use the EXACT SAME string from the previous titles list. Do not rephrase it.
                 If it is a completely new trend, create a new Catchy English Title.
 
-                Return ONLY a valid JSON array of exactly 10 objects. Format:
-                {{
-                    "title": "Exact old title OR Catchy new English title",
-                    "summary": "2-3 sentences in English explaining what the item is and why it's popular.",
-                    "keyword": "A short exact Korean noun for image search (e.g., '두바이 초콜릿')",
-                    "amazon_keyword": "1-4 English words a foreigner would use to buy this or a similar style item on Amazon (e.g., 'Korean spicy ramen', 'Korean skincare', 'Korean style clothing')",
-                    "score": <integer from 10 (1st) down to 1 (10th)>
-                }}
+                Return ONLY a valid JSON array of objects. Format:
+                [
+                  {{
+                      "title": "Exact old title OR Catchy new English title",
+                      "summary": "2-3 sentences in English explaining what the item is and why it's popular.",
+                      "keyword": "A short exact Korean noun for image search (e.g., '두바이 초콜릿')",
+                      "amazon_keyword": "1-4 English words to buy this on Amazon. IT MUST STRICTLY BELONG TO THE '{sub_cat}' CATEGORY (e.g., if k-food, MUST be an edible food item like 'Korean spicy ramen', NEVER clothing or makeup).",
+                      "score": <integer from 15 (1st) down to 1 (15th)>
+                  }}
+                ]
+                
                 News snippets: {json.dumps(snippets, ensure_ascii=False)}
                 """
                 
@@ -153,15 +162,51 @@ class ChartAPI:
                         trends = [trends]
 
                 # 3. 데이터 비교 및 델타 업데이트 실행
-                for t in trends[:10]:
+                processed_count = 0 # 💡 성공적으로 처리된(이미지가 있는) 기사 수를 셉니다.
+
+                for t in trends:
+                    if processed_count >= 10:
+                        break # 💡 10개가 채워지면 루프 종료!
+
                     title = t.get('title', 'Unknown Trend')
                     new_summary = t.get('summary', '')
-                    new_score = t.get('score', 0)
+                    new_score = 10 - processed_count # 💡 순위를 10점 만점부터 차례대로 재부여합니다.
                     keyword = t.get('keyword', '') 
                     
                     # 아마존 키워드 가져오기
                     default_keyword = f"Korean {sub_cat.replace('k-', '')}"
                     amazon_keyword = t.get('amazon_keyword', default_keyword).strip()
+
+                    # 💡 이미지 유효성 검사를 먼저 수행합니다!
+                    img_url = ""
+                    if keyword:
+                        img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(keyword)}&display=3&sort=sim"
+                        try:
+                            img_res = requests.get(img_search_url, headers=naver_headers, timeout=5)
+                            if img_res.status_code == 200:
+                                img_items = img_res.json().get('items', [])
+                                for img_item in img_items:
+                                    candidate_url = img_item.get('link', '')
+                                    try:
+                                        check = requests.head(candidate_url, timeout=2, verify=False)
+                                        if check.status_code == 200:
+                                            # ✅ [이미지 유효성 추가 검증] 응답 헤더의 Content-Type이 진짜 이미지인지 확인
+                                            content_type = check.headers.get('Content-Type', '')
+                                            if content_type.startswith('image/'):
+                                                img_url = candidate_url
+                                                break 
+                                    except:
+                                        continue 
+                        except Exception as e:
+                            print(f"      ⚠️ Image Search API Error for '{keyword}': {e}")
+
+                    # 💡 유효한 이미지를 찾지 못했다면 포기하고 다음 트렌드로 넘어갑니다. (개수 카운트 안 함)
+                    if not img_url and title not in old_dict: # 기존 DB에 있는 건 이미지 재활용 가능성을 위해 일단 패스 (기존 로직 유지)
+                         print(f"      ⏭️ No valid image found for '{keyword}'. Dropping trend: {title}")
+                         continue
+
+                    # 여기서부터는 이미지가 확인되었거나, 기존 DB에 있던 기사입니다.
+                    processed_count += 1 # 성공 카운트 증가
 
                     if title in old_dict:
                         # [유지 & 업데이트]
@@ -184,24 +229,7 @@ class ChartAPI:
                             print(f"      ➖ Kept (No change): {title}")
                             
                     else:
-                        # [신규 진입]
-                        img_url = ""
-                        if keyword:
-                            img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(keyword)}&display=3&sort=sim"
-                            img_res = requests.get(img_search_url, headers=naver_headers, timeout=5)
-                            
-                            if img_res.status_code == 200:
-                                img_items = img_res.json().get('items', [])
-                                for img_item in img_items:
-                                    candidate_url = img_item.get('link', '')
-                                    try:
-                                        check = requests.head(candidate_url, timeout=2, verify=False)
-                                        if check.status_code == 200:
-                                            img_url = candidate_url
-                                            break 
-                                    except:
-                                        continue 
-
+                        # [신규 진입] - 위에서 img_url을 이미 확보했습니다.
                         post_data = {
                             "category": sub_cat,
                             "keyword": keyword, 
