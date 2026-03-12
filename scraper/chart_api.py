@@ -87,10 +87,10 @@ class ChartAPI:
         print(f"  🤖 Loaded Dynamic AI Model: {best_model}")
 
         categories = {
-            'k-food': '편의점 신상 OR 먹거리 유행 OR 디저트 인기',
-            'k-beauty': '올리브영 인기 OR 뷰티 트렌드 OR 화장품 신제품',
-            'k-fashion': '무신사 랭킹 OR 패션 유행 OR 요즘 코디',
-            'k-lifestyle': '팝업스토어 OR 핫플레이스 OR 라이프스타일 트렌드'
+            'k-food': '먹거리 유행',
+            'k-beauty': '뷰티 트렌드',
+            'k-fashion': '패션 유행',
+            'k-lifestyle': '라이프스타일 트렌드'
         }
 
         for sub_cat, query in categories.items():
