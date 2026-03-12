@@ -125,7 +125,7 @@ class NaverNewsAPI:
             ai_res = self.ai_client.models.generate_content(
                 model=self.best_model, 
                 contents=prompt_frequency,
-                config={"response_mime_type": "application/json"} # ✅ 이렇게 변경!
+                config={"response_mime_type": "application/json"} 
             )
             # Since we forced application/json, we can safely load it directly
             top_20_data = json.loads(ai_res.text)
@@ -162,7 +162,6 @@ class NaverNewsAPI:
                 continue
 
             # 2. 24시간 이내의 최신 기사만 필터링 후 최대 3개 추출
-            # 만약 24시간 이내 기사가 1개뿐이라면 valid_articles의 길이는 1이 됩니다.
             valid_articles = [art for art in raw_articles if parsedate_to_datetime(art['pubDate']).astimezone(kst) >= time_limit][:3]
 
             if not valid_articles:
@@ -181,13 +180,23 @@ class NaverNewsAPI:
                     c_res = requests.get(art['link'], headers=headers, timeout=5, verify=False)
                     soup = BeautifulSoup(c_res.text, 'html.parser')
                     
-                    # 본문 추출 후 content_pool에 계속 누적
-                    body = soup.select_one("#dic_area, #artc_body, #articleBody, .article_body, .news_end, .end_body_wrp")
+                    # 💡 [정제 1] 불필요한 노이즈 태그들(광고, 스크립트, 메뉴, 푸터 등) 먼저 싹둑 자르기
+                    for unwanted in soup.select('script, style, iframe, header, footer, nav, aside, .aside, .ad, .share_btn, .reporter_area, .copyright, #footer'):
+                        unwanted.decompose()
+                    
+                    # 💡 [정제 2] 본문 영역을 나타내는 CSS 선택자를 대폭 강화
+                    body = soup.select_one("""
+                        #dic_area, #artc_body, #articleBody, .article_body, .news_end, .end_body_wrp,
+                        .article_view, .news_view, .content_area, #newsEndContents, .news_contents,
+                        [itemprop="articleBody"]
+                    """)
+                    
                     if body: 
                         content_pool += body.get_text(separator=' ', strip=True)[:1000] + " \n"
                     else:
+                        # 💡 [정제 3] 플랜 B: p태그 추출 시 짧은 시스템 텍스트 버리고, 50자 이상의 '긴 문단'만 취합
                         paragraphs = soup.find_all('p')
-                        backup_text = " ".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 20])
+                        backup_text = " ".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 50])
                         if backup_text: content_pool += backup_text[:1000] + " \n"
                     
                     # 이미지 추출 (아직 유효한 이미지를 못 찾았을 경우에만 탐색)
@@ -208,13 +217,17 @@ class NaverNewsAPI:
                     continue
 
             # 4. 최종 유효성 검증
-            # 기사가 1개뿐이었더라도 누적된 글자수(content_pool)가 100자 이상이고 이미지가 있다면 무사 통과!
             if len(content_pool) < 100:
                 print(f"      ⏭️ Insufficient content length ({len(content_pool)} chars). Skipping.")
                 continue
                 
             if not best_img_url:
                 print(f"      ⏭️ No valid image found. Skipping.")
+                continue
+
+            # 💡 [정제 4] 수집된 본문 텍스트 안에 진짜 '타겟 연예인 이름'이 1번 이상 등장하는지 크로스체크!
+            if name not in content_pool:
+                print(f"      ⏭️ Target name '{name}' not found in the main body. Dropping fake article.")
                 continue
 
             # 모든 조건을 통과한 키워드만 리스트에 추가 (원래 스코어 유지)
@@ -266,6 +279,7 @@ class NaverNewsAPI:
             3. Data Preservation: Retain all numbers (dates, amounts, rankings) and proper nouns exactly as they appear in the original text.
             4. CATEGORY: '{target_category}'
                - Classify the article based on its content. If it's pure garbage/system text, classify as 'discard'.
+            5. Strict Subject Validation: Evaluate if '{name}' is the actual main subject of the text. If '{name}' is merely mentioned in passing, or if the article is primarily about someone else, you MUST classify the category as 'discard'. Do not force a summary about '{name}' if they are not the central focus.
 
             Content to summarize:
             {content_pool}
@@ -284,7 +298,7 @@ class NaverNewsAPI:
                 ai_res = self.ai_client.models.generate_content(
                     model=self.best_model, 
                     contents=write_prompt,
-                    config={"response_mime_type": "application/json"} # ✅ 이렇게 변경!
+                    config={"response_mime_type": "application/json"} 
                 )
                 data = json.loads(ai_res.text)
                 
