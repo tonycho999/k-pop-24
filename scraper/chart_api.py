@@ -53,9 +53,9 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 10개 항시 유지 로직 적용)
+    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 10개 항시 유지 로직 적용 + 아마존 수익화 연동)
     def _update_k_culture_magazine(self):
-        print("  🚀 Starting K-Culture Magazine Delta Update...")
+        print("  🚀 Starting K-Culture Magazine Delta Update with Amazon Monetization...")
         if not self.naver_id or not self.naver_secret:
             print("  ❌ Error: NAVER_CLIENT_ID or NAVER_CLIENT_SECRET is missing.")
             return
@@ -104,7 +104,7 @@ class ChartAPI:
 
                 snippets = [{"title": re.sub(r'<[^>]+>', '', i['title']), "desc": re.sub(r'<[^>]+>', '', i['description'])} for i in items]
 
-                # 2. 제미나이(Gemini)에게 스마트 델타 업데이트 지시
+                # 2. 제미나이(Gemini)에게 스마트 델타 업데이트 지시 (✅ 아마존 키워드 추출 추가)
                 prompt = f"""
                 You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 10 hottest trends.
                 
@@ -118,14 +118,21 @@ class ChartAPI:
                     "title": "Exact old title OR Catchy new English title",
                     "summary": "2-3 sentences in English explaining what the item is and why it's popular.",
                     "keyword": "A short exact Korean noun for image search (e.g., '두바이 초콜릿')",
+                    "amazon_keyword": "1-4 English words a foreigner would use to buy this or a similar style item on Amazon (e.g., 'Korean spicy ramen', 'Korean skincare', 'Korean style clothing')",
                     "score": <integer from 10 (1st) down to 1 (10th)>
                 }}
                 News snippets: {json.dumps(snippets, ensure_ascii=False)}
                 """
                 
-                ai_res = self.ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                text = ai_res.text.replace("```json", "").replace("```", "").strip()
-                trends = json.loads(text)
+                # ✅ JSON 응답 포맷 강제 설정 추가
+                ai_res = self.ai_client.models.generate_content(
+                    model='gemini-2.5-flash', 
+                    contents=prompt,
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                
+                # JSON 파싱 (문자열 정제 없이 바로 로드)
+                trends = json.loads(ai_res.text)
 
                 # 3. 데이터 비교 및 델타 업데이트 실행
                 for t in trends[:10]:
@@ -133,6 +140,10 @@ class ChartAPI:
                     new_summary = t.get('summary', '')
                     new_score = t.get('score', 0)
                     keyword = t.get('keyword', '') 
+                    
+                    # ✅ 추출된 아마존 키워드 가져오기 (없으면 기본값 설정)
+                    default_keyword = f"Korean {sub_cat.replace('k-', '')}"
+                    amazon_keyword = t.get('amazon_keyword', default_keyword).strip()
 
                     if title in old_dict:
                         # [유지 & 업데이트] 기존 차트에 있던 트렌드
@@ -141,13 +152,18 @@ class ChartAPI:
                         
                         # 내용이나 순위가 바뀌었을 때만 DB에 PATCH 요청
                         if old_item['summary'] != new_summary or old_item['score'] != new_score:
-                            patch_data = {"summary": new_summary, "score": new_score}
+                            # ✅ PATCH 데이터에 amazon_keyword 추가
+                            patch_data = {
+                                "summary": new_summary, 
+                                "score": new_score,
+                                "amazon_keyword": amazon_keyword
+                            }
                             patch_res = requests.patch(f"{supabase_url}/rest/v1/live_news?id=eq.{item_id}", headers=supa_headers, json=patch_data)
                             
                             if patch_res.status_code >= 400:
                                 print(f"      ❌ DB Update Error ({title}): {patch_res.text}")
                             else:
-                                print(f"      🔄 Updated (Content/Rank changed): {title}")
+                                print(f"      🔄 Updated: {title} (Amazon: {amazon_keyword})")
                         else:
                             print(f"      ➖ Kept (No change): {title}")
                             
@@ -170,6 +186,7 @@ class ChartAPI:
                                     except:
                                         continue 
 
+                        # ✅ POST 데이터에 amazon_keyword 추가
                         post_data = {
                             "category": sub_cat,
                             "keyword": keyword, 
@@ -178,14 +195,15 @@ class ChartAPI:
                             "link": "",
                             "image_url": img_url,
                             "score": new_score,
-                            "likes": 0
+                            "likes": 0,
+                            "amazon_keyword": amazon_keyword
                         }
                         post_res = requests.post(f"{supabase_url}/rest/v1/live_news", headers=supa_headers, json=post_data)
                         
                         if post_res.status_code >= 400:
                             print(f"      ❌ DB Insert Error ({title}): {post_res.text}")
                         else:
-                            print(f"      ✨ New Entry: {title}")
+                            print(f"      ✨ New Entry: {title} (Amazon: {amazon_keyword})")
 
                 # 4. 💡 10개 한도 룰 적용: 새로운 항목이 추가되어 10개가 넘었을 경우, 가장 오래된 것부터 삭제
                 try:
