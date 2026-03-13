@@ -168,7 +168,7 @@ export default function Header() {
           <div className="h-5 w-[1px] bg-slate-200 dark:bg-slate-700 mx-1 hidden sm:block" />
 
           {user ? (
-            <div className="relative">
+            <div className="relative hidden sm:block">
               <button onClick={() => setMenuOpen(!menuOpen)} className="flex items-center gap-2 px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-full shadow-sm">
                 <div className="w-8 h-8 rounded-full bg-slate-100 overflow-hidden">
                   {user.user_metadata?.avatar_url ? <img src={user.user_metadata.avatar_url} alt="profile" /> : <User size={18} />}
@@ -184,7 +184,7 @@ export default function Header() {
               )}
             </div>
           ) : (
-            <button onClick={handleLogin} className="px-6 py-2.5 text-sm font-black text-white bg-slate-900 dark:bg-cyan-600 rounded-full hover:shadow-lg transition-all">
+            <button onClick={handleLogin} className="hidden sm:block px-6 py-2.5 text-sm font-black text-white bg-slate-900 dark:bg-cyan-600 rounded-full hover:shadow-lg transition-all">
               Sign In
             </button>
           )}
