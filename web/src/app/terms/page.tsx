@@ -55,7 +55,7 @@ export default function TermsOfService() {
         <section>
           <h2 className="text-2xl font-bold mb-4 text-white">5. Copyright Policy (DMCA)</h2>
           <p>
-            We respect the intellectual property rights of others. If you believe that any content on our Site infringes upon your copyright, please notify us immediately at <span className="text-cyan-400">tonycho999@gmail.com</span>. 
+            We respect the intellectual property rights of others. If you believe that any content on our Site infringes upon your copyright, please notify us immediately at <span className="text-cyan-400">admin@k-enter24.com</span>. 
             Upon receiving a valid request, we will act promptly to remove the infringing material.
           </p>
         </section>
@@ -105,7 +105,7 @@ export default function TermsOfService() {
           <h2 className="text-xl font-bold mb-3 text-white">10. Contact Us</h2>
           <p className="mb-4 text-slate-400">If you have any questions about these Terms, please contact us at:</p>
           <div className="text-cyan-400 font-bold">
-            <p>Email: tonycho999@gmail.com</p>
+            <p>Email: admin@k-enter24.com</p>
           </div>
         </section>
       </div>
