@@ -223,7 +223,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
         />
       )}
       
-      <MobileFloatingBtn />
+      <MobileFloatingBtn news={news} category={category} />
       
       {showWelcome && !user && (
         <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
