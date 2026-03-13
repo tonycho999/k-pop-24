@@ -157,10 +157,8 @@ export default function Header() {
 
           {/* [삭제됨] 해/달 버튼 위치였던 곳 */}
 
-          <button 
-            onClick={(e) => { e.preventDefault(); handleAiTranslate(); }}
-            className="px-3 py-2 bg-cyan-50 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-400 rounded-full flex items-center gap-2 border border-cyan-100 dark:border-cyan-800 transition-all hover:scale-105 active:scale-95"
-          >
+          <button onClick={(e) => { e.preventDefault(); handleAiTranslate(); }}
+            className="hidden sm:flex px-3 py-2 bg-cyan-50 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-400 rounded-full items-center gap-2 border border-cyan-100 dark:border-cyan-800 transition-all hover:scale-105 active:scale-95" >
             <Languages size={20} />
             <span className="text-xs font-black uppercase">{langCode}</span>
           </button>
