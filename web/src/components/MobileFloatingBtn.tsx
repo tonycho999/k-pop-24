@@ -5,10 +5,15 @@ import { supabase } from '@/lib/supabase';
 import { Flame, X, Trophy, TrendingUp, ChevronRight, LogIn, LogOut, User as UserIcon } from 'lucide-react';
 import { User } from '@supabase/supabase-js';
 
-export default function MobileFloatingBtn() {
+// ✅ [추가] 부모(HomeClient)로부터 현재 카테고리와 뉴스 리스트를 전달받기 위한 타입 정의
+interface MobileFloatingBtnProps {
+  news: any[];
+  category: string;
+}
+
+export default function MobileFloatingBtn({ news, category }: MobileFloatingBtnProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [keywords, setKeywords] = useState<any[]>([]);
-  const [topNews, setTopNews] = useState<any[]>([]);
   const [user, setUser] = useState<User | null>(null);
 
   // 데이터 및 유저 정보 가져오기
@@ -26,13 +31,8 @@ export default function MobileFloatingBtn() {
         .limit(8);
       if (kwData) setKeywords(kwData);
 
-      // 3. 인기 뉴스 Top 5
-      const { data: newsData } = await supabase
-        .from('live_news')
-        .select('title, category, score, link')
-        .order('score', { ascending: false })
-        .limit(5);
-      if (newsData) setTopNews(newsData);
+      // ✅ [삭제] 기존에 따로 뉴스를 불러오던 로직을 삭제했습니다. 
+      // 이제 부모 컴포넌트에서 이미 필터링된 news 데이터를 활용합니다.
     };
 
     fetchData();
@@ -55,6 +55,9 @@ export default function MobileFloatingBtn() {
     await supabase.auth.signOut();
     setIsOpen(false);
   };
+
+  // ✅ [추가] 전달받은 현재 카테고리의 뉴스 중에서 상위 10개만 추출
+  const top10News = news.slice(0, 10);
 
   return (
     <>
@@ -97,7 +100,7 @@ export default function MobileFloatingBtn() {
         {/* 스크롤 가능한 콘텐츠 영역 */}
         <div className="overflow-y-auto px-6 pb-12 overflow-x-hidden">
             
-            {/* [New] 로그인/유저 섹션 (최상단 배치) */}
+            {/* 로그인/유저 섹션 (최상단 배치) */}
             <div className="mb-8 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
                 {user ? (
                     <div className="flex items-center justify-between">
@@ -157,37 +160,45 @@ export default function MobileFloatingBtn() {
 
             <div className="h-px bg-slate-100 mb-8" />
 
-            {/* 섹션 2: 지금 가장 핫한 뉴스 */}
+            {/* 섹션 2: 지금 가장 핫한 뉴스 (동적 카테고리 Top 10) */}
             <div className="pb-8">
                 <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
                     <Trophy className="w-5 h-5 text-amber-500" />
-                    Top Voted News
+                    Top 10 in {category} {/* ✅ 현재 카테고리 이름 표시 */}
                 </h3>
                 <div className="space-y-3">
-                    {topNews.map((news, idx) => (
-                    <a 
-                        key={idx} 
-                        href={news.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-4 group p-3 rounded-2xl bg-white border border-slate-100 shadow-sm active:bg-slate-50 transition-all"
-                    >
-                        <span className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-sm font-black
-                            ${idx === 0 ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}
-                        `}>
-                            {idx + 1}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                            <span className="text-[10px] font-bold text-cyan-600 uppercase tracking-wider mb-0.5 block">
-                                {news.category}
+                    {top10News.length > 0 ? (
+                        top10News.map((item, idx) => (
+                        <a 
+                            key={item.id || idx} 
+                            href={item.link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-4 group p-3 rounded-2xl bg-white border border-slate-100 shadow-sm active:bg-slate-50 transition-all"
+                        >
+                            <span className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-sm font-black
+                                ${idx === 0 ? 'bg-amber-100 text-amber-600' : 
+                                  idx === 1 ? 'bg-slate-200 text-slate-600' :
+                                  idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-50 text-slate-400'}
+                            `}>
+                                {idx + 1}
                             </span>
-                            <h4 className="text-sm font-bold text-slate-700 leading-snug truncate">
-                                {news.title}
-                            </h4>
+                            <div className="flex-1 min-w-0">
+                                <span className="text-[10px] font-bold text-cyan-600 uppercase tracking-wider mb-0.5 block">
+                                    {item.category}
+                                </span>
+                                <h4 className="text-sm font-bold text-slate-700 leading-snug truncate">
+                                    {item.title}
+                                </h4>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-slate-300" />
+                        </a>
+                        ))
+                    ) : (
+                        <div className="text-center py-6 text-slate-400 text-sm">
+                            No news available for {category}.
                         </div>
-                        <ChevronRight className="w-4 h-4 text-slate-300" />
-                    </a>
-                    ))}
+                    )}
                 </div>
             </div>
             
