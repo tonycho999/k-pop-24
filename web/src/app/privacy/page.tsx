@@ -83,7 +83,7 @@ export default function PrivacyPolicy() {
           <h2 className="text-xl font-bold mb-3 text-white">8. Contact Us</h2>
           <p className="mb-4 text-slate-400">If you have questions or comments about this Privacy Policy, please contact us at:</p>
           <div className="text-cyan-400 font-bold">
-            <p>Email: tonycho999@gmail.com</p>
+            <p>Email: admin@k-enter24.com</p>
           </div>
         </section>
       </div>
