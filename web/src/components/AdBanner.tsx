@@ -1,102 +1,57 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-
-// 배너 설정 데이터 (나중에 이곳만 수정하면 됩니다)
-// probability: 노출 확률 (가중치), 높을수록 자주 나옴
-// targetCountry: 특정 국가 코드 (예: 'KR', 'US'). 없으면('All') 전 세계 노출
-const BANNER_CONFIG = [
-  { 
-    id: 1, 
-    src: '/banner1.gif', 
-    link: 'https://example.com/ad1', 
-    probability: 50, // 50% 가중치
-    targetCountry: 'All' 
-  },
-  { 
-    id: 2, 
-    src: '/banner2.gif', 
-    link: 'https://example.com/ad2', 
-    probability: 30, // 30% 가중치
-    targetCountry: 'KR' // 한국에서만 보임
-  },
-  // 필요한 만큼 banner3, banner4... 추가 가능
-];
+import Image from 'next/image';
+import Link from 'next/link';
 
 export default function AdBanner() {
-  const [selectedBanner, setSelectedBanner] = useState<any>(null);
-  const [isVisible, setIsVisible] = useState(false);
+  // 💰 대표님의 실제 Involve Asia 수익 링크 적용 완료!
+  const AD_LINK = "https://invl.us/clncdlz"; 
+  
+  // 🖼️ byFood 캠페인에 어울리는 고화질 음식/여행 배너 이미지 (추후 교체 가능)
+  const AD_IMAGE_PC = "https://images.unsplash.com/photo-1580651315530-69c8e0026377?auto=format&fit=crop&q=80&w=1200&h=120"; 
+  const AD_IMAGE_MOBILE = "https://images.unsplash.com/photo-1580651315530-69c8e0026377?auto=format&fit=crop&q=80&w=600&h=150";
 
-  useEffect(() => {
-    const selectBanner = async () => {
-      // 1. 사용자 국가 확인 (무료 API 사용)
-      let userCountry = 'All';
-      try {
-        const res = await fetch('https://ipapi.co/json/');
-        const data = await res.json();
-        userCountry = data.country_code; // 'KR', 'US' 등
-      } catch (e) {
-        console.warn('Country detect failed, assuming global');
-      }
+  // 배너 활성화 (광고 보이게 설정)
+  const isPlaceholder = false; 
 
-      // 2. 노출 가능한 배너 필터링
-      const availableBanners = BANNER_CONFIG.filter(b => 
-        b.targetCountry === 'All' || b.targetCountry === userCountry
-      );
-
-      if (availableBanners.length === 0) {
-        setIsVisible(false);
-        return;
-      }
-
-      // 3. 확률에 따른 배너 추첨 (가중치 뽑기)
-      // 배너들을 probability만큼 배열에 복사해서 넣고 랜덤으로 하나 뽑음
-      // 예: A(50), B(10) -> [A,A,A,A,A, B] 중에서 랜덤
-      const weightedPool: any[] = [];
-      availableBanners.forEach(banner => {
-        for (let i = 0; i < banner.probability; i++) {
-          weightedPool.push(banner);
-        }
-      });
-
-      if (weightedPool.length > 0) {
-        const randomIndex = Math.floor(Math.random() * weightedPool.length);
-        setSelectedBanner(weightedPool[randomIndex]);
-        setIsVisible(true);
-      }
-    };
-
-    selectBanner();
-  }, []);
-
-  // 배너가 없거나 선택되지 않았으면 아예 렌더링하지 않음 (공간 차지 X)
-  if (!isVisible || !selectedBanner) return null;
+  if (isPlaceholder) {
+    return (
+      <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center p-4 border border-slate-200 dark:border-slate-700 min-h-[90px]">
+         <span className="text-slate-400 text-sm font-bold tracking-widest uppercase">Advertisement Space</span>
+      </div>
+    );
+  }
 
   return (
-    <div className="w-full mt-2 mb-4 animate-in fade-in zoom-in duration-500">
-      <a 
-        href={selectedBanner.link} 
-        target="_blank" 
-        rel="noopener noreferrer"
-        className="block w-full overflow-hidden rounded-2xl shadow-md border border-slate-100 dark:border-slate-800 relative group"
-      >
-        {/* 'AD' 마크 표시 */}
-        <div className="absolute top-0 right-0 bg-slate-200 dark:bg-slate-700 text-[10px] text-slate-500 px-1.5 py-0.5 rounded-bl-lg z-10">
+    <div className="w-full relative rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow group border border-slate-100 dark:border-slate-800">
+      <Link href={AD_LINK} target="_blank" rel="noopener noreferrer" className="block w-full">
+        {/* 우측 상단 AD 뱃지 (광고임을 명시) */}
+        <div className="absolute top-2 right-2 bg-black/30 backdrop-blur-md text-white text-[9px] px-1.5 py-0.5 rounded z-10 font-bold tracking-wider">
           AD
         </div>
         
-        {/* 실제 배너 이미지 */}
-        <img 
-          src={selectedBanner.src} 
-          alt="Advertisement" 
-          className="w-full h-auto object-cover max-h-[120px] sm:max-h-[160px] transition-transform group-hover:scale-[1.01]"
-          onError={(e) => {
-            // 이미지가 깨지거나 파일이 없으면 배너 숨김
-            e.currentTarget.style.display = 'none';
-            setIsVisible(false);
-          }}
-        />
-      </a>
+        {/* 💻 PC용 배너 (md 이상 화면에서 노출) */}
+        <div className="hidden md:block relative w-full h-[90px] lg:h-[120px]">
+          <Image 
+            src={AD_IMAGE_PC} 
+            alt="Sponsored Advertisement" 
+            fill 
+            className="object-cover group-hover:scale-[1.02] transition-transform duration-500" 
+            unoptimized 
+          />
+        </div>
+        
+        {/* 📱 모바일용 배너 (md 미만 화면에서 노출) */}
+        <div className="block md:hidden relative w-full h-[70px] sm:h-[90px]">
+          <Image 
+            src={AD_IMAGE_MOBILE} 
+            alt="Sponsored Advertisement" 
+            fill 
+            className="object-cover group-hover:scale-[1.02] transition-transform duration-500" 
+            unoptimized 
+          />
+        </div>
+      </Link>
     </div>
   );
 }
