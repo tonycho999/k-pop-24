@@ -114,6 +114,7 @@ class ChartAPI:
                 snippets = [{"title": re.sub(r'<[^>]+>', '', i['title']), "desc": re.sub(r'<[^>]+>', '', i['description'])} for i in items]
 
                 # 2. 제미나이(Gemini) 프롬프트 (아마존 키워드 추출 포함) - 💡 여유 있게 15개 요청
+                # 2. 제미나이(Gemini) 프롬프트 (아마존 키워드 및 AEO 최적화 포함)
                 prompt = f"""
                 You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 15 hottest trends.
                 
@@ -128,11 +129,17 @@ class ChartAPI:
                 If a current trend is about the EXACT SAME TOPIC as one of the previous titles, you MUST use the EXACT SAME string from the previous titles list. Do not rephrase it.
                 If it is a completely new trend, create a new Catchy English Title.
 
+                ✅ CRITICAL RULE FOR SUMMARY (AEO Optimization):
+                The 'summary' field MUST strictly follow this exact structure:
+                1. A brief 1-2 sentence English explanation.
+                2. Use bullet points (-) for the 2 most important facts.
+                3. End with a strict Q&A format starting with "Q: Why is this trending?\nA: [1-sentence answer]".
+
                 Return ONLY a valid JSON array of objects. Format:
                 [
                   {{
                       "title": "Exact old title OR Catchy new English title",
-                      "summary": "2-3 sentences in English explaining what the item is and why it's popular.",
+                      "summary": "Brief explanation...\n\n- Key Fact 1...\n- Key Fact 2...\n\nQ: Why is this trending?\nA: Because...",
                       "keyword": "A short exact Korean noun for image search (e.g., '두바이 초콜릿')",
                       "amazon_keyword": "1-4 English words to buy this on Amazon. IT MUST STRICTLY BELONG TO THE '{sub_cat}' CATEGORY (e.g., if k-food, MUST be an edible food item like 'Korean spicy ramen', NEVER clothing or makeup).",
                       "score": <integer from 15 (1st) down to 1 (15th)>
