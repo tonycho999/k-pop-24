@@ -260,7 +260,7 @@ class NaverNewsAPI:
                 "main_subject": "{name}",
                 "category": "{target_category}",
                 "title": "[{name}] ...",
-                "summary": "..."
+                "summary": "...\n\n- Key Point 1...\n- Key Point 2...\n\nQ: Why is this trending?\nA: ..."
             }}
             """
             
