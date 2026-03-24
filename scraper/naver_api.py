@@ -247,8 +247,10 @@ class NaverNewsAPI:
             Article Writing Rules:
             1. Title Format: MUST use the exact format: `[{name}] Catchy English Title`
             2. Summary: Synthesize the provided news snippets into a single, cohesive English news summary (3-10 lines). Focus strictly on the facts presented about '{name}'.
-            3. Data Preservation: Retain all numbers (dates, rankings, amounts) and proper nouns exactly as they appear.
-            4. Categorize the article based on content, not on individuals: "{target_category}."
+            3. ✅ Bullet Points: Use bullet points (-) for the 2-3 most important facts.
+            4. ✅ AEO Optimization: Add a final section strictly titled "Q: Why is this trending?" with a clear 1-sentence answer starting with "A: ".
+            5. Data Preservation: Retain all numbers (dates, rankings, amounts) and proper nouns exactly as they appear.
+            6. Categorize the article based on content, not on individuals: "{target_category}."
 
             Verified News Snippets to analyze:
             {content_pool}
