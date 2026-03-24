@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import Footer from '@/components/Footer';
 import Script from 'next/script'; // ✅ 구글 애널리틱스를 위한 Script 임포트 추가
+import SEO from '@/components/SEO'; // ✅ [추가 1] SEO 컴포넌트 임포트
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -46,6 +47,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      {/* ✅ [추가 2] AI 답변 엔진(AEO)을 위한 JSON-LD 구조화 데이터 삽입 */}
+      <head>
+        <SEO />
+      </head>
       <body className={inter.className}>
         {/* ✅ 구글 애널리틱스 스크립트 추가 시작 (새로운 ID 반영 완료) */}
         <Script
@@ -68,6 +73,6 @@ export default function RootLayout({
         </main>
         <Footer />
       </body>
-    </html >
+    </html>
   );
 }
