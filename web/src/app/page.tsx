@@ -1,22 +1,28 @@
 import { supabase } from '@/lib/supabase';
 import HomeClient from '@/components/HomeClient';
+import SEO from '@/components/SEO'; // ✅ 1. SEO 컴포넌트 임포트
 
-// 👇 60초마다 ISR (데이터 갱신)
 export const revalidate = 60;
 
 export default async function Page() {
-  // 1. 서버 사이드에서 뉴스 데이터 가져오기
-  // ✅ [수정] 초기 화면(All) 기준이므로 'rank'가 아니라 'score' 높은 순으로 변경
   const { data: news, error } = await supabase
     .from('live_news')
     .select('*')
-    .order('score', { ascending: false }) // 점수 높은 순 (트렌드순)
-    .limit(30); // 클라이언트 로직과 동일하게 30개만 가져오기
+    .order('score', { ascending: false })
+    .limit(30);
 
   if (error) {
     console.error('Failed to fetch news:', error);
   }
 
-  // 2. 가져온 데이터를 클라이언트 컴포넌트에 전달
-  return <HomeClient initialNews={news || []} />;
+  return (
+    <>
+      {/* ✅ 2. 메인 페이지 전용 SEO 데이터 명시 (AI 엔진에게 이 페이지가 홈임을 알림) */}
+      <SEO 
+        title="K-ENTER 24 | Real-time K-News Radar"
+        description="Stop waiting for translations. Get real-time AI-analyzed K-Pop & K-Drama news instantly."
+      />
+      <HomeClient initialNews={news || []} />
+    </>
+  );
 }
