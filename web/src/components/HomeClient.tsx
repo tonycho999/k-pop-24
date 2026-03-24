@@ -61,7 +61,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 2. 카테고리 변경 핸들러 (✅ K-Culture 데이터 Fetch 분기 처리 완료)
+  // 2. 카테고리 변경 핸들러
   const handleCategoryChange = useCallback(async (newCategory: string) => {
     setCategory(newCategory);
     setLoading(true);
@@ -70,16 +70,14 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
       let query = supabase.from('live_news').select('*');
 
       if (newCategory === 'All') {
-        // 전체보기
         query = query.order('score', { ascending: false }).limit(30);
       } else if (newCategory === 'K-Culture') {
-        // ✅ K-Culture는 4개 세부 라이프스타일 카테고리를 한 번에 가져옴 (40개)
+        // ✅ 4개 카테고리 기사를 최신순/인기순으로 넉넉히 가져옵니다 (PC에서 각 컬럼별로 10개씩 보여주기 위함)
         query = query
           .in('category', ['k-food', 'k-beauty', 'k-fashion', 'k-lifestyle'])
           .order('score', { ascending: false })
           .limit(40);
       } else {
-        // 기타 개별 카테고리
         const dbCategory = newCategory.toLowerCase();
         query = query
           .eq('category', dbCategory)
@@ -171,16 +169,15 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-6 w-full">
-          {/* ✅ K-Culture일 경우 사이드바 자리를 차지하며 전체 폭(md:col-span-4)으로 확장됩니다. */}
           <div className={`relative w-full ${category === 'K-Culture' ? 'col-span-1 md:col-span-4' : 'col-span-1 md:col-span-3'}`}>
+            
             <NewsFeed 
               news={displayedNews} 
               loading={loading || isTranslating} 
               onOpen={setSelectedArticle} 
-              category={category} // ✅ 카테고리 상태값 전달
+              category={category}
             />
             
-            {/* 로그인 안 했을 때 블러 처리 영역 */}
             {!user && !loading && news.length > 0 && (
               <div className="mt-4 sm:mt-6 relative w-full">
                  <div className="space-y-4 sm:space-y-6 opacity-40 blur-md select-none pointer-events-none grayscale">
@@ -206,7 +203,6 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
             )}
           </div>
           
-          {/* ✅ K-Culture가 아닐 때만 사이드바를 노출합니다. */}
           {category !== 'K-Culture' && (
             <div className="hidden md:block col-span-1">
               <Sidebar news={news} category={category} />
