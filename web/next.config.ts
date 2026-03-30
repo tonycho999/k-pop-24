@@ -1,12 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // ✅ [추가] 주소 끝에 슬래시(/)를 강제로 제거하여 주소를 하나로 통일합니다.
+  // 예: k-enter24.com/ -> k-enter24.com으로 자동 리다이렉트
+  trailingSlash: false, 
+
   images: {
-    // domains 대신 remotePatterns 사용 (보안 강화 및 경고 해결)
     remotePatterns: [
       {
         protocol: 'https',
-        hostname: '**', // 모든 외부 이미지 허용 (크롤링 특성상 필요)
+        hostname: '**', 
       },
     ],
   },
