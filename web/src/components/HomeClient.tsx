@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Lock, Zap } from 'lucide-react';
+import { Lock, Zap, X } from 'lucide-react'; // ✅ X 아이콘 추가
 import { User } from '@supabase/supabase-js';
 
 import Header from '@/components/Header';
@@ -40,6 +40,9 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
   const [user, setUser] = useState<User | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
+  
+  // ✅ [추가] 기사 클릭 시 띄울 로그인 요구 팝업 상태
+  const [showLoginModal, setShowLoginModal] = useState(false);
 
   // 1. 유저 인증 및 웰컴 모달 체크
   useEffect(() => {
@@ -72,7 +75,6 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
       if (newCategory === 'All') {
         query = query.order('score', { ascending: false }).limit(30);
       } else if (newCategory === 'K-Culture') {
-        // ✅ 4개 카테고리 기사를 최신순/인기순으로 넉넉히 가져옵니다 (PC에서 각 컬럼별로 10개씩 보여주기 위함)
         query = query
           .in('category', ['k-food', 'k-beauty', 'k-fashion', 'k-lifestyle'])
           .order('score', { ascending: false })
@@ -105,7 +107,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
   // 3. 투표 핸들러
   const handleVote = useCallback(async (id: string, type: 'likes' | 'dislikes') => {
     if (!user) {
-      alert("Please sign in to vote!");
+      setShowLoginModal(true); // ✅ 투표 시에도 로그인 안 했으면 팝업 노출
       return;
     }
 
@@ -126,14 +128,27 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
     await supabase.rpc('increment_vote', { row_id: id });
   }, [user]);
 
-  // 4. 모달 이벤트 리스너
+  // ✅ [핵심 추가] 기사를 클릭했을 때 로그인 여부를 가로채는 함수
+  const handleArticleClick = useCallback((item: LiveNewsItem) => {
+    if (!user) {
+      setShowLoginModal(true); // 로그인 안 했으면 로그인 팝업 오픈
+      return;
+    }
+    setSelectedArticle(item); // 로그인 했으면 정상적으로 기사 상세 오픈
+  }, [user]);
+
+  // 4. 모달 이벤트 리스너 (외부 검색 등에서 올 때도 방어)
   useEffect(() => {
     const handleSearchModalOpen = (e: CustomEvent<LiveNewsItem>) => {
+      if (!user) {
+        setShowLoginModal(true);
+        return;
+      }
       if (e.detail) setSelectedArticle(e.detail);
     };
     window.addEventListener('open-news-modal', handleSearchModalOpen as EventListener);
     return () => window.removeEventListener('open-news-modal', handleSearchModalOpen as EventListener);
-  }, []);
+  }, [user]);
 
   const closeWelcome = () => {
     if (dontShowAgain) localStorage.setItem(WELCOME_MODAL_KEY, 'true');
@@ -146,8 +161,6 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
   };
-
-  const displayedNews = user ? news : news.slice(0, 1);
 
   return (
     <main className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans overflow-x-hidden">
@@ -171,36 +184,16 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-6 w-full">
           <div className={`relative w-full ${category === 'K-Culture' ? 'col-span-1 md:col-span-4' : 'col-span-1 md:col-span-3'}`}>
             
+            {/* ✅ 뉴스 피드는 제한 없이 'news' 전체를 넘깁니다. */}
+            {/* ✅ onOpen 이벤트에 새로 만든 handleArticleClick 함수를 연결합니다. */}
             <NewsFeed 
-              news={displayedNews} 
+              news={news} 
               loading={loading || isTranslating} 
-              onOpen={setSelectedArticle} 
+              onOpen={handleArticleClick} 
               category={category}
             />
             
-            {!user && !loading && news.length > 0 && (
-              <div className="mt-4 sm:mt-6 relative w-full">
-                 <div className="space-y-4 sm:space-y-6 opacity-40 blur-md select-none pointer-events-none grayscale">
-                    <div className="h-32 sm:h-40 bg-white rounded-2xl sm:rounded-3xl border border-slate-200" />
-                    <div className="h-32 sm:h-40 bg-white rounded-2xl sm:rounded-3xl border border-slate-200" />
-                 </div>
-                 
-                 <div className="absolute inset-0 flex flex-col items-center justify-center px-4">
-                    <div className="bg-white/95 backdrop-blur-2xl p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-2xl border border-slate-100 text-center w-full max-w-[320px] mx-auto">
-                        <div className="w-12 h-12 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-3 shadow-lg shadow-cyan-200">
-                           <Lock className="text-white" size={20} />
-                        </div>
-                        <h3 className="text-lg font-black text-slate-900 mb-1 tracking-tight">Want to see more?</h3>
-                        <p className="text-xs text-slate-500 mb-5 leading-relaxed">
-                           Sign in to unlock <span className="font-bold text-cyan-600">Real-time K-Trends</span> & <span className="font-bold text-cyan-600">AI Analysis</span>.
-                        </p>
-                        <button onClick={handleLogin} className="w-full py-3 bg-slate-900 text-white text-sm font-bold rounded-xl active:scale-95 transition-transform shadow-xl">
-                          Sign in with Google
-                        </button>
-                    </div>
-                 </div>
-              </div>
-            )}
+            {/* 기존에 있던 로그인 블러 처리 영역은 완전히 삭제되었습니다. */}
           </div>
           
           {category !== 'K-Culture' && (
@@ -211,6 +204,7 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
         </div>
       </div>
 
+      {/* 로그인 된 유저만 볼 수 있는 실제 기사 내용 모달 */}
       {selectedArticle && (
         <ArticleModal 
           article={selectedArticle} 
@@ -221,8 +215,34 @@ export default function HomeClient({ initialNews }: HomeClientProps) {
       
       <MobileFloatingBtn news={news} category={category} />
       
-      {showWelcome && !user && (
-        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+      {/* ✅ [추가] 로그인 요구 팝업 (비로그인 상태에서 기사 클릭 시 등장) */}
+      {showLoginModal && !user && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white/95 backdrop-blur-2xl p-6 sm:p-8 rounded-[24px] sm:rounded-[32px] shadow-2xl border border-slate-100 text-center w-full max-w-[320px] relative animate-in zoom-in-95 duration-200">
+            {/* 닫기 버튼 */}
+            <button 
+              onClick={() => setShowLoginModal(false)}
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+            >
+              <X size={18} />
+            </button>
+            <div className="w-12 h-12 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-3 shadow-lg shadow-cyan-200">
+               <Lock className="text-white" size={20} />
+            </div>
+            <h3 className="text-lg font-black text-slate-900 mb-1 tracking-tight">Member Only Content</h3>
+            <p className="text-xs text-slate-500 mb-5 leading-relaxed">
+               Sign in to read the full <span className="font-bold text-cyan-600">AI Analysis</span> & <span className="font-bold text-cyan-600">Real-time K-Trends</span>.
+            </p>
+            <button onClick={handleLogin} className="w-full py-3 bg-slate-900 text-white text-sm font-bold rounded-xl active:scale-95 transition-transform shadow-xl">
+              Sign in with Google
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 기존 웰컴 팝업 */}
+      {showWelcome && !user && !showLoginModal && (
+        <div className="fixed inset-0 z-[998] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
            <div className="bg-white w-full max-w-md rounded-[32px] p-1 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
               <div className="bg-gradient-to-br from-cyan-500 via-blue-600 to-indigo-600 p-8 rounded-[28px] text-center relative overflow-hidden">
                  <div className="absolute top-0 left-0 w-full h-full opacity-20 bg-[url('https://grainy-gradients.vercel.app/noise.svg')]"></div>
