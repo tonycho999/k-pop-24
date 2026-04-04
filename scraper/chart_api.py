@@ -116,7 +116,7 @@ class ChartAPI:
                 # 2. 제미나이(Gemini) 프롬프트 (아마존 키워드 추출 포함) - 💡 여유 있게 15개 요청
                 # 2. 제미나이(Gemini) 프롬프트 (아마존 키워드 및 AEO 최적화 포함)
                 prompt = f"""
-                You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 15 hottest trends.
+                You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 20 hottest trends.
                 
                 CRITICAL RULE FOR FILTERING:
                 You MUST ONLY extract trends that perfectly match the '{sub_cat}' category. 
