@@ -35,7 +35,7 @@ class NaverNewsAPI:
         }
 
     def run_pipeline(self, target_category):
-        print(f"\n🚀 [AI Newsroom] Starting Ultra-Fast Snippet Pipeline (Base: {target_category})")
+        print(f"\n🚀 [AI Newsroom] Starting Ultra-Fast Snippet Pipeline (Base Scan: {target_category})")
         
         kst = pytz.timezone('Asia/Seoul')
         now_kst = datetime.now(kst)
@@ -123,7 +123,6 @@ class NaverNewsAPI:
             )
             top_20_data = json.loads(ai_res.text)
             for item in top_20_data:
-                # 💡 순수 노출 횟수를 기반으로 처리하기 위해 +10 제거. score는 정수로 보장.
                 item['score'] = int(item.get('score', 0))
                 print(f"  - {item['name']}: {item['score']}점 (노출 횟수)")
         except Exception as e:
@@ -144,7 +143,6 @@ class NaverNewsAPI:
 
             print(f"\n    🔎 Deep Dive: {name} (Score: {score})")
             
-            # 💡 [핵심] 요약본을 점수(노출 횟수)만큼 정확히 호출 (최소 1, 최대 100개 제한)
             fetch_count = max(1, min(score, 100))
             p_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(name)}&display={fetch_count}&sort=sim"
             
@@ -177,7 +175,6 @@ class NaverNewsAPI:
                 print(f"      ⏭️ Not enough relevant snippets specifically about '{name}'. Dropping.")
                 continue
 
-            # 관련 있는 요약본만 뭉침 (불필요한 과도한 텍스트 방지를 위해 최대 20개까지만 사용)
             final_combined_content = "\n\n".join(snippets_pool[:20])
             
             best_img_url = ""
@@ -226,9 +223,9 @@ class NaverNewsAPI:
             print(f"    - {res['name']} (Score: {res['score']})")
 
         # =========================================================
-        # Step 8. 🤖 AI 정밀 영문 요약
+        # Step 8. 🤖 AI 정밀 영문 요약 및 동적 카테고리 분류
         # =========================================================
-        print(f"\n  🤖 Step 8: AI Summary & Formatting for {len(final_results)} targets...")
+        print(f"\n  🤖 Step 8: AI Summary & Categorization for {len(final_results)} targets...")
         ai_summarized_results = []
 
         for item in final_results:
@@ -238,8 +235,9 @@ class NaverNewsAPI:
             best_img_url = item["image"]
             main_link = item["link"]
 
-            print(f"    📝 Generating AI summary for: {name}...")
+            print(f"    📝 Generating AI summary & Category for: {name}...")
 
+            # 💡 [프롬프트 수정] AI가 기사 내용을 보고 카테고리를 직접 선택하도록 명령 추가
             write_prompt = f"""
             You are a rigorous and objective K-entertainment news reporter.
             I have gathered multiple verified news snippets specifically about '{name}'.
@@ -250,7 +248,7 @@ class NaverNewsAPI:
             3. ✅ Bullet Points: Use bullet points (-) for the 2-3 most important facts.
             4. ✅ AEO Optimization: Add a final section strictly titled "Q: Why is this trending?" with a clear 1-sentence answer starting with "A: ".
             5. Data Preservation: Retain all numbers (dates, rankings, amounts) and proper nouns exactly as they appear.
-            6. Categorize the article based on content, not on individuals: "{target_category}."
+            6. ✅ Categorization: Analyze the actual content and assign the most accurate category. You MUST choose EXACTLY ONE from this list: ["k-pop", "k-movie", "k-drama", "k-entertain"]. Do not invent new categories.
 
             Verified News Snippets to analyze:
             {content_pool}
@@ -258,7 +256,7 @@ class NaverNewsAPI:
             Output valid JSON ONLY:
             {{
                 "main_subject": "{name}",
-                "category": "{target_category}",
+                "category": "<choose one from: k-pop, k-movie, k-drama, k-entertain>",
                 "title": "[{name}] ...",
                 "summary": "...\n\n- Key Point 1...\n- Key Point 2...\n\nQ: Why is this trending?\nA: ..."
             }}
@@ -275,16 +273,20 @@ class NaverNewsAPI:
                 actual_subject = data.get("main_subject", name).strip()
                 title = data.get("title", "").strip()
                 summary = data.get("summary", "").strip()
+                # 💡 [분류 적용] AI가 정한 카테고리를 가져오되, 이상한 값을 뱉으면 원래 스캔 타겟으로 폴백(Fallback)
+                ai_category = data.get("category", target_category).strip().lower()
+                valid_categories = ['k-pop', 'k-movie', 'k-drama', 'k-entertain']
+                if ai_category not in valid_categories:
+                    ai_category = target_category
 
                 if not title or not summary:
                     print(f"      ⏭️ [DISCARDED] AI failed to generate content.")
                     continue
                 
-                # 💡 [핵심] DB에 최종 저장하기 직전에 score에 +10점 추가
                 final_score = score + 10
 
                 ai_summarized_results.append({
-                    "category": target_category,
+                    "category": ai_category, # ✅ AI가 판단한 카테고리로 저장
                     "keyword": actual_subject,
                     "title": title,
                     "summary": summary,
@@ -293,42 +295,44 @@ class NaverNewsAPI:
                     "score": final_score, 
                     "likes": 0
                 })
-                print(f"      ✅ AI Generated: {title} (Final Score saved to DB: {final_score})")
+                print(f"      ✅ Generated: {title} (Categorized as: [{ai_category}])")
                 
             except Exception as e:
                 print(f"      ❌ AI Generation Error for {name}: {e}")
 
         # =========================================================
-        # Step 9. 💾 DB 저장 및 UI 최적화 ([카테고리+이름] 기준 덮어쓰기)
+        # Step 9. 💾 DB 저장 및 UI 최적화 (AI가 정한 카테고리 기준)
         # =========================================================
         if ai_summarized_results: 
-            print(f"  💾 Step 9: Saving to DB and Deduplicating based on [Name]...")
+            print(f"  💾 Step 9: Saving to DB and Deduplicating based on [Name] & [Category]...")
             try:
-                incoming_subjects = list(set([item['keyword'] for item in ai_summarized_results]))
-                
-                if incoming_subjects:
-                    print(f"    🗑️ Deleting existing articles in '{target_category}' for names: {incoming_subjects}")
-                    self.db.client.table("live_news").delete().eq("category", target_category).in_("keyword", incoming_subjects).execute()
+                # 💡 [로직 수정] 이제 결과물이 여러 카테고리로 흩어질 수 있으므로, 각 아이템별로 중복 제거 수행
+                for item in ai_summarized_results:
+                    self.db.client.table("live_news").delete().eq("category", item["category"]).eq("keyword", item["keyword"]).execute()
 
                 self.db.client.table("search_archive").insert(ai_summarized_results).execute()
                 self.db.client.table("live_news").insert(ai_summarized_results).execute()
                 print("    ✅ Insertion complete.")
 
-                count_res = self.db.client.table("live_news").select("id", count="exact").eq("category", target_category).execute()
-                total_count = count_res.count
+                # 💡 [용량 관리 수정] AI가 할당한 고유 카테고리들 각각에 대해 50개 초과분 정리 수행
+                unique_categories = set([item["category"] for item in ai_summarized_results])
+                
+                for cat in unique_categories:
+                    count_res = self.db.client.table("live_news").select("id", count="exact").eq("category", cat).execute()
+                    total_count = count_res.count
 
-                if total_count and total_count > 50:
-                    excess = total_count - 50
-                    print(f"    ⚠️ Capacity exceeded ({total_count}/50). Purging {excess} oldest items...")
-                    
-                    low_res = self.db.client.table("live_news").select("id").eq("category", target_category).order("created_at", desc=False).limit(excess).execute()
-                    
-                    if low_res.data:
-                        drop_ids = [item['id'] for item in low_res.data]
-                        self.db.client.table("live_news").delete().in_("id", drop_ids).execute()
-                        print(f"    🧹 Purged {len(drop_ids)} old articles successfully.")
+                    if total_count and total_count > 50:
+                        excess = total_count - 50
+                        print(f"    ⚠️ Capacity exceeded for [{cat}] ({total_count}/50). Purging {excess} oldest items...")
+                        
+                        low_res = self.db.client.table("live_news").select("id").eq("category", cat).order("created_at", desc=False).limit(excess).execute()
+                        
+                        if low_res.data:
+                            drop_ids = [item['id'] for item in low_res.data]
+                            self.db.client.table("live_news").delete().in_("id", drop_ids).execute()
+                            print(f"    🧹 Purged {len(drop_ids)} old articles in [{cat}] successfully.")
 
             except Exception as e:
                 print(f"    ❌ DB Save Error: {e}")
 
-        print(f"🎉 [AI Newsroom] Ultimate Pipeline (Base: {target_category}) successfully completed!")
+        print(f"🎉 [AI Newsroom] Ultimate Pipeline successfully completed!")
