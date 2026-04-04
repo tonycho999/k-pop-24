@@ -117,7 +117,7 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
         <div className="hidden md:grid grid-cols-4 gap-6 w-full">
           {cultureCategories.map(cat => {
             // 카테고리별로 상위 5개 기사만 필터링해서 보여줍니다.
-            const catNews = news.filter(n => n.category === cat).slice(0, 5);
+            const catNews = news.filter(n => n.category === cat).slice(0, 10);
             return (
               <div key={cat} className="flex flex-col gap-4">
                 {/* 각 컬럼의 헤더 (K-FOOD, K-BEAUTY 등) */}
