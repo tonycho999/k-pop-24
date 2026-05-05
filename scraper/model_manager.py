@@ -4,7 +4,7 @@ class ModelManager:
     def __init__(self):
         # GitHub Actions에 등록된 GROQ_API_KEY1 ~ GROQ_API_KEY20 등을 모두 찾아 리스트에 담습니다.
         self.groq_keys = []
-        for i in range(1, 20):  
+        for i in range(1, 8):  
             key = os.environ.get(f"GROQ_API_KEY{i}")
             if key:
                 self.groq_keys.append(key)
