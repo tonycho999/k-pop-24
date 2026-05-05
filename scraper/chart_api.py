@@ -7,9 +7,8 @@ import urllib3
 import re
 import time
 from urllib.parse import quote
-from google import genai
 
-# ✅ ModelManager 같은 폴더에서 임포트 (경로 에러 방지)
+# ✅ 똑똑해진 ModelManager 임포트
 from model_manager import ModelManager 
 
 # SSL 프록시 접속 경고창 영구 숨김 처리
@@ -23,11 +22,8 @@ class ChartAPI:
         self.naver_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        self.gemini_key = os.environ.get("GEMINI_API_KEY")
-        if self.gemini_key:
-            self.ai_client = genai.Client(api_key=self.gemini_key)
-            # ✅ ModelManager 초기화 (제미나이 공급자로 설정)
-            self.model_manager = ModelManager(client=self.ai_client, provider="gemini")
+        # ✅ [수정 완료] 복잡한 제미나이 클라이언트 초기화 삭제. ModelManager만 부르면 끝!
+        self.model_manager = ModelManager()
 
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
@@ -82,10 +78,6 @@ class ChartAPI:
             "X-Naver-Client-Secret": self.naver_secret
         }
 
-        # ✅ 파이프라인 실행 시 동적으로 가장 좋은 모델 1개 선택
-        best_model = self.model_manager.get_best_model() if hasattr(self, 'model_manager') else 'gemini-2.5-flash'
-        print(f"  🤖 Loaded Dynamic AI Model: {best_model}")
-
         categories = {
             'k-food': '먹거리 유행',
             'k-beauty': '뷰티 트렌드',
@@ -113,8 +105,7 @@ class ChartAPI:
 
                 snippets = [{"title": re.sub(r'<[^>]+>', '', i['title']), "desc": re.sub(r'<[^>]+>', '', i['description'])} for i in items]
 
-                # 2. 제미나이(Gemini) 프롬프트 (아마존 키워드 추출 포함) - 💡 여유 있게 15개 요청
-                # 2. 제미나이(Gemini) 프롬프트 (아마존 키워드 및 AEO 최적화 포함)
+                # 2. 프롬프트 (아마존 키워드 추출 포함)
                 prompt = f"""
                 You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 20 hottest trends.
                 
@@ -149,22 +140,19 @@ class ChartAPI:
                 News snippets: {json.dumps(snippets, ensure_ascii=False)}
                 """
                 
-                # ✅ 신형 API 문법(`config=`) 및 동적 모델(`best_model`) 적용 완료!
-                ai_res = self.ai_client.models.generate_content(
-                    model=best_model, 
-                    contents=prompt,
-                    config={"response_mime_type": "application/json"}
-                )
+                # ✅ [수정 완료] ModelManager로 텍스트 생성 요청
+                ai_res_text = self.model_manager.generate_json(prompt=prompt)
+                
+                if not ai_res_text:
+                    print("      ⏭️ [DISCARDED] AI API failed to return JSON.")
+                    continue
                 
                 # JSON 파싱
-                trends = json.loads(ai_res.text)
+                trends = json.loads(ai_res_text)
 
                 # 💡 [안전장치 추가] 딕셔너리로 응답이 왔다면 안쪽에 있는 리스트를 강제로 꺼냄
                 if isinstance(trends, dict):
-                    # 보통 딕셔너리 안에 밸류값으로 리스트가 들어있으므로 그것을 추출
                     trends = next(iter(trends.values())) if trends else []
-                    
-                    # 혹시나 리스트가 아니라 단일 객체 하나만 덜렁 왔다면 리스트로 감싸줌
                     if isinstance(trends, dict):
                         trends = [trends]
 
@@ -207,13 +195,13 @@ class ChartAPI:
                         except Exception as e:
                             print(f"      ⚠️ Image Search API Error for '{keyword}': {e}")
 
-                    # 💡 유효한 이미지를 찾지 못했다면 포기하고 다음 트렌드로 넘어갑니다. (개수 카운트 안 함)
-                    if not img_url and title not in old_dict: # 기존 DB에 있는 건 이미지 재활용 가능성을 위해 일단 패스 (기존 로직 유지)
+                    # 💡 유효한 이미지를 찾지 못했다면 포기하고 다음 트렌드로 넘어갑니다.
+                    if not img_url and title not in old_dict:
                          print(f"      ⏭️ No valid image found for '{keyword}'. Dropping trend: {title}")
                          continue
 
                     # 여기서부터는 이미지가 확인되었거나, 기존 DB에 있던 기사입니다.
-                    processed_count += 1 # 성공 카운트 증가
+                    processed_count += 1 
 
                     if title in old_dict:
                         # [유지 & 업데이트]
@@ -236,7 +224,7 @@ class ChartAPI:
                             print(f"      ➖ Kept (No change): {title}")
                             
                     else:
-                        # [신규 진입] - 위에서 img_url을 이미 확보했습니다.
+                        # [신규 진입]
                         post_data = {
                             "category": sub_cat,
                             "keyword": keyword, 
@@ -286,14 +274,8 @@ class ChartAPI:
 
     # 🤖 AI 영문 일괄 번역기 (K-Pop, K-Movie 등 기존 차트용)
     def _translate_chart_titles(self, chart_data, category):
-        if not hasattr(self, 'ai_client') or not self.ai_client:
-            return chart_data
-
         items_to_translate = [{"title": item['title'], "info": item['info']} for item in chart_data]
         
-        # ✅ 번역 파이프라인에도 동적 모델 적용
-        best_model = self.model_manager.get_best_model() if hasattr(self, 'model_manager') else 'gemini-2.5-flash'
-
         prompt = f"""
         You are an expert K-Culture data cleaner and translator. 
         Current Category: {category}
@@ -315,13 +297,12 @@ class ChartAPI:
         {json.dumps(items_to_translate, ensure_ascii=False)}
         """
         try:
-            # ✅ 신형 문법 적용
-            ai_res = self.ai_client.models.generate_content(
-                model=best_model, 
-                contents=prompt,
-                config={"response_mime_type": "application/json"}
-            )
-            translated_items = json.loads(ai_res.text)
+            # ✅ [수정 완료] 번역도 ModelManager를 통해 생성
+            ai_res_text = self.model_manager.generate_json(prompt=prompt)
+            if not ai_res_text:
+                return chart_data
+                
+            translated_items = json.loads(ai_res_text)
             
             for i, item in enumerate(chart_data):
                 if i < len(translated_items):
