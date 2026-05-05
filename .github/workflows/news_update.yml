@@ -20,7 +20,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install supabase requests beautifulsoup4 google-genai pytz playwright
+          # ✅ [수정] groq 라이브러리를 설치 목록에 추가했습니다.
+          pip install supabase requests beautifulsoup4 google-genai pytz playwright groq
           playwright install chromium
 
       - name: Run News Scraper
@@ -35,6 +36,15 @@ jobs:
           # 💡 [핵심 추가] 네이버 뉴스 API 키 주입
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          # ✅ [핵심 추가] GitHub Secrets에 등록해둔 Groq API 키 8개를 파이썬으로 넘겨줍니다.
+          GROQ_API_KEY1: ${{ secrets.GROQ_API_KEY1 }}
+          GROQ_API_KEY2: ${{ secrets.GROQ_API_KEY2 }}
+          GROQ_API_KEY3: ${{ secrets.GROQ_API_KEY3 }}
+          GROQ_API_KEY4: ${{ secrets.GROQ_API_KEY4 }}
+          GROQ_API_KEY5: ${{ secrets.GROQ_API_KEY5 }}
+          GROQ_API_KEY6: ${{ secrets.GROQ_API_KEY6 }}
+          GROQ_API_KEY7: ${{ secrets.GROQ_API_KEY7 }}
+          GROQ_API_KEY8: ${{ secrets.GROQ_API_KEY8 }}
         run: |
           cd scraper
           python -u main.py news
