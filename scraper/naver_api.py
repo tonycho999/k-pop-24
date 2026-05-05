@@ -7,10 +7,9 @@ from datetime import datetime, timedelta
 import pytz
 import urllib3
 from urllib.parse import quote
-from google import genai
 from email.utils import parsedate_to_datetime
 
-# ✅ ModelManager 임포트
+# ✅ 똑똑해진 ModelManager 임포트
 from model_manager import ModelManager
 
 # SSL 프록시 접속 경고창 영구 숨김 처리
@@ -20,14 +19,13 @@ class NaverNewsAPI:
     def __init__(self, db_client):
         self.db = db_client
         
-        # API 키 세팅
+        # 네이버 API 키 세팅
         self.naver_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_secret = os.environ.get("NAVER_CLIENT_SECRET")
-        self.gemini_key = os.environ.get("GEMINI_API_KEY")
         
-        if self.gemini_key:
-            self.ai_client = genai.Client(api_key=self.gemini_key)
-            self.model_manager = ModelManager(client=self.ai_client, provider="gemini")
+        # ✅ [수정 완료] 이제 여기서 Gemini 키를 직접 찾을 필요가 없습니다! 
+        # ModelManager가 알아서 Groq 키 리스트와 Gemini 키를 싹 다 관리합니다.
+        self.model_manager = ModelManager()
 
         self.naver_headers = {
             "X-Naver-Client-Id": self.naver_id,
@@ -45,9 +43,6 @@ class NaverNewsAPI:
         if not self.naver_id or not self.naver_secret:
             print("  ❌ Error: NAVER API keys missing.")
             return
-
-        self.best_model = self.model_manager.get_best_model() if hasattr(self, 'model_manager') else 'gemini-2.5-flash'
-        print(f"  🤖 Loaded Dynamic AI Model: {self.best_model}")
 
         # =========================================================
         # Step 1. 🕒 현재 시간 출력 및 🧹 DB 청소
@@ -116,12 +111,14 @@ class NaverNewsAPI:
         """
         
         try:
-            ai_res = self.ai_client.models.generate_content(
-                model=self.best_model, 
-                contents=prompt_frequency,
-                config={"response_mime_type": "application/json"} 
-            )
-            top_20_data = json.loads(ai_res.text)
+            # ✅ [수정 완료] 똑똑해진 ModelManager에게 JSON 뽑아달라고 요청만 하면 끝!
+            ai_res_text = self.model_manager.generate_json(prompt=prompt_frequency)
+            
+            if not ai_res_text:
+                print("    ❌ AI API returned None.")
+                return
+                
+            top_20_data = json.loads(ai_res_text)
             for item in top_20_data:
                 item['score'] = int(item.get('score', 0))
                 print(f"  - {item['name']}: {item['score']}점 (노출 횟수)")
@@ -237,7 +234,6 @@ class NaverNewsAPI:
 
             print(f"    📝 Generating AI summary & Category for: {name}...")
 
-            # 💡 [프롬프트 수정] AI가 기사 내용을 보고 카테고리를 직접 선택하도록 명령 추가
             write_prompt = f"""
             You are a rigorous and objective K-entertainment news reporter.
             I have gathered multiple verified news snippets specifically about '{name}'.
@@ -263,18 +259,20 @@ class NaverNewsAPI:
             """
             
             try:
-                ai_res = self.ai_client.models.generate_content(
-                    model=self.best_model, 
-                    contents=write_prompt,
-                    config={"response_mime_type": "application/json"} 
-                )
-                data = json.loads(ai_res.text)
+                # ✅ [수정 완료] 복잡한 세팅 지우고 ModelManager 호출!
+                ai_res_text = self.model_manager.generate_json(prompt=write_prompt)
+                
+                if not ai_res_text:
+                    print(f"      ⏭️ [DISCARDED] AI API failed to return JSON.")
+                    continue
+                    
+                data = json.loads(ai_res_text)
                 
                 actual_subject = data.get("main_subject", name).strip()
                 title = data.get("title", "").strip()
                 summary = data.get("summary", "").strip()
-                # 💡 [분류 적용] AI가 정한 카테고리를 가져오되, 이상한 값을 뱉으면 원래 스캔 타겟으로 폴백(Fallback)
                 ai_category = data.get("category", target_category).strip().lower()
+                
                 valid_categories = ['k-pop', 'k-movie', 'k-drama', 'k-entertain']
                 if ai_category not in valid_categories:
                     ai_category = target_category
@@ -286,7 +284,7 @@ class NaverNewsAPI:
                 final_score = score + 10
 
                 ai_summarized_results.append({
-                    "category": ai_category, # ✅ AI가 판단한 카테고리로 저장
+                    "category": ai_category,
                     "keyword": actual_subject,
                     "title": title,
                     "summary": summary,
@@ -306,7 +304,6 @@ class NaverNewsAPI:
         if ai_summarized_results: 
             print(f"  💾 Step 9: Saving to DB and Deduplicating based on [Name] & [Category]...")
             try:
-                # 💡 [로직 수정] 이제 결과물이 여러 카테고리로 흩어질 수 있으므로, 각 아이템별로 중복 제거 수행
                 for item in ai_summarized_results:
                     self.db.client.table("live_news").delete().eq("category", item["category"]).eq("keyword", item["keyword"]).execute()
 
@@ -314,7 +311,6 @@ class NaverNewsAPI:
                 self.db.client.table("live_news").insert(ai_summarized_results).execute()
                 print("    ✅ Insertion complete.")
 
-                # 💡 [용량 관리 수정] AI가 할당한 고유 카테고리들 각각에 대해 50개 초과분 정리 수행
                 unique_categories = set([item["category"] for item in ai_summarized_results])
                 
                 for cat in unique_categories:
