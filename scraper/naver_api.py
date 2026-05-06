@@ -111,20 +111,28 @@ class NaverNewsAPI:
         """
         
         try:
-            # ✅ [수정 완료] 똑똑해진 ModelManager에게 JSON 뽑아달라고 요청만 하면 끝!
             ai_res_text = self.model_manager.generate_json(prompt=prompt_frequency)
             
             if not ai_res_text:
                 print("    ❌ AI API returned None.")
                 return
                 
-            top_20_data = json.loads(ai_res_text)
+            # JSON 파싱 (strict=False를 넣어 특수문자 에러도 함께 방지합니다)
+            top_20_data = json.loads(ai_res_text, strict=False)
+
+            # 💡 [핵심 안전장치] AI가 딕셔너리 {"data": [...]} 형태로 응답한 경우, 껍데기를 벗기고 안쪽 리스트를 강제로 꺼냅니다.
+            if isinstance(top_20_data, dict):
+                top_20_data = next(iter(top_20_data.values())) if top_20_data else []
+                if isinstance(top_20_data, dict): # 혹시나 또 딕셔너리면 리스트로 한 번 감싸줌
+                    top_20_data = [top_20_data]
+
             for item in top_20_data:
-                item['score'] = int(item.get('score', 0))
-                print(f"  - {item['name']}: {item['score']}점 (노출 횟수)")
+                # 💡 안전하게 딕셔너리인지 확인 후 처리
+                if isinstance(item, dict):
+                    item['score'] = int(item.get('score', 0))
+                    print(f"  - {item.get('name', 'Unknown')}: {item['score']}점 (노출 횟수)")
+                    
         except Exception as e:
-            print(f"    ❌ Frequency Analysis Error: {e}")
-            return
 
         # =========================================================
         # Step 5 & 6. 🔍 고속 요약본 풀링 & 100% 팩트 필터링 & 🚫 이미지 중복 방지
