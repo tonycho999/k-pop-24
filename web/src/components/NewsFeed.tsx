@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { LiveNewsItem } from '@/types';
 import { Clock, ThumbsUp, ArrowRight } from 'lucide-react';
 import Image from 'next/image';
+import Link from 'next/link'; // ✅ [추가] 구글 SEO를 위한 Link 컴포넌트 임포트
 
 interface NewsFeedProps {
   news: LiveNewsItem[];
@@ -41,11 +42,15 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
 
     // 내부 카드 렌더링 컴포넌트 (중복 코드 방지)
     const renderCard = (item: LiveNewsItem, index: number, isHero: boolean) => (
-      <div
+      <Link // ✅ [수정] div를 Link로 변경
+        href={`/article/${item.id}`} // 구글 봇이 긁어갈 실제 주소
         key={item.id}
-        onClick={() => onOpen(item)}
+        onClick={(e) => {
+          e.preventDefault(); // 사용자가 클릭 시 페이지 이동을 막음
+          onOpen(item);       // 대신 기존처럼 모달 창을 띄움
+        }}
         className={`
-          group relative overflow-hidden rounded-[24px] bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer
+          group relative overflow-hidden rounded-[24px] bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer block
           ${isHero ? 'h-[280px] flex flex-col md:col-span-2' : 'h-[100px] flex gap-4 items-center pr-3 col-span-1'}
         `}
       >
@@ -81,7 +86,7 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
             {item.title}
           </h3>
         </div>
-      </div>
+      </Link>
     );
 
     return (
@@ -113,20 +118,17 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
           </div>
         </div>
 
-        {/* 💻 2. PC 뷰 (md 사이즈 미만에서는 숨김) - 4개 카테고리 동시 노출 */}
+        {/* 💻 2. PC 뷰 (md 사이즈 미만에서는 숨김) - 4개 카테고 동시 노출 */}
         <div className="hidden md:grid grid-cols-4 gap-6 w-full">
           {cultureCategories.map(cat => {
-            // 카테고리별로 상위 5개 기사만 필터링해서 보여줍니다.
             const catNews = news.filter(n => n.category === cat).slice(0, 10);
             return (
               <div key={cat} className="flex flex-col gap-4">
-                {/* 각 컬럼의 헤더 (K-FOOD, K-BEAUTY 등) */}
                 <div className="border-b-2 border-slate-800 pb-2 mb-2">
                   <h2 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-wider">
                     {cat.replace('-', ' ')}
                   </h2>
                 </div>
-                {/* 해당 카테고리의 기사 리스트 (PC에서는 모두 작은 카드로 통일) */}
                 {catNews.length === 0 ? (
                   <p className="text-sm text-slate-400">No news yet.</p>
                 ) : (
@@ -149,15 +151,18 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
         const isMedium = displayRank > 2 && displayRank <= 5;
 
         return (
-          <div 
+          <Link // ✅ [수정] div를 Link로 변경
+            href={`/article/${item.id}`} // 구글 봇이 긁어갈 실제 주소
             key={item.id}
-            onClick={() => onOpen(item)}
+            onClick={(e) => {
+              e.preventDefault(); // 사용자가 클릭 시 페이지 이동을 막음
+              onOpen(item);       // 대신 기존처럼 모달 창을 띄움
+            }}
             className={`
-              group relative overflow-hidden rounded-[32px] bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer
+              group relative overflow-hidden rounded-[32px] bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer block
               ${isHero ? 'md:col-span-3 h-[420px]' : isMedium ? 'md:col-span-2 h-[340px]' : 'md:col-span-6 h-[140px] flex gap-6 items-center pr-6'}
             `}
           >
-            {/* ... 기존 이미지 및 텍스트 렌더링 로직 동일 ... */}
             <div className={`
               relative overflow-hidden bg-slate-100 dark:bg-slate-800
               ${isHero ? 'h-3/5 w-full' : isMedium ? 'h-1/2 w-full' : 'h-full w-1/3 min-w-[140px]'}
@@ -223,7 +228,7 @@ export default function NewsFeed({ news, loading, onOpen, category }: NewsFeedPr
                  </div>
               </div>
             </div>
-          </div>
+          </Link>
         );
       })}
     </div>
