@@ -47,13 +47,23 @@ class NaverNewsAPI:
         # =========================================================
         # Step 1. 🕒 현재 시간 출력 및 🧹 DB 청소
         # =========================================================
-        print("  🧹 Step 1: Cleaning up old archive data (7 days)...")
+        # 🧹 Step 1: Cleaning up old archive data (7 days)
+        print(f"  🧹 Step 1: Cleaning up old archive data (7 days)...")
         try:
-            seven_days_ago = (now_kst - timedelta(days=7)).isoformat()
-            self.db.client.table("search_archive").delete().lt("created_at", seven_days_ago).execute()
-            print("    ✅ 7일 지난 아카이브 데이터 정리 완료.")
+            # 💡 [핵심] K-Culture는 ChartAPI가 관리하므로 제외하고, 속보성 뉴스 4개만 7일 룰을 적용합니다.
+            target_categories = ['k-pop', 'k-movie', 'k-drama', 'k-entertain']
+            
+            seven_days_ago = (datetime.now(self.kst) - timedelta(days=7)).isoformat()
+            
+            del_url = f"{self.supabase_url}/rest/v1/live_news?category=in.({','.join(target_categories)})&created_at=lt.{seven_days_ago}"
+            del_res = requests.delete(del_url, headers=self.supa_headers)
+            
+            if del_res.status_code >= 400:
+                print(f"    ❌ DB Delete Error: {del_res.text}")
+            else:
+                print("    ✅ 7일 지난 속보성 아카이브 데이터 정리 완료 (K-Culture 제외).")
         except Exception as e:
-            print(f"    ⚠️ DB Cleanup Error: {e}")
+            print(f"    ⚠️ Cleanup Error: {e}")
 
         # =========================================================
         # Step 2. 📡 다중 키워드 광역 스캔
@@ -99,7 +109,7 @@ class NaverNewsAPI:
         2. A content title (Movie, K-Drama, TV Variety Show, Song title).
 
         CRITICAL RULES:
-        1. Base Score: 1 mention in a title = 1 score. 
+        1. Base Score: Score MUST be calculated as (total number of mentions in titles) + 10. For example, if a subject is mentioned 5 times, the score is 15.
         2. Merge Aliases: If a subject is mentioned by different names (e.g., "BTS" and "방탄소년단"), merge their scores under the most common KOREAN official name.
         3. Do NOT extract generic words like "컴백", "방송", "결혼". Extract ONLY proper nouns (Specific people or specific titles).
         
