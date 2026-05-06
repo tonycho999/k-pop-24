@@ -106,7 +106,8 @@ class ModelManager:
                         response = client.chat.completions.create(
                             model=model_name,
                             messages=[{"role": "user", "content": prompt}],
-                            response_format={"type": "json_object"}
+                            response_format={"type": "json_object"},
+                            max_tokens=4000
                         )
                         print(f"✅ [ModelManager] Success with Groq Key {i + 1}!")
                         return response.choices[0].message.content
