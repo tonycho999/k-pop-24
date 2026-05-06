@@ -1,21 +1,29 @@
 import { MetadataRoute } from 'next';
-// import { supabase } from '@/lib/supabase'; // 나중에 개별 기사 페이지 생기면 사용
+import { supabase } from '@/lib/supabase';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = 'https://k-enter24.com';
 
+  // DB에서 모든 기사의 ID와 생성일을 가져옵니다.
+  const { data: news } = await supabase
+    .from('live_news')
+    .select('id, created_at')
+    .order('created_at', { ascending: false });
+
+  const newsUrls = (news || []).map((item) => ({
+    url: `${baseUrl}/article/${item.id}`,
+    lastModified: new Date(item.created_at),
+    changeFrequency: 'daily' as const,
+    priority: 0.8,
+  }));
+
   return [
     {
-      url: `${baseUrl}`, // 메인 페이지
+      url: baseUrl, // 메인 홈
       lastModified: new Date(),
-      changeFrequency: 'always', // 💡 핵심: 'daily' -> 'always'로 변경 (실시간 강조)
-      priority: 1.0,             // 💡 구글에게 이 페이지가 1순위라고 알림
+      changeFrequency: 'hourly',
+      priority: 1.0,
     },
-    {
-      url: `${baseUrl}/auth/login`, // 로그인 페이지
-      lastModified: new Date(),
-      changeFrequency: 'monthly',   // 로그인은 자주 변하지 않음
-      priority: 0.5,                // 우선순위 낮춤
-    }
+    ...newsUrls, // DB에 있는 수백 개의 기사 주소가 여기에 쫙 펼쳐집니다!
   ];
 }
