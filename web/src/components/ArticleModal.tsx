@@ -47,34 +47,20 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
 
   const handleShare = async () => {
     const title = article.title;
-    // ✅ 브라우저의 현재 주소창 URL(대표님 사이트 주소)을 가져오도록 수정했습니다.
-    const url = typeof window !== 'undefined' ? window.location.href : 'https://k-enter24.com'; 
+    
+    // ✅ [수정] 메인 주소가 아닌, '이 기사의 전용 고유 주소'를 공유하도록 변경합니다.
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://k-enter24.com';
+    const articleUrl = `${baseUrl}/article/${article.id}`; 
     
     try {
       if (navigator.share) {
         await navigator.share({
           title: title,
           text: `Check out this K-Trend: ${title}`,
-          url: url,
+          url: articleUrl, // ✅ 개별 기사 주소가 카톡/인스타 등으로 넘어갑니다.
         });
       } else {
-        await navigator.clipboard.writeText(url);
-        alert('Link copied to clipboard!');
-      }
-    } catch (err) {
-      console.error('Error sharing:', err);
-    }
-  };
-    
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: title,
-          text: `Check out this news: ${title}`,
-          url: url,
-        });
-      } else {
-        await navigator.clipboard.writeText(url);
+        await navigator.clipboard.writeText(articleUrl); // ✅ 클립보드에도 개별 주소가 복사됩니다.
         alert('Link copied to clipboard!');
       }
     } catch (err) {
