@@ -22,7 +22,7 @@ class ChartAPI:
         self.naver_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        # ✅ [수정 완료] 복잡한 제미나이 클라이언트 초기화 삭제. ModelManager만 부르면 끝!
+        # ✅ 복잡한 제미나이 클라이언트 초기화 삭제. ModelManager만 부르면 끝!
         self.model_manager = ModelManager()
 
         self.headers = {
@@ -54,7 +54,7 @@ class ChartAPI:
         else:
             print(f"  ⚠️ No chart data retrieved for {category}.")
 
-    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 10개 항시 유지 & 아마존 키워 추출)
+    # 🚀 AI K-Culture 매거진 에디터 파이프라인 (델타 업데이트 & 15개 항시 유지)
     def _update_k_culture_magazine(self):
         print("  🚀 Starting K-Culture Magazine Delta Update with Amazon Monetization...")
         if not self.naver_id or not self.naver_secret:
@@ -88,7 +88,7 @@ class ChartAPI:
         for sub_cat, query in categories.items():
             print(f"\n  [{sub_cat}] Fetching news & analyzing trends...")
             try:
-                # 0. 기존 DB에서 현재 Top 10 데이터 가져오기 (비교용)
+                # 0. 기존 DB에서 현재 데이터 가져오기 (비교용)
                 get_url = f"{supabase_url}/rest/v1/live_news?category=eq.{sub_cat}&select=id,title,summary,score,likes"
                 old_res = requests.get(get_url, headers=supa_headers)
                 old_items = old_res.json() if old_res.status_code == 200 else []
@@ -98,25 +98,24 @@ class ChartAPI:
                 old_titles_list = list(old_dict.keys())
 
                 # 1. 네이버 뉴스 검색 API 호출 (한국어 원문 수집)
-                news_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(query)}&display=20&sort=sim"
+                news_url = f"https://openapi.naver.com/v1/search/news.json?query={quote(query)}&display=25&sort=sim"
                 news_res = requests.get(news_url, headers=naver_headers, timeout=10)
                 news_res.raise_for_status()
                 items = news_res.json().get('items', [])
 
                 snippets = [{"title": re.sub(r'<[^>]+>', '', i['title']), "desc": re.sub(r'<[^>]+>', '', i['description'])} for i in items]
 
-                # 2. 프롬프트 (아마존 키워드 추출 포함)
+                # 2. 프롬프트 (15개 타겟으로 수정)
                 prompt = f"""
                 You are a K-Culture Magazine Editor. Analyze these recent Korean news snippets about {sub_cat} and identify the Top 20 hottest trends.
                 
                 CRITICAL RULE FOR FILTERING:
                 You MUST ONLY extract trends that perfectly match the '{sub_cat}' category. 
-                If an article mentions '{sub_cat}' but its main focus shifts to another category (e.g., "expanding from food to fashion"), COMPLETELY IGNORE IT.
-                For example, if the category is 'k-food', completely IGNORE any news about fashion, cosmetics, or travel.
+                If an article mentions '{sub_cat}' but its main focus shifts to another category, COMPLETELY IGNORE IT.
                 If there are not enough relevant trends, just return a smaller array. DO NOT invent or use unrelated news.
                 
                 CRITICAL RULE FOR TITLES:
-                Here are the previous Top 10 trend titles: {old_titles_list}
+                Here are the previous trend titles: {old_titles_list}
                 If a current trend is about the EXACT SAME TOPIC as one of the previous titles, you MUST use the EXACT SAME string from the previous titles list. Do not rephrase it.
                 If it is a completely new trend, create a new Catchy English Title.
 
@@ -131,48 +130,49 @@ class ChartAPI:
                   {{
                       "title": "Exact old title OR Catchy new English title",
                       "summary": "Brief explanation...\n\n- Key Fact 1...\n- Key Fact 2...\n\nQ: Why is this trending?\nA: Because...",
-                      "keyword": "A short exact Korean noun for image search (e.g., '두바이 초콜릿')",
-                      "amazon_keyword": "1-4 English words to buy this on Amazon. IT MUST STRICTLY BELONG TO THE '{sub_cat}' CATEGORY (e.g., if k-food, MUST be an edible food item like 'Korean spicy ramen', NEVER clothing or makeup).",
-                      "score": <integer from 15 (1st) down to 1 (15th)>
+                      "keyword": "A short exact Korean noun for image search",
+                      "amazon_keyword": "1-4 English words to buy this on Amazon. MUST STRICTLY BELONG TO THE '{sub_cat}' CATEGORY",
+                      "score": <integer from 20 (1st) down to 1>
                   }}
                 ]
                 
                 News snippets: {json.dumps(snippets, ensure_ascii=False)}
                 """
                 
-                # ✅ [수정 완료] ModelManager로 텍스트 생성 요청
+                # ModelManager로 텍스트 생성 요청
                 ai_res_text = self.model_manager.generate_json(prompt=prompt)
                 
                 if not ai_res_text:
                     print("      ⏭️ [DISCARDED] AI API failed to return JSON.")
                     continue
                 
-                # JSON 파싱
-                trends = json.loads(ai_res_text)
+                # JSON 파싱 (strict=False 추가)
+                trends = json.loads(ai_res_text, strict=False)
 
-                # 💡 [안전장치 추가] 딕셔너리로 응답이 왔다면 안쪽에 있는 리스트를 강제로 꺼냄
+                # 딕셔너리로 응답이 왔다면 안쪽에 있는 리스트를 강제로 꺼냄
                 if isinstance(trends, dict):
                     trends = next(iter(trends.values())) if trends else []
                     if isinstance(trends, dict):
                         trends = [trends]
 
                 # 3. 데이터 비교 및 델타 업데이트 실행
-                processed_count = 0 # 💡 성공적으로 처리된(이미지가 있는) 기사 수를 셉니다.
+                processed_count = 0 
 
                 for t in trends:
-                    if processed_count >= 10:
-                        break # 💡 10개가 채워지면 루프 종료!
+                    # ✅ [수정] 15개가 채워지면 루프 종료
+                    if processed_count >= 15:
+                        break 
 
                     title = t.get('title', 'Unknown Trend')
                     new_summary = t.get('summary', '')
-                    new_score = 10 - processed_count # 💡 순위를 10점 만점부터 차례대로 재부여합니다.
+                    # ✅ [수정] 순위를 15점 만점부터 차례대로 재부여
+                    new_score = 15 - processed_count 
                     keyword = t.get('keyword', '') 
                     
-                    # 아마존 키워드 가져오기
                     default_keyword = f"Korean {sub_cat.replace('k-', '')}"
                     amazon_keyword = t.get('amazon_keyword', default_keyword).strip()
 
-                    # 💡 이미지 유효성 검사를 먼저 수행합니다!
+                    # 이미지 유효성 검사
                     img_url = ""
                     if keyword:
                         img_search_url = f"https://openapi.naver.com/v1/search/image?query={quote(keyword)}&display=3&sort=sim"
@@ -185,7 +185,6 @@ class ChartAPI:
                                     try:
                                         check = requests.head(candidate_url, timeout=2, verify=False)
                                         if check.status_code == 200:
-                                            # ✅ [이미지 유효성 추가 검증] 응답 헤더의 Content-Type이 진짜 이미지인지 확인
                                             content_type = check.headers.get('Content-Type', '')
                                             if content_type.startswith('image/'):
                                                 img_url = candidate_url
@@ -195,12 +194,11 @@ class ChartAPI:
                         except Exception as e:
                             print(f"      ⚠️ Image Search API Error for '{keyword}': {e}")
 
-                    # 💡 유효한 이미지를 찾지 못했다면 포기하고 다음 트렌드로 넘어갑니다.
+                    # 유효한 이미지를 찾지 못했다면 드롭
                     if not img_url and title not in old_dict:
                          print(f"      ⏭️ No valid image found for '{keyword}'. Dropping trend: {title}")
                          continue
 
-                    # 여기서부터는 이미지가 확인되었거나, 기존 DB에 있던 기사입니다.
                     processed_count += 1 
 
                     if title in old_dict:
@@ -243,7 +241,7 @@ class ChartAPI:
                         else:
                             print(f"      ✨ New Entry: {title} (Amazon: {amazon_keyword})")
 
-                # 4. 💡 10개 한도 룰 적용
+                # 4. 💡 15개 한도 룰 적용 (15개 초과분만 오래된 순으로 삭제)
                 try:
                     count_url = f"{supabase_url}/rest/v1/live_news?category=eq.{sub_cat}&select=id"
                     current_res = requests.get(count_url, headers=supa_headers)
@@ -251,8 +249,9 @@ class ChartAPI:
                         current_items = current_res.json()
                         total_count = len(current_items)
                         
-                        if total_count > 10:
-                            excess = total_count - 10
+                        # ✅ [수정] 15개를 초과할 때만 정리
+                        if total_count > 15:
+                            excess = total_count - 15
                             oldest_url = f"{supabase_url}/rest/v1/live_news?category=eq.{sub_cat}&select=id&order=created_at.asc&limit={excess}"
                             oldest_res = requests.get(oldest_url, headers=supa_headers)
                             
@@ -261,7 +260,7 @@ class ChartAPI:
                                 if drop_ids:
                                     del_url = f"{supabase_url}/rest/v1/live_news?id=in.({','.join(drop_ids)})"
                                     requests.delete(del_url, headers=supa_headers)
-                                    print(f"      🗑️ Dropped {excess} oldest items to maintain exactly 10.")
+                                    print(f"      🗑️ Dropped {excess} oldest items to maintain exactly 15.")
                 except Exception as e:
                     print(f"      ⚠️ Cleanup Error: {e}")
 
@@ -297,12 +296,11 @@ class ChartAPI:
         {json.dumps(items_to_translate, ensure_ascii=False)}
         """
         try:
-            # ✅ [수정 완료] 번역도 ModelManager를 통해 생성
             ai_res_text = self.model_manager.generate_json(prompt=prompt)
             if not ai_res_text:
                 return chart_data
                 
-            translated_items = json.loads(ai_res_text)
+            translated_items = json.loads(ai_res_text, strict=False)
             
             for i, item in enumerate(chart_data):
                 if i < len(translated_items):
