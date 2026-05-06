@@ -47,7 +47,24 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
 
   const handleShare = async () => {
     const title = article.title;
-    const url = article.link; 
+    // ✅ 브라우저의 현재 주소창 URL(대표님 사이트 주소)을 가져오도록 수정했습니다.
+    const url = typeof window !== 'undefined' ? window.location.href : 'https://k-enter24.com'; 
+    
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: title,
+          text: `Check out this K-Trend: ${title}`,
+          url: url,
+        });
+      } else {
+        await navigator.clipboard.writeText(url);
+        alert('Link copied to clipboard!');
+      }
+    } catch (err) {
+      console.error('Error sharing:', err);
+    }
+  };
     
     try {
       if (navigator.share) {
