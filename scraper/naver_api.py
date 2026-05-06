@@ -133,6 +133,9 @@ class NaverNewsAPI:
                     print(f"  - {item.get('name', 'Unknown')}: {item['score']}점 (노출 횟수)")
                     
         except Exception as e:
+            # ✅ 이 두 줄이 빠져서 났던 에러입니다!
+            print(f"    ❌ Frequency Analysis Error: {e}")
+            return
 
         # =========================================================
         # Step 5 & 6. 🔍 고속 요약본 풀링 & 100% 팩트 필터링 & 🚫 이미지 중복 방지
