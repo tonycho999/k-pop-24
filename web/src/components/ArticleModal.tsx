@@ -77,11 +77,19 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
     if (!isKCulture || !article.amazon_keyword || isLoadingRegion) return null;
 
     if (userRegion === 'sea') {
+      // 1. AI가 만들어준 키워드로 순수 쇼피(Shopee PH) 검색 URL을 만듭니다.
+      const targetShopeeUrl = `https://shopee.ph/search?keyword=${keyword}`;
+      
+      // 2. 인볼브아시아 시스템이 읽을 수 있도록 URL을 안전하게 인코딩합니다.
+      const encodedUrl = encodeURIComponent(targetShopeeUrl);
+      
+      // 3. 💰 [핵심] 대표님의 고유 링크 뒤에 인코딩된 도착 주소를 붙여 '동적 딥링크'를 완성합니다!
+      const involveAsiaLink = `https://invl.me/clnfula?url=${encodedUrl}`;
+
       // 🧡 동남아시아 (Shopee) 버튼
       return (
         <a 
-          // 💡 Shopee 글로벌/지역별 검색 링크 적용 (예시로 싱가포르(SG) 적용, 필요시 분기 가능)
-          href={`https://shopee.sg/search?keyword=${keyword}`}
+          href={involveAsiaLink}
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center justify-center gap-3 w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-[#EE4D2D] to-[#FF7337] hover:from-[#d73f21] hover:to-[#e6612b] text-white font-black text-lg rounded-2xl shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all duration-200"
