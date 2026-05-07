@@ -23,7 +23,6 @@ class NaverNewsAPI:
         self.naver_id = os.environ.get("NAVER_CLIENT_ID")
         self.naver_secret = os.environ.get("NAVER_CLIENT_SECRET")
         
-        # ✅ [수정 완료] 이제 여기서 Gemini 키를 직접 찾을 필요가 없습니다! 
         # ModelManager가 알아서 Groq 키 리스트와 Gemini 키를 싹 다 관리합니다.
         self.model_manager = ModelManager()
 
@@ -50,13 +49,22 @@ class NaverNewsAPI:
         # 🧹 Step 1: Cleaning up old archive data (7 days)
         print(f"  🧹 Step 1: Cleaning up old archive data (7 days)...")
         try:
-            # 💡 [핵심] K-Culture는 ChartAPI가 관리하므로 제외하고, 속보성 뉴스 4개만 7일 룰을 적용합니다.
+            # 💡 [핵심 방어벽 1] K-Culture는 ChartAPI가 관리하므로 제외하고, 속보성 뉴스 4개만 7일 룰을 적용합니다.
             target_categories = ['k-pop', 'k-movie', 'k-drama', 'k-entertain']
             
-            seven_days_ago = (datetime.now(self.kst) - timedelta(days=7)).isoformat()
+            seven_days_ago = (datetime.now(kst) - timedelta(days=7)).isoformat()
             
-            del_url = f"{self.supabase_url}/rest/v1/live_news?category=in.({','.join(target_categories)})&created_at=lt.{seven_days_ago}"
-            del_res = requests.delete(del_url, headers=self.supa_headers)
+            # API 호출용 환경변수 세팅
+            supabase_url = os.environ.get("SUPABASE_URL")
+            supabase_key = os.environ.get("SUPABASE_KEY")
+            supa_headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/json"
+            }
+            
+            del_url = f"{supabase_url}/rest/v1/live_news?category=in.({','.join(target_categories)})&created_at=lt.{seven_days_ago}"
+            del_res = requests.delete(del_url, headers=supa_headers)
             
             if del_res.status_code >= 400:
                 print(f"    ❌ DB Delete Error: {del_res.text}")
@@ -143,7 +151,6 @@ class NaverNewsAPI:
                     print(f"  - {item.get('name', 'Unknown')}: {item['score']}점 (노출 횟수)")
                     
         except Exception as e:
-            # ✅ 이 두 줄이 빠져서 났던 에러입니다!
             print(f"    ❌ Frequency Analysis Error: {e}")
             return
 
@@ -280,7 +287,6 @@ class NaverNewsAPI:
             """
             
             try:
-                # ✅ [수정 완료] 복잡한 세팅 지우고 ModelManager 호출!
                 ai_res_text = self.model_manager.generate_json(prompt=write_prompt)
                 
                 if not ai_res_text:
@@ -334,7 +340,14 @@ class NaverNewsAPI:
 
                 unique_categories = set([item["category"] for item in ai_summarized_results])
                 
+                # 💡 [핵심 방어벽 2] 속보성 뉴스만 50개 유지 룰을 적용합니다 (K-Culture는 절대 건드리지 않음)
+                safe_categories = ['k-pop', 'k-movie', 'k-drama', 'k-entertain']
+                
                 for cat in unique_categories:
+                    if cat not in safe_categories:
+                        print(f"    🛡️ Skipping cleanup for [{cat}] (Managed by ChartAPI).")
+                        continue
+                        
                     count_res = self.db.client.table("live_news").select("id", count="exact").eq("category", cat).execute()
                     total_count = count_res.count
 
