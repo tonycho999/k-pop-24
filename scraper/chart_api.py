@@ -276,21 +276,23 @@ class ChartAPI:
         items_to_translate = [{"title": item['title'], "info": item['info']} for item in chart_data]
         
         prompt = f"""
-        You are an expert K-Culture data cleaner and translator. 
+        You are an expert K-Culture data cleaner and professional translator. 
         Current Category: {category}
+        
+        CRITICAL RULE: You MUST translate ALL Korean text in the 'title' field into natural, catchy English. DO NOT leave any Korean characters in the 'title'.
         
         Translate and format the following JSON list based on these strict rules:
 
         IF Category is 'k-pop':
-        1. CLEAN TITLE: Extract ONLY the pure song title. Remove any artist names, "(Prod. by...)", "(feat...)", "[MV]", "(Official Video)", or "Artist - Title" formats.
-        2. FIX ARTIST IN INFO: If the 'info' contains generic text like "Release - Topic" or the channel name is incorrect, extract the REAL artist name from the raw title and replace it.
+        1. CLEAN & TRANSLATE TITLE: Extract ONLY the pure song title and translate it to English. Remove any artist names, "(Prod. by...)", "(feat...)", "[MV]", "(Official Video)", or "Artist - Title" formats.
+        2. FIX ARTIST IN INFO: If the 'info' contains generic text like "Release - Topic" or the channel name is incorrect, extract the REAL artist name from the raw title and replace it. Format the artist name in English.
         3. FORMAT INFO: Format the 'info' strictly as "By English Artist Name (Korean Name) (Views: X,XXX)". NEVER delete the Views number.
 
-        IF Category is NOT 'k-pop':
-        1. 'title': Translate Korean to natural English. Keep proper nouns Romanized.
+        IF Category is NOT 'k-pop' (e.g., k-movie, k-drama, k-entertain):
+        1. TRANSLATE TITLE: Translate the Korean title to natural English. If it's a proper noun (like a person's name), Romanize it perfectly (e.g., "김수현" -> "Kim Soo-hyun").
         2. 'info': DO NOT change the 'info' text at all. Leave it exactly as it is.
 
-        Must return ONLY a valid JSON array of objects containing 'title' and 'info' keys.
+        You MUST return ONLY a valid JSON array of objects containing 'title' and 'info' keys. No markdown, no extra text.
         
         Items to translate/clean:
         {json.dumps(items_to_translate, ensure_ascii=False)}
@@ -302,10 +304,17 @@ class ChartAPI:
                 
             translated_items = json.loads(ai_res_text, strict=False)
             
+            # 딕셔너리로 감싸져서 올 경우 대비
+            if isinstance(translated_items, dict):
+                translated_items = next(iter(translated_items.values())) if translated_items else []
+                if isinstance(translated_items, dict):
+                    translated_items = [translated_items]
+            
             for i, item in enumerate(chart_data):
                 if i < len(translated_items):
                     item['title'] = translated_items[i].get('title', item['title'])
                     item['info'] = translated_items[i].get('info', item['info'])
+                    
         except Exception as e:
             print(f"    ⚠️ AI Translation Error: {e}")
             
