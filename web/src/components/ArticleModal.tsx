@@ -68,22 +68,24 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
     }
   };
 
-  // K-Culture 카테고리인지 확인
+// K-Culture 카테고리인지 확인
   const isKCulture = ['k-food', 'k-beauty', 'k-fashion', 'k-lifestyle'].includes(article.category);
-  const keyword = encodeURIComponent(article.amazon_keyword || '');
+  
+  // ✅ [버그 수정 1] 여기서 변환(encode)하지 않고 원본 글자 그대로 가져옵니다.
+  const rawKeyword = article.amazon_keyword || '';
 
   // 💡 [추가] 지역별 버튼 컴포넌트 렌더링 함수
   const renderAffiliateButton = () => {
-    if (!isKCulture || !article.amazon_keyword || isLoadingRegion) return null;
+    if (!isKCulture || !rawKeyword || isLoadingRegion) return null;
 
     if (userRegion === 'sea') {
-      // 1. AI가 만들어준 키워드로 순수 쇼피(Shopee PH) 검색 URL을 만듭니다.
-      const targetShopeeUrl = `https://shopee.ph/search?keyword=${keyword}`;
+      // 1. AI가 만들어준 원본 키워드로 순수 쇼피 검색 URL을 만듭니다. (예: ...keyword=k-beauty facial device)
+      const targetShopeeUrl = `https://shopee.ph/search?keyword=${rawKeyword}`;
       
-      // 2. 인볼브아시아 시스템이 읽을 수 있도록 URL을 안전하게 인코딩합니다.
+      // 2. ✅ [버그 수정 2] 여기서 딱 한 번만! 전체 URL을 안전하게 변환합니다.
       const encodedUrl = encodeURIComponent(targetShopeeUrl);
       
-      // 3. 💰 [핵심] 대표님의 고유 링크 뒤에 인코딩된 도착 주소를 붙여 '동적 딥링크'를 완성합니다!
+      // 3. 인볼브아시아 링크와 결합
       const involveAsiaLink = `https://invl.me/clnfula?url=${encodedUrl}`;
 
       // 🧡 동남아시아 (Shopee) 버튼
@@ -103,8 +105,8 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
     // 💛 글로벌 (Amazon) 버튼
     return (
       <a 
-        // 💡 대표님의 발급받은 Amazon Tracking ID 유지
-        href={`https://www.amazon.com/s?k=${keyword}&tag=kculturetrend-20`}
+        // ✅ [버그 수정 3] 아마존 링크에 들어갈 때만 띄어쓰기를 따로 변환해 줍니다.
+        href={`https://www.amazon.com/s?k=${encodeURIComponent(rawKeyword)}&tag=kculturetrend-20`}
         target="_blank"
         rel="noopener noreferrer"
         className="flex items-center justify-center gap-3 w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-[#FF9900] to-[#FFB84D] hover:from-[#e68a00] hover:to-[#ffa31a] text-slate-900 font-black text-lg rounded-2xl shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all duration-200"
