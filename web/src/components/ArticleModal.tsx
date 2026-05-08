@@ -86,8 +86,8 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
       const encodedUrl = encodeURIComponent(targetShopeeUrl);
       
       // 3. 인볼브아시아 링크와 결합
-      const involveAsiaLink = `https://invl.me/clnfula?url=${encodedUrl}`;
-
+      const involveAsiaLink = `https://invol.co/aff_m?offer_id=XXXXX&aff_id=YYYYY&source=deeplink_generator&url=${encodedUrl}`;
+      
       // 🧡 동남아시아 (Shopee) 버튼
       return (
         <a 
