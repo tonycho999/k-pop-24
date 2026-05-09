@@ -71,23 +71,23 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
 // K-Culture 카테고리인지 확인
   const isKCulture = ['k-food', 'k-beauty', 'k-fashion', 'k-lifestyle'].includes(article.category);
   
-  // ✅ [버그 수정 1] 여기서 변환(encode)하지 않고 원본 글자 그대로 가져옵니다.
+  // 원본 키워드 (인코딩 전)
   const rawKeyword = article.amazon_keyword || '';
 
-  // 💡 [추가] 지역별 버튼 컴포넌트 렌더링 함수
+  // 💡 지역별 버튼 컴포넌트 렌더링 함수
   const renderAffiliateButton = () => {
     if (!isKCulture || !rawKeyword || isLoadingRegion) return null;
 
     if (userRegion === 'sea') {
-      // 1. AI가 만들어준 원본 키워드로 순수 쇼피 검색 URL을 만듭니다. (예: ...keyword=k-beauty facial device)
+      // 1. AI가 만들어준 원본 키워드로 순수 쇼피 필리핀 검색 URL을 만듭니다.
       const targetShopeeUrl = `https://shopee.ph/search?keyword=${rawKeyword}`;
       
-      // 2. ✅ [버그 수정 2] 여기서 딱 한 번만! 전체 URL을 안전하게 변환합니다.
+      // 2. 전체 목적지 URL을 한 번만 안전하게 변환(인코딩)합니다.
       const encodedUrl = encodeURIComponent(targetShopeeUrl);
       
-      // 3. 인볼브아시아 링크와 결합
-      const involveAsiaLink = `https://invol.co/aff_m?offer_id=XXXXX&aff_id=YYYYY&source=deeplink_generator&url=${encodedUrl}`;
-      
+      // 3. 💰 [핵심] 캡처화면에서 확인한 대표님의 실제 고유 단축 주소와 결합합니다!
+      const involveAsiaLink = `https://invl.me/clng0bc?aff_sub=k-enter24&url=${encodedUrl}`;
+
       // 🧡 동남아시아 (Shopee) 버튼
       return (
         <a 
@@ -105,7 +105,6 @@ export default function ArticleModal({ article, onClose, onVote }: ArticleModalP
     // 💛 글로벌 (Amazon) 버튼
     return (
       <a 
-        // ✅ [버그 수정 3] 아마존 링크에 들어갈 때만 띄어쓰기를 따로 변환해 줍니다.
         href={`https://www.amazon.com/s?k=${encodeURIComponent(rawKeyword)}&tag=kculturetrend-20`}
         target="_blank"
         rel="noopener noreferrer"
