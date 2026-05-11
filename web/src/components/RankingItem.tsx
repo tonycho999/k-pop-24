@@ -2,6 +2,7 @@
 
 import { RankingItemData } from '@/types';
 import { TrendingUp, Minus, TrendingDown } from 'lucide-react';
+import Link from 'next/link'; // ✅ 구글 봇을 위한 Link 추가
 
 interface RankingItemProps {
   rank: number;
@@ -15,27 +16,12 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
     return <Minus size={12} className="text-slate-300" />;
   };
 
-  // 💡 [핵심] 랭킹 데이터를 뉴스 모달이 이해할 수 있는 규격으로 변환해서 던져줍니다.
-  const handleOpenModal = () => {
-    const modalData = {
-      id: item.id,
-      title: item.title,
-      category: item.category || 'k-culture',
-      // ✅ [수정 완료] TypeScript 에러를 일으키던 item.info 제거
-      summary: `Current Rank: ${rank}위 | ${item.meta_info || ''}`, 
-      // 쇼피(Shopee) 검색이 가능하도록 연예인/작품 이름 자체를 키워드로 넘깁니다.
-      amazon_keyword: item.title, 
-      score: item.score
-    };
-    
-    // 뉴스 모달 열기 이벤트 호출!
-    window.dispatchEvent(new CustomEvent('open-news-modal', { detail: modalData }));
-  };
+  // 🗑️ 모달 띄우는 handleOpenModal 함수 전체 삭제 완료
 
   return (
-    // 💡 Link 대신 div를 사용하고 onClick 이벤트를 달아줍니다.
-    <div 
-      onClick={handleOpenModal}
+    // ✅ div 대신 Link 컴포넌트를 사용하여 /chart 페이지로 한 번에 이동!
+    <Link 
+      href="/chart"
       className="flex items-center justify-between py-3 border-b border-slate-50 dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/50 px-2 rounded-lg transition-colors group cursor-pointer"
     >
       <div className="flex items-center gap-3 overflow-hidden">
@@ -69,6 +55,6 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
           {getTrendIcon()}
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
