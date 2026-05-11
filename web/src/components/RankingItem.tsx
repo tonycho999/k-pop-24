@@ -2,7 +2,6 @@
 
 import { RankingItemData } from '@/types';
 import { TrendingUp, Minus, TrendingDown } from 'lucide-react';
-import Link from 'next/link'; // ✅ 구글 봇을 위한 Link 추가
 
 interface RankingItemProps {
   rank: number;
@@ -16,13 +15,10 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
     return <Minus size={12} className="text-slate-300" />;
   };
 
-  // 🗑️ 모달 띄우는 handleOpenModal 함수 전체 삭제 완료
-
   return (
-    // ✅ div 대신 Link 컴포넌트를 사용하여 /chart 페이지로 한 번에 이동!
-    <Link 
-      href="/chart"
-      className="flex items-center justify-between py-3 border-b border-slate-50 dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/50 px-2 rounded-lg transition-colors group cursor-pointer"
+    // 💡 Link를 일반 div로 변경하고, href와 cursor-pointer를 제거했습니다.
+    <div 
+      className="flex items-center justify-between py-3 border-b border-slate-50 dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/50 px-2 rounded-lg transition-colors group"
     >
       <div className="flex items-center gap-3 overflow-hidden">
         {/* 순위 숫자 */}
@@ -38,7 +34,7 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5 truncate">
             {item.meta_info || item.category}
           </span>
-          <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate group-hover:text-cyan-600 transition-colors">
+          <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate transition-colors">
             {item.title}
           </h4>
         </div>
@@ -55,6 +51,6 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
           {getTrendIcon()}
         </div>
       </div>
-    </Link>
+    </div>
   );
 }
