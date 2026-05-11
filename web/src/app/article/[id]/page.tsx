@@ -4,9 +4,10 @@ import Image from 'next/image';
 import { notFound } from 'next/navigation';
 import { Calendar, TrendingUp } from 'lucide-react';
 
-import Header from '@/components/Header'; // ✅ 메인 홈의 공통 헤더 불러오기
-import RankingItem from '@/components/RankingItem'; // ✅ 메인 홈의 랭킹 아이템 불러오기
-import ArticleInteractive from './ArticleInteractive'; 
+import Header from '@/components/Header';
+import RankingItem from '@/components/RankingItem';
+import ArticleInteractive from './ArticleInteractive';
+import ArticleTop from './ArticleTop'; // ✅ 방금 만든 상단 배너 컴포넌트 불러오기
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const resolvedParams = await params;
@@ -31,7 +32,6 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
   const resolvedParams = await params;
   const articleId = resolvedParams.id;
 
-  // 1. 기사 데이터 가져오기
   let { data: article } = await supabase.from('search_archive').select('*').eq('id', articleId).single();
   if (!article) {
     const { data: liveArticle } = await supabase.from('live_news').select('*').eq('id', articleId).single();
@@ -42,7 +42,6 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
     notFound(); 
   }
 
-  // 2. ✅ 오른쪽 사이드바용 Top 10 랭킹 데이터 가져오기
   const { data: rankings } = await supabase
     .from('live_rankings')
     .select('*')
@@ -53,14 +52,16 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
 
   return (
     <main className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans overflow-x-hidden">
-      {/* 메인 홈과 동일한 너비와 여백 적용 */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-0 w-full">
         
-        {/* 🧭 상단: 메인 홈과 완벽히 동일한 Header */}
+        {/* 🧭 상단 Header */}
         <Header />
 
+        {/* 🚀 [추가됨] 상단 메뉴 + 인사이트 배너 + 광고 배너 */}
+        <ArticleTop insight={article.summary} />
+
         {/* 4단 그리드 레이아웃 (기사 3 : 랭킹 1) */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-6 w-full pb-20">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-2 w-full pb-20">
           
           {/* 📰 좌측 (3칸 차지): 기사 본문 영역 */}
           <div className="col-span-1 md:col-span-3">
@@ -103,7 +104,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
             </article>
           </div>
 
-          {/* 📈 우측 (1칸 차지): 메인 홈과 동일한 Top 10 랭킹 사이드바 */}
+          {/* 📈 우측 (1칸 차지): Top 10 랭킹 사이드바 */}
           <div className="hidden md:block col-span-1">
             <div className="sticky top-24">
               <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
