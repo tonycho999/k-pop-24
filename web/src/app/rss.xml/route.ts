@@ -1,18 +1,32 @@
 import { supabase } from '@/lib/supabase';
 
-// 💡 GET 요청이 올 때마다 동적으로 RSS XML을 생성하여 반환합니다.
 export async function GET() {
   const baseUrl = 'https://k-enter24.com';
 
-  // 1. 최신 기사 50개만 가져옵니다 (RSS는 보통 최신 글 위주로 보여줍니다)
-  const { data: news } = await supabase
-    .from('search_archive')
+  // 1. 가장 따끈따끈한 최신 기사(live_news)에서 먼저 50개를 가져옵니다.
+  const { data: liveNews } = await supabase
+    .from('live_news')
     .select('id, title, summary, created_at')
     .order('created_at', { ascending: false })
     .limit(50);
 
-  // 2. RSS 아이템 리스트로 변환 (XML 문법에 맞게 조립)
-  const itemsXml = (news || []).map((item) => `
+  let newsItems = liveNews || [];
+
+  // 만약 최신 기사가 50개가 안 된다면, archive에서 모자란 개수만큼 채워옵니다.
+  if (newsItems.length < 50) {
+    const { data: archiveNews } = await supabase
+      .from('search_archive')
+      .select('id, title, summary, created_at')
+      .order('created_at', { ascending: false })
+      .limit(50 - newsItems.length);
+      
+    if (archiveNews) {
+      newsItems = [...newsItems, ...archiveNews];
+    }
+  }
+
+  // 2. RSS 아이템 리스트로 변환
+  const itemsXml = newsItems.map((item) => `
     <item>
       <title><![CDATA[${item.title}]]></title>
       <link>${baseUrl}/article/${item.id}</link>
@@ -26,7 +40,7 @@ export async function GET() {
   const rss = `<?xml version="1.0" encoding="UTF-8"?>
   <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
     <channel>
-      <title>K-ENTER24 - Top K-Culture Trends</title>
+      <title>K-ENTER 24 - Top K-Culture Trends</title>
       <link>${baseUrl}</link>
       <description>Get the latest breaking news and trends in K-Pop, K-Drama, K-Movie, and K-Culture.</description>
       <language>en-us</language>
@@ -40,7 +54,7 @@ export async function GET() {
   return new Response(rss, {
     headers: {
       'Content-Type': 'text/xml; charset=utf-8',
-      'Cache-Control': 's-maxage=3600, stale-while-revalidate', // 1시간 동안 캐시 유지
+      'Cache-Control': 's-maxage=3600, stale-while-revalidate', 
     },
   });
 }
