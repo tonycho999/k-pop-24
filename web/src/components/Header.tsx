@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import Link from 'next/link'; // ✅ [추가] Next.js Link 컴포넌트 임포트
 import { supabase } from '@/lib/supabase';
 import { 
   User, LogOut, ChevronDown, 
@@ -10,7 +11,6 @@ import {
 export default function Header() {
   const [user, setUser] = useState<any>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  // [삭제됨] 다크모드 상태 const [isDark, setIsDark] = useState(false);
   const [langCode, setLangCode] = useState('EN'); 
   const [totalCount, setTotalCount] = useState(0);
 
@@ -24,8 +24,6 @@ export default function Header() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user));
     
-    // [수정] 다크모드 버튼은 삭제했지만, 시스템 설정에 따라 화면을 어둡게 할지 여부는 유지합니다.
-    // (원치 않으시면 이 블록 전체를 삭제하셔도 됩니다)
     const savedTheme = localStorage.getItem('theme');
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     
@@ -107,8 +105,6 @@ export default function Header() {
     e.preventDefault();
   };
 
-  // [삭제됨] toggleDarkMode 함수 삭제
-
   const handleAiTranslate = () => {
     window.dispatchEvent(new CustomEvent('ai-translate', { detail: langCode }));
   };
@@ -129,9 +125,10 @@ export default function Header() {
     <>
       <header className="flex justify-between items-center py-5 mb-1 border-b border-slate-100 dark:border-slate-800 transition-colors relative z-50 bg-white dark:bg-slate-950">
         <div className="flex items-center gap-2 sm:gap-4">
-          <div className="w-[160px] sm:w-[200px] h-[80px] flex items-center justify-center overflow-hidden">
+          {/* ✅ [수정됨] div를 Link 컴포넌트로 변경하여 클릭 시 홈으로 이동하도록 설정 */}
+          <Link href="/" className="w-[160px] sm:w-[200px] h-[80px] flex items-center justify-center overflow-hidden cursor-pointer transition-transform hover:opacity-90 active:scale-95">
             <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
-          </div>
+          </Link>
           
           <div className="flex flex-col ml-1 sm:ml-2 border-l border-slate-200 dark:border-slate-700 pl-2 sm:pl-3">
                 <div className="flex items-center gap-1.5">
@@ -154,8 +151,6 @@ export default function Header() {
           >
             <Search size={22} />
           </button>
-
-          {/* [삭제됨] 해/달 버튼 위치였던 곳 */}
 
           <button onClick={(e) => { e.preventDefault(); handleAiTranslate(); }}
             className="hidden sm:flex px-3 py-2 bg-cyan-50 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-400 rounded-full items-center gap-2 border border-cyan-100 dark:border-cyan-800 transition-all hover:scale-105 active:scale-95" >
