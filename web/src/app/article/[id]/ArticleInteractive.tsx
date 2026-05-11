@@ -6,7 +6,9 @@ import { supabase } from '@/lib/supabase';
 
 export default function ArticleInteractive({ article }: { article: any }) {
   const [userRegion, setUserRegion] = useState<'global' | 'sea'>('global');
-  const [votes, setVotes] = useState(article.likes || 0);
+  
+  // ✅ [수정] votes가 무조건 '숫자(number)' 타입임을 TypeScript에게 확실히 알려줍니다.
+  const [votes, setVotes] = useState<number>(Number(article.likes) || 0);
 
   useEffect(() => {
     fetch('https://ipapi.co/json/').then(res => res.json()).then(data => {
@@ -39,14 +41,18 @@ export default function ArticleInteractive({ article }: { article: any }) {
     <div className="border-t border-slate-100 dark:border-slate-800 pt-8">
       <div className="flex justify-center mb-10">{renderAffiliateButton()}</div>
       <div className="flex justify-center gap-10">
-        <button onClick={async () => { setVotes(v => v + 1); await supabase.rpc('increment_vote', { row_id: article.id }); }} className="flex flex-col items-center gap-2 group">
+        
+        {/* ✅ [수정] setVotes 안의 'v' 파라미터에도 (v: number)라고 명시해 에러를 원천 차단했습니다. */}
+        <button onClick={async () => { setVotes((v: number) => v + 1); await supabase.rpc('increment_vote', { row_id: article.id }); }} className="flex flex-col items-center gap-2 group">
           <div className="w-16 h-16 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-cyan-500 transition-all"><ThumbsUp size={28} /></div>
           <span className="text-sm font-bold text-slate-400">{votes}</span>
         </button>
+
         <button onClick={() => { window.navigator.share({ title: article.title, url: window.location.href }); }} className="flex flex-col items-center gap-2 group">
           <div className="w-16 h-16 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center text-slate-400 group-hover:text-purple-500 transition-all"><Share2 size={28} /></div>
           <span className="text-sm font-bold text-slate-400">Share</span>
         </button>
+
       </div>
     </div>
   );
