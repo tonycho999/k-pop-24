@@ -2,7 +2,6 @@
 
 import { RankingItemData } from '@/types';
 import { TrendingUp, Minus, TrendingDown } from 'lucide-react';
-import Link from 'next/link'; // ✅ Link 컴포넌트 추가
 
 interface RankingItemProps {
   rank: number;
@@ -16,13 +15,31 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
     return <Minus size={12} className="text-slate-300" />;
   };
 
+  // 💡 [핵심] 랭킹 데이터를 뉴스 모달이 이해할 수 있는 규격으로 변환해서 던져줍니다.
+  const handleOpenModal = () => {
+    const modalData = {
+      id: item.id,
+      title: item.title,
+      category: item.category || 'k-culture',
+      // 랭킹에는 긴 기사 내용이 없으므로, 순위와 부가정보를 조합해 요약(summary)으로 만듭니다.
+      summary: `Current Rank: ${rank}위 | ${item.meta_info || item.info || ''}`, 
+      // 쇼피(Shopee) 검색이 가능하도록 연예인/작품 이름 자체를 키워드로 넘깁니다.
+      amazon_keyword: item.title, 
+      score: item.score
+    };
+    
+    // 뉴스 모달 열기 이벤트 호출!
+    window.dispatchEvent(new CustomEvent('open-news-modal', { detail: modalData }));
+  };
+
   return (
-    // ✅ div 대신 Link를 사용하여 고유 URL(/ranking/아이디)을 부여합니다.
-    <Link 
-      href={`/ranking/${item.id}`} 
+    // 💡 Link 대신 div를 사용하고 onClick 이벤트를 달아줍니다.
+    <div 
+      onClick={handleOpenModal}
       className="flex items-center justify-between py-3 border-b border-slate-50 dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/50 px-2 rounded-lg transition-colors group cursor-pointer"
     >
       <div className="flex items-center gap-3 overflow-hidden">
+        {/* 순위 숫자 */}
         <div className={`
           flex flex-col items-center justify-center w-6 min-w-[24px]
           ${rank <= 3 ? 'text-cyan-600 dark:text-cyan-400 font-black text-lg' : 'text-slate-400 font-bold text-sm'}
@@ -30,6 +47,7 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
           {rank}
         </div>
 
+        {/* 텍스트 정보 */}
         <div className="flex flex-col min-w-0">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5 truncate">
             {item.meta_info || item.category}
@@ -40,6 +58,7 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
         </div>
       </div>
 
+      {/* 우측 점수/아이콘 */}
       <div className="flex flex-col items-end gap-1 pl-2">
         {item.score && (
           <span className="text-[9px] font-mono text-slate-300">
@@ -50,6 +69,6 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
           {getTrendIcon()}
         </div>
       </div>
-    </Link>
+    </div>
   );
 }
