@@ -52,7 +52,7 @@ class NaverNewsAPI:
             # 💡 [핵심 방어벽 1] K-Culture는 ChartAPI가 관리하므로 제외하고, 속보성 뉴스 4개만 7일 룰을 적용합니다.
             target_categories = ['k-pop', 'k-movie', 'k-drama', 'k-entertain']
             
-            seven_days_ago = (datetime.now(kst) - timedelta(days=7)).isoformat()
+            seven_days_ago = quote((datetime.now(kst) - timedelta(days=7)).isoformat())
             
             # API 호출용 환경변수 세팅
             supabase_url = os.environ.get("SUPABASE_URL")
