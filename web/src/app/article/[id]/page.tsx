@@ -66,18 +66,29 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
           {/* 📰 좌측 (3칸 차지): 기사 본문 영역 */}
           <div className="col-span-1 md:col-span-3">
             <article className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-              {secureImageUrl && (
-                <div className="relative w-full h-64 sm:h-[450px] bg-slate-900">
+            {secureImageUrl && (
+              <div className="relative w-full h-64 sm:h-[450px] bg-slate-900 overflow-hidden">
+                {/* 1. 뒷배경: 이미지를 꽉 채우고 블러(흐림) 처리를 해서 여백을 예쁘게 메꿉니다 */}
+                <div className="absolute inset-0 opacity-40">
                   <Image 
                     src={secureImageUrl} 
-                    alt={article.title} 
+                    alt="blur background" 
                     fill 
-                    className="object-cover opacity-90" 
+                    className="object-cover blur-2xl scale-110" 
                     priority
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                </div>
-              )}
+              </div>
+              
+              {/* 2. 앞배경: 원본 비율을 그대로 유지(object-contain)하여 절대 잘리지 않게 합니다 */}
+              <Image 
+                src={secureImageUrl} 
+                alt={article.title} 
+                fill 
+                className="object-contain drop-shadow-2xl z-10 p-2 sm:p-4" 
+                priority
+              />
+            </div>
+          )}
               
               <div className="p-6 sm:p-10">
                 <div className="mb-6 flex items-center gap-3">
