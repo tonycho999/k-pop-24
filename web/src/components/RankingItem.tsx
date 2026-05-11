@@ -21,8 +21,8 @@ export default function RankingItem({ rank, item }: RankingItemProps) {
       id: item.id,
       title: item.title,
       category: item.category || 'k-culture',
-      // 랭킹에는 긴 기사 내용이 없으므로, 순위와 부가정보를 조합해 요약(summary)으로 만듭니다.
-      summary: `Current Rank: ${rank}위 | ${item.meta_info || item.info || ''}`, 
+      // ✅ [수정 완료] TypeScript 에러를 일으키던 item.info 제거
+      summary: `Current Rank: ${rank}위 | ${item.meta_info || ''}`, 
       // 쇼피(Shopee) 검색이 가능하도록 연예인/작품 이름 자체를 키워드로 넘깁니다.
       amazon_keyword: item.title, 
       score: item.score
