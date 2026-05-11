@@ -38,6 +38,11 @@ export const metadata: Metadata = {
   icons: {
     icon: '/favicon.png', // 💡 기존 .ico 파일명에서 .png로 수정 완료
   },
+  alternates: {
+    types: {
+      'application/rss+xml': 'https://k-enter24.com/rss.xml',
+    },
+  },
 };
 
 export default function RootLayout({
