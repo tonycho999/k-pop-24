@@ -8,8 +8,8 @@ export default function AdBanner() {
   const AD_LINK = "https://invl.me/clnhd27"; 
   
   // 🖼️ byFood 캠페인에 어울리는 고화질 음식/여행 배너 이미지 (추후 교체 가능)
-  const AD_IMAGE_PC = "https://images.unsplash.com/photo-1580651315530-69c8e0026377?auto=format&fit=crop&q=80&w=1200&h=120"; 
-  const AD_IMAGE_MOBILE = "https://images.unsplash.com/photo-1580651315530-69c8e0026377?auto=format&fit=crop&q=80&w=600&h=150";
+  const AD_IMAGE_PC = "https://k-enter24.com/shopee1200.png"; 
+  const AD_IMAGE_MOBILE = "https://k-enter24.com/shopee600.png";
 
   // 배너 활성화 (광고 보이게 설정)
   const isPlaceholder = false; 
